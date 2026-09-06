@@ -45,6 +45,7 @@ from .store import (
     LexiconEntry,
     LexiconHit,
     LexiconQuery,
+    entry_hash,
     now_utc,
 )
 
@@ -89,6 +90,7 @@ def _row_from_entry(
         "source_uri": entry.get("source_uri"),
         "source_format": str(entry.get("source_format", "json_pairs")),
         "usage_count": int(str(entry.get("usage_count", 0) or 0)),
+        "entry_hash": entry_hash(str(entry["source"]), str(entry["target"])),
         "created_at": created_at,
         "updated_at": updated_at,
         "embedding": list(embedding),

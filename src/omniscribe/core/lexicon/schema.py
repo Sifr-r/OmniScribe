@@ -29,6 +29,10 @@ LEXICON_SCHEMA: pa.Schema = pa.schema(
         pa.field("source_uri", pa.string(), nullable=True),
         pa.field("source_format", pa.string(), nullable=False),
         pa.field("usage_count", pa.int64(), nullable=False),
+        # Content hash (source\x1ftarget) for embedding reuse on re-import.
+        # Nullable so pre-existing tables can adopt the column lazily; rows
+        # written after this column's introduction always set it.
+        pa.field("entry_hash", pa.string(), nullable=True),
         pa.field("created_at", pa.timestamp("ms"), nullable=False),
         pa.field("updated_at", pa.timestamp("ms"), nullable=False),
         pa.field(

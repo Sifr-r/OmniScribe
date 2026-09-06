@@ -422,3 +422,25 @@ def test_persistence_across_instances(
     entries = s2.list_entries(saved.id)
     assert entries[0].source_text == "hi"
     assert entries[0].target_text == "salut"
+
+
+# ---------------------------------------------------------------------------
+# normalize_term / entry_hash primitives (LLM-remediation wave)
+# ---------------------------------------------------------------------------
+
+
+def test_normalize_term_casefold_and_nfc() -> None:
+    from omniscribe.core.lexicon.store import normalize_term
+
+    assert normalize_term("  Straße ") == "strasse"
+    # NFD combining acute + e composes to the same key as precomposed é.
+    assert normalize_term("e\u0301tude") == normalize_term("étude")
+    assert normalize_term("") == ""
+
+
+def test_entry_hash_stable_and_case_sensitive() -> None:
+    from omniscribe.core.lexicon.store import entry_hash
+
+    assert entry_hash("EU", "UE") == entry_hash("EU", "UE")
+    assert entry_hash("EU", "UE") != entry_hash("eu", "ue")
+    assert entry_hash("EU", "UE") != entry_hash("EU", "union européenne")

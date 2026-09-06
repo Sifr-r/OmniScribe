@@ -10,6 +10,8 @@ structurally. Callers depend on this Protocol, not on any concrete class.
 
 from __future__ import annotations
 
+import hashlib
+import unicodedata
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -19,6 +21,25 @@ from typing import Protocol, runtime_checkable
 # We re-export the constant here so callers don't need to import the embedding
 # module just to validate or construct a query.
 EMBEDDING_DIM: int = 384
+
+
+def normalize_term(text: str) -> str:
+    """NFC + casefold — the single normalization for term comparison.
+
+    Used by the merge/preview helpers and the keyword leg so "Straße"
+    and "STRASSE" (and NFD/NFC spellings) resolve to one key everywhere.
+    """
+    return unicodedata.normalize("NFC", text).strip().casefold()
+
+
+def entry_hash(source: str, target: str) -> str:
+    """Content hash of a term pair, for embedding reuse across re-imports.
+
+    Deliberately case-sensitive: a re-import that changes casing produced
+    a different entry and must be re-embedded rather than silently reusing
+    the old vector.
+    """
+    return hashlib.sha256(f"{source}\x1f{target}".encode("utf-8")).hexdigest()
 
 
 @dataclass(frozen=True, slots=True)
@@ -156,5 +177,7 @@ __all__ = [
     "LexiconHit",
     "LexiconQuery",
     "LexiconStore",
+    "entry_hash",
+    "normalize_term",
     "now_utc",
 ]
