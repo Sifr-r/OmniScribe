@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 import pytest
 
 from omniscribe.core.translate.config import (
@@ -10,8 +12,13 @@ from omniscribe.core.translate.config import (
     DEFAULT_TRANSLATION_API_KEY,
     DEFAULT_TRANSLATION_MAX_ATTEMPTS,
     DEFAULT_TRANSLATION_MAX_LENGTH_RATIO,
+    DEFAULT_TRANSLATION_MAX_TOKENS,
     DEFAULT_TRANSLATION_MIN_LENGTH_RATIO,
     DEFAULT_TRANSLATION_MODEL,
+    DEFAULT_TRANSLATION_ENTITY_MEMORY_CAP,
+    DEFAULT_TRANSLATION_EVALUATE,
+    DEFAULT_TRANSLATION_LEXICON_MIN_SCORE,
+    DEFAULT_TRANSLATION_LEXICON_RESULT_COUNT,
     TranslationSettings,
 )
 
@@ -114,6 +121,91 @@ def test_translation_settings_from_mapping_custom() -> None:
     assert settings.min_length_ratio == 0.2
     assert settings.max_length_ratio == 2.0
     assert settings.acceptance_score == 0.85
+
+
+def test_translation_settings_new_fields_defaults() -> None:
+    settings = TranslationSettings()
+    assert settings.lexicon_result_count == DEFAULT_TRANSLATION_LEXICON_RESULT_COUNT
+    assert settings.lexicon_min_score == DEFAULT_TRANSLATION_LEXICON_MIN_SCORE
+    assert settings.evaluate_enabled is DEFAULT_TRANSLATION_EVALUATE
+    assert settings.max_tokens == DEFAULT_TRANSLATION_MAX_TOKENS
+    assert settings.entity_memory_cap == DEFAULT_TRANSLATION_ENTITY_MEMORY_CAP
+
+
+def test_translation_settings_new_fields_env_overrides(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OMNISCRIBE_TRANSLATION_EVALUATE", "false")
+    monkeypatch.setenv("OMNISCRIBE_TRANSLATION_LEXICON_RESULT_COUNT", "5")
+    monkeypatch.setenv("OMNISCRIBE_TRANSLATION_LEXICON_MIN_SCORE", "0.5")
+    monkeypatch.setenv("OMNISCRIBE_TRANSLATION_MAX_TOKENS", "4096")
+    monkeypatch.setenv("OMNISCRIBE_TRANSLATION_ENTITY_MEMORY_CAP", "10")
+    settings = TranslationSettings.from_env()
+    assert settings.evaluate_enabled is False
+    assert settings.lexicon_result_count == 5
+    assert settings.lexicon_min_score == 0.5
+    assert settings.max_tokens == 4096
+    assert settings.entity_memory_cap == 10
+
+
+def test_translation_settings_bool_env_variants(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for raw, expected in [("1", True), ("yes", True), ("0", False), ("off", False)]:
+        monkeypatch.setenv("OMNISCRIBE_TRANSLATION_EVALUATE", raw)
+        assert TranslationSettings.from_env().evaluate_enabled is expected
+
+
+def test_translation_settings_invalid_bool_env_warns_and_falls_back(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setenv("OMNISCRIBE_TRANSLATION_EVALUATE", "maybe")
+    with caplog.at_level(logging.WARNING, logger="omniscribe.core.translate.config"):
+        settings = TranslationSettings.from_env()
+    assert settings.evaluate_enabled is True
+    assert "OMNISCRIBE_TRANSLATION_EVALUATE" in caplog.text
+
+
+def test_translation_settings_invalid_int_env_warns(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setenv("OMNISCRIBE_TRANSLATION_MAX_ATTEMPTS", "notanint")
+    with caplog.at_level(logging.WARNING, logger="omniscribe.core.translate.config"):
+        settings = TranslationSettings.from_env()
+    assert settings.max_attempts == DEFAULT_TRANSLATION_MAX_ATTEMPTS
+    assert "OMNISCRIBE_TRANSLATION_MAX_ATTEMPTS" in caplog.text
+
+
+def test_translation_settings_new_fields_validation() -> None:
+    with pytest.raises(ValueError, match="lexicon_result_count must be >= 1"):
+        TranslationSettings(lexicon_result_count=0)
+    with pytest.raises(ValueError, match="lexicon_result_count must be an integer"):
+        TranslationSettings(lexicon_result_count=True)
+    with pytest.raises(ValueError, match="max_tokens must be >= 1"):
+        TranslationSettings(max_tokens=0)
+    with pytest.raises(ValueError, match="entity_memory_cap must be an integer"):
+        TranslationSettings(entity_memory_cap=False)
+    with pytest.raises(
+        ValueError, match="lexicon_min_score must be between 0.0 and 1.0"
+    ):
+        TranslationSettings(lexicon_min_score=1.5)
+
+
+def test_translation_settings_from_mapping_new_fields() -> None:
+    settings = TranslationSettings.from_mapping(
+        {
+            "lexicon_result_count": 7,
+            "lexicon_min_score": 0.4,
+            "evaluate_enabled": False,
+            "max_tokens": 1024,
+            "entity_memory_cap": 5,
+        }
+    )
+    assert settings.lexicon_result_count == 7
+    assert settings.lexicon_min_score == 0.4
+    assert settings.evaluate_enabled is False
+    assert settings.max_tokens == 1024
+    assert settings.entity_memory_cap == 5
 
 
 def test_translation_settings_post_init_validation() -> None:
