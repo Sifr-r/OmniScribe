@@ -33,13 +33,18 @@ from .helpers import (
     merged_enabled_glossary,
     preview,
 )
-from .lancedb_store import LanceDBLexiconStore
+from .lancedb_store import (
+    EmbeddingModelMismatchError,
+    LanceDBLexiconStore,
+)
 from .store import (
     GlossaryMeta,
     LexiconEntry,
     LexiconHit,
     LexiconQuery,
     LexiconStore,
+    entry_hash,
+    normalize_term,
     now_utc,
 )
 
@@ -88,6 +93,7 @@ __all__ = [
     "EMBEDDING_DIM",
     "EMBEDDING_MODEL_NAME",
     "EmbeddingModel",
+    "EmbeddingModelMismatchError",
     "GlossaryMeta",
     "GlossaryNotFoundError",
     "LanceDBLexiconStore",
@@ -95,9 +101,11 @@ __all__ = [
     "LexiconHit",
     "LexiconQuery",
     "LexiconStore",
+    "entry_hash",
     "get_default_embedding_model",
     "get_default_store",
     "merged_enabled_glossary",
+    "normalize_term",
     "now_utc",
     "preview",
     "reset_default_store",

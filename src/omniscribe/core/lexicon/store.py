@@ -94,10 +94,16 @@ class LexiconQuery:
 
 @dataclass(frozen=True, slots=True)
 class LexiconHit:
-    """A single result from a :class:`LexiconQuery`."""
+    """A single result from a :class:`LexiconQuery`.
+
+    ``score`` is the vector-leg cosine similarity clamped to 0.0-1.0;
+    ``keyword_score`` is the deterministic keyword evidence (1.0 exact,
+    0.8 prefix, 0.6 substring, 0.0 absent).
+    """
 
     entry: LexiconEntry
-    score: float  # cosine similarity in 0.0 to 1.0
+    score: float
+    keyword_score: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -166,6 +172,13 @@ class LexiconStore(Protocol):
     def list_entries(self, glossary_id: str) -> list[LexiconEntry]: ...
 
     # --- Maintenance --------------------------------------------------------
+    def fingerprint(self) -> str:
+        """Cheap content fingerprint of the glossary library.
+
+        Stable until any save/toggle/delete mutation. Lets callers cache
+        derived artifacts (e.g. translations) keyed on lexicon state.
+        """
+        ...
     def health(self) -> dict[str, object]: ...
     def close(self) -> None: ...
 

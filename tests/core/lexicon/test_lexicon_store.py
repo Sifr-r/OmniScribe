@@ -540,3 +540,73 @@ def test_legacy_table_without_entry_hash_gets_backfilled(tmp_path: Path) -> None
     entries = store.list_entries(meta.id)
     assert entries[0].source_text == "x"
     store.close()
+
+
+# ---------------------------------------------------------------------------
+# Hybrid search: keyword leg + RRF fusion (LLM-remediation wave)
+# ---------------------------------------------------------------------------
+
+
+def test_hybrid_rff_surfaces_exact_acronym(store: LanceDBLexiconStore) -> None:
+    """An acronym exact-match must outrank a keyword-less vector hit."""
+    store.save_glossary(
+        name="g",
+        format="csv",
+        entries=[
+            {"source": "GDPR", "target": "RGPD"},
+            {"source": "privacy regulation", "target": "règlement"},
+        ],
+    )
+    hits = store.hybrid_query(LexiconQuery(source_chunk="GDPR compliance", limit=2))
+    assert hits, "expected at least one hit"
+    assert hits[0].entry.source_text == "GDPR"
+    assert hits[0].keyword_score > 0.0  # type: ignore[typeddict-item]
+
+
+def test_keyword_only_match_survives_low_cosine(store: LanceDBLexiconStore) -> None:
+    """A keyword-exact entry must not be dropped by a strict cosine floor."""
+    store.save_glossary(
+        name="g", format="csv", entries=[{"source": "XK-942", "target": "XK-942-B"}]
+    )
+    hits = store.hybrid_query(
+        LexiconQuery(source_chunk="ref XK-942 unit", limit=3, min_score=0.9)
+    )
+    assert [h.entry.source_text for h in hits] == ["XK-942"]
+
+
+def test_min_score_drops_weak_vector_only_hits(store: LanceDBLexiconStore) -> None:
+    store.save_glossary(
+        name="g",
+        format="csv",
+        entries=[{"source": "unrelated term", "target": "terme sans rapport"}],
+    )
+    hits = store.hybrid_query(
+        LexiconQuery(source_chunk="completely other words", limit=3, min_score=0.99)
+    )
+    assert hits == []
+
+
+def test_fingerprint_stable_until_mutation(store: LanceDBLexiconStore) -> None:
+    fp1 = store.fingerprint()
+    assert store.fingerprint() == fp1
+    store.save_glossary(
+        name="g", format="csv", entries=[{"source": "a", "target": "A"}]
+    )
+    assert store.fingerprint() != fp1
+    meta = store.get_glossary(store.list_glossaries()[0].id)
+    assert meta is not None
+    store.toggle_glossary(meta.id, enabled=False)
+    assert store.fingerprint() != fp1
+
+
+def test_hybrid_query_logs_hits_debug(
+    store: LanceDBLexiconStore, caplog: pytest.LogCaptureFixture
+) -> None:
+    import logging
+
+    store.save_glossary(
+        name="g", format="csv", entries=[{"source": "dog", "target": "perro"}]
+    )
+    with caplog.at_level(logging.DEBUG, logger="omniscribe.core.lexicon.lancedb_store"):
+        store.hybrid_query(LexiconQuery(source_chunk="dog", limit=3))
+    assert any("lexicon query" in r.message for r in caplog.records)

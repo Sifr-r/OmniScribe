@@ -22,7 +22,9 @@ Key design points
 
 from __future__ import annotations
 
+import hashlib
 import logging
+import os
 import threading
 import uuid
 from collections.abc import Callable, Iterable, Sequence
@@ -39,6 +41,7 @@ from .lancedb_helpers import (
     _sql_escape,
     _to_utc_datetime,
 )
+from .query_terms import candidate_terms
 from .schema import LEXICON_SCHEMA, VECTOR_INDEX_SPEC
 from .store import (
     GlossaryMeta,
@@ -46,6 +49,7 @@ from .store import (
     LexiconHit,
     LexiconQuery,
     entry_hash,
+    normalize_term,
     now_utc,
 )
 
@@ -257,6 +261,26 @@ class LanceDBLexiconStore:
         self._db = None
         self._table = None
 
+    def fingerprint(self) -> str:
+        """Cheap content fingerprint of the glossary library (Protocol).
+
+        Cached in-process; invalidated by save/toggle/delete/reorder.
+        """
+        if self._fingerprint_cache is not None:
+            return self._fingerprint_cache
+        try:
+            metas = self.list_glossaries()
+        except Exception:
+            return "unavailable"
+        payload = "|".join(
+            f"{m.id}:{m.name}:{m.entry_count}:{int(m.enabled)}"
+            for m in sorted(metas, key=lambda m: m.id)
+        )
+        self._fingerprint_cache = hashlib.sha256(payload.encode("utf-8")).hexdigest()[
+            :16
+        ]
+        return self._fingerprint_cache
+
     def health(self) -> dict[str, object]:
         self._ensure_open()
         try:
@@ -463,6 +487,7 @@ class LanceDBLexiconStore:
             for e, emb in zip(normalized, embeddings, strict=True)
         ]
         self._table.add(rows)
+        self._fingerprint_cache = None
         logger.info(
             "Saved glossary %s (%s) with %d entries", glossary_id, clean_name, len(rows)
         )
@@ -527,6 +552,7 @@ class LanceDBLexiconStore:
             # Only delete the original partition after the new rows are
             # durably appended.
             self._table.delete(where=f"glossary_id = '{escaped_target}'")
+        self._fingerprint_cache = None
         meta = self.get_glossary(target)
         if meta is None:
             raise GlossaryNotFoundError(target)
@@ -552,6 +578,7 @@ class LanceDBLexiconStore:
                 where=f"glossary_id = '{escaped_gid}'",
                 values={"glossary_priority": new_priority},
             )
+        self._fingerprint_cache = None
 
     def delete_glossary(self, glossary_id: str) -> bool:
         self._ensure_open()
@@ -570,9 +597,60 @@ class LanceDBLexiconStore:
             if self.get_glossary(target) is None:
                 return False
         self._table.delete(where=f"glossary_id = '{escaped_target}'")
+        self._fingerprint_cache = None
         return True
 
     # --- Read API (used by translation RAG) ---------------------------------
+
+    # Hybrid retrieval (LLM-remediation wave): the "hybrid" query used to be
+    # vector-only — acronyms, model numbers, and CJK proper nouns (a
+    # glossary's bread and butter) are exactly what cosine-only search
+    # misses. The query now fuses:
+    #   vector leg — cosine ANN over the chunk (truncated to the embedding
+    #     window) plus extracted candidate terms, per-entry max;
+    #   keyword leg — deterministic normalized exact/prefix/substring match
+    #     (deliberately no FTS/tantivy dependency; CJK-safe);
+    # fused by reciprocal rank fusion with env-tunable leg weights.
+
+    RRF_K = 60
+    # Projection for keyword/row lookups: everything except the embedding
+    # column, so scans don't drag vectors into memory.
+    _KEYWORD_PROJECTION = [
+        "id",
+        "glossary_id",
+        "source_text",
+        "target_text",
+        "source_lang",
+        "target_lang",
+        "domain",
+        "register",
+        "pos",
+        "case_sensitive",
+        "notes",
+        "source_uri",
+        "source_format",
+        "usage_count",
+        "entry_hash",
+        "created_at",
+        "updated_at",
+        "glossary_name",
+        "glossary_enabled",
+        "glossary_priority",
+        "glossary_group",
+        "glossary_source_uri",
+        "glossary_encoding",
+    ]
+
+    @staticmethod
+    def _env_float(name: str, default: float) -> float:
+        raw = os.getenv(name)
+        if raw is None or not raw.strip():
+            return default
+        try:
+            return float(raw)
+        except ValueError:
+            logger.warning("Env %s=%r invalid; using default %s", name, raw, default)
+            return default
 
     def hybrid_query(self, query: LexiconQuery) -> list[LexiconHit]:
         self._ensure_open()
@@ -584,9 +662,6 @@ class LanceDBLexiconStore:
             row_count = self._table.to_arrow().num_rows
         if row_count == 0:
             return []
-
-        # Embed the source chunk and search via LanceDB's native vector search.
-        # Falls back to in-memory Arrow/NumPy cosine similarity if vector query fails.
         return self._hybrid_via_lancedb(query)
 
     def exact_lookup(
@@ -597,9 +672,10 @@ class LanceDBLexiconStore:
         target_lang: str,
     ) -> list[LexiconEntry]:
         self._ensure_open()
-        target_clean = source_text.strip().lower()
-        if not target_clean:
+        probe = source_text.strip()
+        if not probe:
             return []
+        probe_norm = normalize_term(probe)
         where_parts: list[str] = []
         if source_lang:
             where_parts.append(f"source_lang = '{_sql_escape(source_lang)}'")
@@ -617,12 +693,17 @@ class LanceDBLexiconStore:
 
         entries: list[LexiconEntry] = []
         for row in tbl.to_pylist():
-            if str(row.get("source_text", "")).strip().lower() == target_clean:
-                if source_lang and str(row.get("source_lang", "")) != source_lang:
+            row_source = str(row.get("source_text", "")).strip()
+            if bool(row.get("case_sensitive", False)):
+                if row_source != probe:
                     continue
-                if target_lang and str(row.get("target_lang", "")) != target_lang:
-                    continue
-                entries.append(_entry_from_row(row))
+            elif normalize_term(row_source) != probe_norm:
+                continue
+            if source_lang and str(row.get("source_lang", "")) != source_lang:
+                continue
+            if target_lang and str(row.get("target_lang", "")) != target_lang:
+                continue
+            entries.append(_entry_from_row(row))
         return entries
 
     def list_entries(self, glossary_id: str) -> list[LexiconEntry]:
@@ -663,62 +744,183 @@ class LanceDBLexiconStore:
         return True
 
     def _hybrid_via_lancedb(self, query: LexiconQuery) -> list[LexiconHit]:
-        vector = self._embedding.embed(query.source_chunk)
-        if not vector:
-            return []
-        try:
-            search = (
-                self._table.search(vector, vector_column_name="embedding")
-                .metric("cosine")
-                .limit(max(query.limit * 4, 16))  # over-fetch to absorb prefilter
-            )
-            where_clauses = self._build_where(query)
-            if where_clauses:
-                search = search.where(where_clauses)
-            arrow_tbl = search.to_arrow()
-            if arrow_tbl.num_rows == 0:
-                return []
-            raw = arrow_tbl.to_pylist()
-        except Exception as exc:
+        terms = candidate_terms(query.source_chunk)
+        # The embedding window is ~128 tokens for the pinned MiniLM model;
+        # a 4000-char chunk is silently truncated by the encoder, so cap
+        # the chunk query explicitly and let candidate terms carry the
+        # tail of the chunk.
+        query_texts = [query.source_chunk[:512], *terms[:4]]
+        if len(query.source_chunk) > 512:
             logger.warning(
-                "LanceDB hybrid search failed: %s; falling back to Arrow/NumPy search",
-                exc,
+                "Lexicon query chunk is %d chars; truncated to 512 for the "
+                "embedding window (the keyword leg still sees the full chunk).",
+                len(query.source_chunk),
             )
-            return self._hybrid_via_arrow(query)
-        hits: list[LexiconHit] = []
-        for row in raw:
-            distance = float(row.get("_distance", 0.0))
-            score = 1.0 - distance  # cosine distance → similarity
-            if query.min_score is not None and score < query.min_score:
+        try:
+            query_vecs = self._embedding.embed_batch(query_texts)
+        except Exception:
+            query_vecs = [self._embedding.embed(t) for t in query_texts]
+        if not query_vecs or not any(query_vecs):
+            return []
+
+        where_clauses = self._build_where(query)
+        over = max(query.limit * 3, 24)
+        vector_scores: dict[str, float] = {}
+        for vec in query_vecs:
+            if not vec:
                 continue
-            entry = _entry_from_row(row)
-            hits.append(LexiconHit(entry=entry, score=score))
+            try:
+                search = (
+                    self._table.search(vec, vector_column_name="embedding")
+                    .metric("cosine")
+                    .limit(over)
+                )
+                if where_clauses:
+                    search = search.where(where_clauses, prefilter=True)
+                raw = search.to_arrow().to_pylist()
+            except Exception as exc:
+                logger.warning(
+                    "LanceDB vector search failed: %s; falling back to Arrow search",
+                    exc,
+                )
+                return self._hybrid_via_arrow(query)
+            for row in raw:
+                row_id = str(row.get("id"))
+                score = max(0.0, min(1.0, 1.0 - float(row.get("_distance", 1.0))))
+                if score > vector_scores.get(row_id, 0.0):
+                    vector_scores[row_id] = score
+
+        keyword_scores = self._keyword_scores(query)
+        fused = self._rrf_fuse(vector_scores, keyword_scores, over)
+        if not fused:
+            return []
+
+        rows_by_id = self._rows_by_id({gid for gid, _ in fused})
+        min_score = query.min_score if query.min_score is not None else 0.0
+        hits: list[LexiconHit] = []
+        for gid, _rrf in fused:
+            row = rows_by_id.get(gid)
+            if row is None:
+                continue
+            cos = vector_scores.get(gid, 0.0)
+            kw = keyword_scores.get(gid, 0.0)
+            # The cosine floor applies to vector-only evidence; a strong
+            # keyword match survives a weak cosine (exact acronyms, codes).
+            if cos < min_score and kw < 0.8:
+                continue
+            hits.append(
+                LexiconHit(entry=_entry_from_row(row), score=cos, keyword_score=kw)
+            )
             if len(hits) >= query.limit:
                 break
+        if hits:
+            logger.debug(
+                "lexicon query terms=%s top=%s",
+                terms[:3],
+                [
+                    (h.entry.source_text, round(h.score, 3), round(h.keyword_score, 2))
+                    for h in hits[:3]
+                ],
+            )
         return hits
 
-    def _hybrid_via_arrow(self, query: LexiconQuery) -> list[LexiconHit]:
-        """Fallback ranking when ``_hybrid_via_lancedb`` failed.
+    def _keyword_scores(self, query: LexiconQuery) -> dict[str, float]:
+        """Deterministic keyword evidence: exact > prefix > substring.
 
-        Audit catalog: push the supported subset of the WHERE clause
-        into LanceDB before materialising the full table; the
-        remaining predicates (``enabled_only``, ``glossary_ids``,
-        and any filter ``_build_where`` rejected) still apply
-        in-Python via :meth:`_matches_query`. This trims the row
-        set the cosine pass has to score for the common case
-        where the primary path's failure was unrelated to the
-        filter (e.g. vector column missing, search index disabled).
+        Scans a non-embedding projection of the (already SQL-filtered) rows
+        and scores normalized term matches. O(rows) per query — fine at
+        personal-scale lexicons, and it keeps the store dependency-free.
+        """
+        terms = [normalize_term(t) for t in candidate_terms(query.source_chunk)]
+        chunk_norm = normalize_term(query.source_chunk[:80])
+        if chunk_norm:
+            terms.append(chunk_norm)
+        if not any(terms):
+            return {}
+        try:
+            search = self._table.search()
+            where = self._build_where(query)
+            if where:
+                search = search.where(where, prefilter=True)
+            tbl = search.to_arrow()
+            cols = [
+                c
+                for c in self._KEYWORD_PROJECTION
+                if c in tbl.column_names
+            ]
+            rows = tbl.select(cols).to_pylist()
+        except Exception as exc:
+            logger.debug("keyword leg scan failed: %s", exc)
+            return {}
+        scores: dict[str, float] = {}
+        for row in rows:
+            source_norm = normalize_term(str(row.get("source_text", "")))
+            best = 0.0
+            for term in terms:
+                if not term:
+                    continue
+                if source_norm == term:
+                    best = max(best, 1.0)
+                elif source_norm.startswith(term) or term.startswith(source_norm):
+                    best = max(best, 0.8)
+                elif term in source_norm:
+                    best = max(best, 0.6)
+            if best:
+                scores[str(row.get("id"))] = best
+        return scores
+
+    def _rrf_fuse(
+        self,
+        vector_scores: dict[str, float],
+        keyword_scores: dict[str, float],
+        depth: int,
+    ) -> list[tuple[str, float]]:
+        """Reciprocal-rank fusion of the two legs, ordered best-first."""
+        vector_weight = self._env_float("OMNISCRIBE_LEXICON_VECTOR_WEIGHT", 0.6)
+        keyword_weight = self._env_float("OMNISCRIBE_LEXICON_KEYWORD_WEIGHT", 0.4)
+        fused: dict[str, float] = {}
+        for rank, (gid, _score) in enumerate(
+            sorted(vector_scores.items(), key=lambda kv: -kv[1])[:depth]
+        ):
+            fused[gid] = fused.get(gid, 0.0) + vector_weight / (self.RRF_K + rank + 1)
+        for rank, (gid, _score) in enumerate(
+            sorted(keyword_scores.items(), key=lambda kv: -kv[1])[:depth]
+        ):
+            fused[gid] = fused.get(gid, 0.0) + keyword_weight / (self.RRF_K + rank + 1)
+        return sorted(fused.items(), key=lambda kv: -kv[1])
+
+    def _rows_by_id(self, ids: set[str]) -> dict[str, dict[str, Any]]:
+        if not ids:
+            return {}
+        escaped = ", ".join(f"'{_sql_escape(g)}'" for g in ids)
+        rows: dict[str, dict[str, Any]] = {}
+        try:
+            tbl = self._table.search().where(f"id IN ({escaped})").to_arrow()
+            cols = [c for c in self._KEYWORD_PROJECTION if c in tbl.column_names]
+            rows = {str(r["id"]): r for r in tbl.select(cols).to_pylist()}
+        except Exception:
+            try:
+                tbl = self._table.to_arrow()
+                cols = [c for c in self._KEYWORD_PROJECTION if c in tbl.column_names]
+                for r in tbl.select(cols).to_pylist():
+                    if str(r.get("id")) in ids:
+                        rows[str(r["id"])] = r
+            except Exception:
+                return {}
+        return rows
+
+    def _hybrid_via_arrow(self, query: LexiconQuery) -> list[LexiconHit]:
+        """Fallback ranking when the LanceDB vector search path failed.
+
+        Pushes the supported WHERE subset into LanceDB before materialising
+        rows; remaining predicates apply in-Python via :meth:`_matches_query`.
+        Pure-vector (degraded path) with clamped scores.
         """
         import numpy as np
 
         try:
             where = self._build_where(query)
             if where:
-                # Audit catalog: ``db_search().where(filter)`` instead
-                # of materialising the entire table and filtering in
-                # Python. Only used here when the primary path
-                # already failed; we still keep the in-Python pass
-                # for filter clauses ``_build_where`` does not cover.
                 tbl = self._table.search().where(where).to_arrow()
             else:
                 tbl = self._table.to_arrow()
@@ -739,18 +941,19 @@ class LanceDBLexiconStore:
             self._embedding.embed(query.source_chunk), dtype=np.float32
         )
         emb_matrix = np.asarray([r["embedding"] for r in candidates], dtype=np.float32)
-        # Cosine similarity
         qn = query_vec / (np.linalg.norm(query_vec) + 1e-12)
         en = emb_matrix / (np.linalg.norm(emb_matrix, axis=1, keepdims=True) + 1e-12)
         scores = en @ qn
-        order = np.argsort(-scores)  # descending
+        order = np.argsort(-scores)
         hits: list[LexiconHit] = []
         for idx in order:
-            score = float(scores[idx])
+            score = max(0.0, min(1.0, float(scores[idx])))
             if query.min_score is not None and score < query.min_score:
                 continue
             row = candidates[int(idx)]
-            hits.append(LexiconHit(entry=_entry_from_row(row), score=score))
+            hits.append(
+                LexiconHit(entry=_entry_from_row(row), score=score, keyword_score=0.0)
+            )
             if len(hits) >= query.limit:
                 break
         return hits
