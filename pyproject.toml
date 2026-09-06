@@ -26,7 +26,7 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 dependencies = [
-    "openai>=2.11.0,<3",
+    "openai>=3.6.0,<4",
     "pillow>=11.3",
     "pymupdf>=1.26.7,<2",  # AGPL-3.0; see THIRD_PARTY_LICENSES.md
     "python-dotenv>=1.2.1",
