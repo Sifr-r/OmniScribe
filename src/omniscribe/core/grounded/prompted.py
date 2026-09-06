@@ -54,8 +54,10 @@ from omniscribe.utils.prompt_safety import sanitize_prompt_input
 
 logger = logging.getLogger(__name__)
 
-# Bumped when the user-facing prompt body changes.
-PROMPT_VERSION = "2026-08-15.v1"
+# Bumped when the user-facing prompt body changes. Named independently
+# from the OCR / translation prompt versions so a future bump here does
+# not imply one anywhere else.
+GROUNDED_PROMPT_VERSION = "2026-08-15.v1"
 
 DEFAULT_GROUNDING_PROMPT = (
     "You are an exhaustive OCR engine. Output a JSON array covering EVERY "
@@ -541,7 +543,7 @@ __all__ = [
     "CROP_OCR_PROMPT",
     "DEFAULT_GROUNDING_PROMPT",
     "GROUNDED_OCR_SYSTEM_MESSAGE",
-    "PROMPT_VERSION",
+    "GROUNDED_PROMPT_VERSION",
     "REPAIR_CROP_PROMPT",
     "PromptedGroundedOCR",
 ]

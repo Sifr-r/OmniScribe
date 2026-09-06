@@ -519,6 +519,142 @@ class TestProcessorSystemPromptWiring:
         )
         assert captured["temperature"] == 0.2
 
+    async def test_page_correction_empty_keeps_first_pass(self):
+        """An empty correction pass must not erase a valid first pass."""
+        proc = self._make_processor(model="qwen/qwen3-vl-8b")
+        responses = ["First pass text", ""]
+
+        async def fake_chat(
+            prompt,
+            image_base64,
+            *,
+            timeout,
+            max_tokens,
+            system_prompt=None,
+            temperature=None,
+        ):
+            return responses.pop(0)
+
+        proc._chat = fake_chat  # type: ignore[method-assign]
+        lines = await proc.perform_ocr(image_base64="aW1hZ2U=", self_correction=True)
+        assert lines == ["First pass text"]
+
+    async def test_page_correction_fallback_keeps_first_pass(self):
+        """A fallback-response correction (pangram) keeps the first pass."""
+        proc = self._make_processor(model="qwen/qwen3-vl-8b")
+        responses = [
+            "First pass text",
+            "The quick brown fox jumps over the lazy dog.",
+        ]
+
+        async def fake_chat(
+            prompt,
+            image_base64,
+            *,
+            timeout,
+            max_tokens,
+            system_prompt=None,
+            temperature=None,
+        ):
+            return responses.pop(0)
+
+        proc._chat = fake_chat  # type: ignore[method-assign]
+        lines = await proc.perform_ocr(image_base64="aW1hZ2U=", self_correction=True)
+        assert lines == ["First pass text"]
+
+    async def test_page_correction_valid_result_replaces_first_pass(self):
+        proc = self._make_processor(model="qwen/qwen3-vl-8b")
+        responses = ["First pass text", "Corrected page text"]
+
+        async def fake_chat(
+            prompt,
+            image_base64,
+            *,
+            timeout,
+            max_tokens,
+            system_prompt=None,
+            temperature=None,
+        ):
+            return responses.pop(0)
+
+        proc._chat = fake_chat  # type: ignore[method-assign]
+        lines = await proc.perform_ocr(image_base64="aW1hZ2U=", self_correction=True)
+        assert lines == ["Corrected page text"]
+
+    async def test_crop_correction_fallback_keeps_first_pass(self):
+        proc = self._make_processor(model="qwen/qwen3-vl-8b")
+        responses = [
+            "first crop text",
+            "The quick brown fox jumps over the lazy dog.",
+        ]
+
+        async def fake_chat(
+            prompt,
+            image_base64,
+            *,
+            timeout,
+            max_tokens,
+            system_prompt=None,
+            temperature=None,
+        ):
+            return responses.pop(0)
+
+        proc._chat = fake_chat  # type: ignore[method-assign]
+        result = await proc.perform_ocr_on_crop(
+            image_base64="aW1hZ2U=", self_correction=True
+        )
+        assert result == "first crop text"
+
+    async def test_crop_correction_empty_keeps_first_pass(self):
+        proc = self._make_processor(model="qwen/qwen3-vl-8b")
+        responses = ["first crop text", ""]
+
+        async def fake_chat(
+            prompt,
+            image_base64,
+            *,
+            timeout,
+            max_tokens,
+            system_prompt=None,
+            temperature=None,
+        ):
+            return responses.pop(0)
+
+        proc._chat = fake_chat  # type: ignore[method-assign]
+        result = await proc.perform_ocr_on_crop(
+            image_base64="aW1hZ2U=", self_correction=True
+        )
+        assert result == "first crop text"
+
+    async def test_crop_correction_valid_result_replaces_first_pass(self):
+        proc = self._make_processor(model="qwen/qwen3-vl-8b")
+        responses = ["first crop text", "corrected crop text"]
+
+        async def fake_chat(
+            prompt,
+            image_base64,
+            *,
+            timeout,
+            max_tokens,
+            system_prompt=None,
+            temperature=None,
+        ):
+            return responses.pop(0)
+
+        proc._chat = fake_chat  # type: ignore[method-assign]
+        result = await proc.perform_ocr_on_crop(
+            image_base64="aW1hZ2U=", self_correction=True
+        )
+        assert result == "corrected crop text"
+
+    def test_prompt_versions_are_independent_constants(self) -> None:
+        """Same value today, independent names so future bumps don't collide."""
+        from omniscribe.core.grounded import prompted
+        from omniscribe.core.translate import nodes
+
+        assert prompted.GROUNDED_PROMPT_VERSION == PROMPT_VERSION
+        assert nodes.TRANSLATION_PROMPT_VERSION == PROMPT_VERSION
+
     async def test_dual_engine_crop_path_sends_dual_engine_system_message(self):
         proc = self._make_processor(model="qwen/qwen3-vl-8b")
         captured: list = []

@@ -36,7 +36,7 @@ from omniscribe.utils.prompt_safety import sanitize_prompt_input
 logger = logging.getLogger(__name__)
 
 # Bumped when the user-facing prompt body changes.
-PROMPT_VERSION = "2026-08-15.v1"
+TRANSLATION_PROMPT_VERSION = "2026-08-15.v1"
 
 # System role companion for the async translation loop. Same
 # "preserve URLs / identifiers / brand names" guard the sync path

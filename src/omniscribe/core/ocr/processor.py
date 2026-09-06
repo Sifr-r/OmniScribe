@@ -347,9 +347,11 @@ class OCRProcessor:
         system message around their user turns.
 
         ``self_correction`` runs a second full-budget VLM pass over the same
-        image with the correction prompt and unconditionally replaces the
-        first-pass text (accept-always; unlike TrOCR arbitration there is no
-        confidence comparison). An empty correction pass returns no lines.
+        image with the correction prompt. The corrected text replaces the
+        first pass only when it is non-empty and not a fallback response —
+        an empty/degenerate correction keeps the first-pass text instead of
+        erasing a valid reading (audit fix: the old accept-always path
+        discarded good OCR whenever the correction pass came back blank).
         """
         if binarize:
             image_base64 = await asyncio.to_thread(
@@ -387,8 +389,9 @@ class OCRProcessor:
             return []
 
         if self_correction:
+            first_pass = text
             correction_prompt = fill_correction_page(text)
-            text = await self._chat(
+            corrected = await self._chat(
                 correction_prompt,
                 image_base64,
                 timeout=self.page_timeout_s,
@@ -399,8 +402,13 @@ class OCRProcessor:
                     dual_engine=dual_engine,
                 ),
             )
-            if not text:
-                return []
+            # Audit fix: accept-always erased valid first passes when the
+            # correction came back empty/fallback — fall back instead.
+            text = (
+                corrected
+                if corrected and not _is_fallback_response(corrected)
+                else first_pass
+            )
 
         body = _strip_yaml_front_matter(text)
         lines = [line.strip() for line in body.split("\n") if line.strip()]
@@ -478,9 +486,10 @@ class OCRProcessor:
 
         Empty-string for blank/uncertain crops (filtered hallucination).
 
-        ``self_correction`` runs a second VLM pass with the correction prompt
-        and unconditionally replaces the first-pass text (accept-always); an
-        empty correction pass returns "".
+        ``self_correction`` runs a second VLM pass with the correction prompt.
+        The corrected text replaces the first pass only when it is non-empty
+        and not a fallback response; an empty/degenerate correction keeps the
+        first-pass text (same audit fix as the page path).
 
         ``repair_hint`` (quality repair loop) is appended verbatim after
         sanitization so the VLM sees its rejected previous attempt;
@@ -523,16 +532,22 @@ class OCRProcessor:
             return ""
 
         if self_correction:
+            first_pass = text
             correction_prompt = fill_correction_crop(text)
-            text = await self._chat(
+            corrected = await self._chat(
                 correction_prompt,
                 image_base64,
                 timeout=self.crop_timeout_s,
                 max_tokens=self.crop_max_tokens,
                 system_prompt=crop_system,
             )
-            if not text:
-                return ""
+            # Same audit fix as the page path: an empty/fallback
+            # correction keeps the first-pass text.
+            text = (
+                corrected
+                if corrected and not _is_fallback_response(corrected)
+                else first_pass
+            )
 
         body = _strip_yaml_front_matter(text)
         result = " ".join(line.strip() for line in body.split("\n") if line.strip())
