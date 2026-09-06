@@ -7,8 +7,9 @@ Key design points
 
 * Single table ``terms`` (see :mod:`omniscribe.core.lexicon.schema`) —
   glossary-level metadata is denormalized into every row.
-* HNSW vector index on the ``embedding`` column, built lazily on first
-  query. Switch to IVF-PQ in the schema config for >100k entries.
+* HNSW vector index on the ``embedding`` column, created at open and
+  re-ensured after bulk imports (>= 128 rows). Switch to IVF-PQ in the
+  schema config for >100k entries.
 * All writes are append-only on the row level. ``delete_glossary`` is a
   logical delete via LanceDB's filter expression; this doesn't fragment
   the index and is the right call for personal-scale lexicons.
@@ -186,6 +187,7 @@ class LanceDBLexiconStore:
                 )
             self._ensure_meta_and_compat(existing)
             self._ensure_columns()
+            self._ensure_index()
             self._initialized = True
             logger.info("LanceDBLexiconStore opened at %s", self._path)
 
@@ -261,6 +263,33 @@ class LanceDBLexiconStore:
         self._db = None
         self._table = None
 
+    INDEX_MIN_ROWS = 128
+
+    def _ensure_index(self) -> None:
+        """Create the HNSW (or IVF-PQ) vector index per VECTOR_INDEX_SPEC.
+
+        Idempotent (``replace=True``) and try-guarded: index creation is an
+        optimization, never a correctness gate. Skipped below
+        ``INDEX_MIN_ROWS`` where a flat scan is cheaper than index upkeep.
+        """
+        try:
+            if self._table.count_rows() < self.INDEX_MIN_ROWS:
+                return
+            index_type = str(VECTOR_INDEX_SPEC["index_type"])
+            kwargs: dict[str, object] = {
+                "metric": VECTOR_INDEX_SPEC["metric"],
+                "vector_column_name": "embedding",
+                "index_type": index_type,
+                "replace": True,
+            }
+            if index_type == "ivf_pq":
+                kwargs["num_partitions"] = VECTOR_INDEX_SPEC["num_partitions"]
+                kwargs["num_sub_vectors"] = VECTOR_INDEX_SPEC["num_sub_vectors"]
+            self._table.create_index(**kwargs)  # type: ignore[arg-type]
+            logger.info("Vector index ensured (%s)", index_type)
+        except Exception as exc:
+            logger.debug("create_index skipped: %s", exc)
+
     def fingerprint(self) -> str:
         """Cheap content fingerprint of the glossary library (Protocol).
 
@@ -295,6 +324,13 @@ class LanceDBLexiconStore:
         except Exception:
             row_count = 0
             glossary_count = 0
+        index_status: object = "unknown"
+        try:
+            indices = self._table.list_indices()
+            names = [getattr(i, "name", str(i)) for i in indices]
+            index_status = names if names else "none"
+        except Exception:
+            pass
         return {
             "path": str(self._path),
             "table": self.TABLE_NAME,
@@ -303,6 +339,7 @@ class LanceDBLexiconStore:
             "embedding_dim": self._embedding.dim,
             "embedding_model": self._embedding.model_name,
             "index_spec": VECTOR_INDEX_SPEC,
+            "index_status": index_status,
         }
 
     # --- Glossary library CRUD ----------------------------------------------
@@ -488,6 +525,7 @@ class LanceDBLexiconStore:
         ]
         self._table.add(rows)
         self._fingerprint_cache = None
+        self._ensure_index()
         logger.info(
             "Saved glossary %s (%s) with %d entries", glossary_id, clean_name, len(rows)
         )

@@ -610,3 +610,52 @@ def test_hybrid_query_logs_hits_debug(
     with caplog.at_level(logging.DEBUG, logger="omniscribe.core.lexicon.lancedb_store"):
         store.hybrid_query(LexiconQuery(source_chunk="dog", limit=3))
     assert any("lexicon query" in r.message for r in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# Vector index creation (LLM-remediation wave)
+# ---------------------------------------------------------------------------
+
+
+def test_ensure_index_called_after_bulk_save(
+    store: LanceDBLexiconStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """save_glossary must drive idempotent index creation (>=128 rows)."""
+    calls: list[dict] = []
+    store._ensure_open()
+    real_create = store._table.create_index
+
+    def spy(**kwargs):
+        calls.append(kwargs)
+        return real_create(**kwargs)
+
+    monkeypatch.setattr(store._table, "create_index", spy, raising=False)
+    store.save_glossary(
+        name="bulk",
+        format="csv",
+        entries=[
+            {"source": f"term {i}", "target": f"terme {i}"} for i in range(200)
+        ],
+    )
+    assert calls, "create_index was never called"
+    assert calls[0]["index_type"] in {"hnsw", "ivf_pq"}
+    assert calls[0]["vector_column_name"] == "embedding"
+
+
+def test_index_skipped_below_threshold(
+    store: LanceDBLexiconStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[dict] = []
+    store._ensure_open()
+    monkeypatch.setattr(
+        store._table,
+        "create_index",
+        lambda **kw: calls.append(kw),
+        raising=False,
+    )
+    store.save_glossary(
+        name="small", format="csv", entries=[{"source": "a", "target": "A"}]
+    )
+    assert calls == []
+    health = store.health()
+    assert "index_status" in health
