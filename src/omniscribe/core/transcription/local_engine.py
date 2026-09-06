@@ -13,6 +13,7 @@ from omniscribe.core.transcription.types import (
     TranscriptionError,
     TranscriptionResult,
     TranscriptionSegment,
+    logprob_to_confidence,
 )
 
 logger = logging.getLogger(__name__)
@@ -112,7 +113,9 @@ class WhisperLocalEngine:
                         start=seg.start,
                         end=seg.end,
                         text=text_clean,
-                        confidence=getattr(seg, "avg_logprob", None),
+                        confidence=logprob_to_confidence(
+                            getattr(seg, "avg_logprob", None)
+                        ),
                         words=words,
                     )
                 )

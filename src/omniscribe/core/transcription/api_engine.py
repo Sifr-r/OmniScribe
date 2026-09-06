@@ -12,6 +12,7 @@ from omniscribe.core.transcription.types import (
     TranscriptionError,
     TranscriptionResult,
     TranscriptionSegment,
+    logprob_to_confidence,
 )
 
 logger = logging.getLogger(__name__)
@@ -125,9 +126,9 @@ class GenericAudioAPIEngine:
                     start=float(seg.get("start", 0.0)),
                     end=float(seg.get("end", 0.0)),
                     text=seg.get("text", "").strip(),
-                    confidence=float(seg.get("avg_logprob", 0.0))
-                    if "avg_logprob" in seg
-                    else None,
+                    confidence=logprob_to_confidence(
+                        float(seg["avg_logprob"]) if "avg_logprob" in seg else None
+                    ),
                     words=seg.get("words", []),
                 )
             )

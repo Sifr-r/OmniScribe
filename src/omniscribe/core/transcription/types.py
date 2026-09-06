@@ -2,10 +2,25 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from typing import Any
 
 from omniscribe.core.document import DocumentBlock, DocumentPage, DocumentResult
+
+
+def logprob_to_confidence(avg_logprob: float | None) -> float | None:
+    """Convert a log-domain ``avg_logprob`` into a ``[0, 1]`` confidence.
+
+    Whisper reports per-segment ``avg_logprob`` (log probability), which is
+    negative for anything short of certainty. Storing it directly as
+    ``confidence`` produced out-of-domain values (e.g. ``-0.15``) that broke
+    downstream consumers expecting ``0..1``; the proper confidence is
+    ``exp(avg_logprob)``. ``None`` passes through untouched.
+    """
+    if avg_logprob is None:
+        return None
+    return math.exp(avg_logprob)
 
 
 class TranscriptionError(Exception):

@@ -17,6 +17,7 @@ Covers:
 
 from __future__ import annotations
 
+import math
 import sys
 import threading
 from pathlib import Path
@@ -37,6 +38,7 @@ from omniscribe.core.transcription.types import (
     TranscriptionError,
     TranscriptionResult,
     TranscriptionSegment,
+    logprob_to_confidence,
 )
 from omniscribe.core.transcription.validation import (
     AudioValidationError,
@@ -46,6 +48,28 @@ from omniscribe.core.transcription.validation import (
 # Architectural aliases as specified in Domain 3 requirements
 LocalWhisperEngine = WhisperLocalEngine
 ApiWhisperEngine = GenericAudioAPIEngine
+
+
+class TestLogprobToConfidence:
+    """avg_logprob is a log-domain quantity; confidence must be exp()'d."""
+
+    def test_converts_negative_logprob_into_unit_interval(self) -> None:
+        assert logprob_to_confidence(-0.15) == pytest.approx(math.exp(-0.15))
+
+    def test_zero_logprob_is_perfect_confidence(self) -> None:
+        assert logprob_to_confidence(0.0) == 1.0
+
+    def test_none_passthrough(self) -> None:
+        assert logprob_to_confidence(None) is None
+
+    def test_very_negative_logprob_underflows_to_zero(self) -> None:
+        assert logprob_to_confidence(-100.0) == pytest.approx(0.0, abs=1e-6)
+
+    def test_result_is_always_in_unit_interval(self) -> None:
+        for lp in (-5.0, -2.0, -0.5, -0.01):
+            conf = logprob_to_confidence(lp)
+            assert conf is not None
+            assert 0.0 < conf <= 1.0
 
 
 # ---------------------------------------------------------------------------
@@ -245,7 +269,7 @@ class TestLocalWhisperEngineTranscribe:
         assert seg0.start == 0.0
         assert seg0.end == 1.0
         assert seg0.text == "Hello world"
-        assert seg0.confidence == -0.15
+        assert seg0.confidence == pytest.approx(math.exp(-0.15))
         assert len(seg0.words) == 2
         assert seg0.words[0] == {
             "word": "Hello",
@@ -259,7 +283,7 @@ class TestLocalWhisperEngineTranscribe:
         assert seg1.start == 1.2
         assert seg1.end == 3.4
         assert seg1.text == "OmniScribe offline audio test."
-        assert seg1.confidence == -0.22
+        assert seg1.confidence == pytest.approx(math.exp(-0.22))
         assert len(seg1.words) == 4
 
     async def test_transcribe_passes_parameters_to_whisper_model(self) -> None:
@@ -522,9 +546,9 @@ class TestApiWhisperEngineTranscribe:
         }
         assert len(res.segments) == 2
         assert res.segments[0].id == 0
-        assert res.segments[0].confidence == -0.12
+        assert res.segments[0].confidence == pytest.approx(math.exp(-0.12))
         assert res.segments[0].words[0]["word"] == "The"
-        assert res.segments[1].confidence == -0.18
+        assert res.segments[1].confidence == pytest.approx(math.exp(-0.18))
 
         # Verify client.post request structure
         mock_client.post.assert_called_once()
