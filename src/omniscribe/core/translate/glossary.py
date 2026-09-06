@@ -12,6 +12,8 @@ import re
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 
+from omniscribe.utils.prompt_safety import sanitize_prompt_input
+
 
 @dataclass(slots=True)
 class GlossaryEntry:
@@ -44,7 +46,9 @@ class Glossary:
     def to_prompt_block(self) -> str:
         """Return a DeepL-style ``style_rules`` prompt block.
 
-        Returns an empty string when the glossary is empty.
+        Returns an empty string when the glossary is empty. Entries are
+        sanitized here — they originate from user-uploaded imports, so a
+        crafted entry must not inject instructions into the prompt.
         """
         active = [e for e in self.entries if e.source.strip() and e.target.strip()]
         if not active:
@@ -53,7 +57,9 @@ class Glossary:
         active.sort(key=lambda e: len(e.source), reverse=True)
         lines = ["GLOSSARY (use these exact translations for the listed terms):"]
         for e in active:
-            lines.append(f"- {e.source} -> {e.target}")
+            source = sanitize_prompt_input(e.source)
+            target = sanitize_prompt_input(e.target)
+            lines.append(f"- {source} -> {target}")
         return "\n".join(lines)
 
     def apply_to_text(self, text: str) -> str:
