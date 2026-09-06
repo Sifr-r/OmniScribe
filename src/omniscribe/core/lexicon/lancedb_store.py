@@ -26,6 +26,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
+import re
 import threading
 import uuid
 from collections.abc import Callable, Iterable, Sequence
@@ -240,7 +241,7 @@ class LanceDBLexiconStore:
     def _ensure_columns(self) -> None:
         """Add columns introduced after the table was created (legacy tables)."""
         try:
-            field_names = set(self._table.schema.names)  # type: ignore[union-attr]
+            field_names = set(self._table.schema.names)
         except Exception:
             return
         if "entry_hash" not in field_names:
@@ -285,7 +286,7 @@ class LanceDBLexiconStore:
             if index_type == "ivf_pq":
                 kwargs["num_partitions"] = VECTOR_INDEX_SPEC["num_partitions"]
                 kwargs["num_sub_vectors"] = VECTOR_INDEX_SPEC["num_sub_vectors"]
-            self._table.create_index(**kwargs)  # type: ignore[arg-type]
+            self._table.create_index(**kwargs)
             logger.info("Vector index ensured (%s)", index_type)
         except Exception as exc:
             logger.debug("create_index skipped: %s", exc)
@@ -863,14 +864,15 @@ class LanceDBLexiconStore:
             query_vecs = self._embedding.embed_batch(query_texts)
         except Exception:
             query_vecs = [self._embedding.embed(t) for t in query_texts]
-        if not query_vecs or not any(query_vecs):
+        if not query_vecs or not any(any(vec) for vec in query_vecs):
             return []
 
         where_clauses = self._build_where(query)
         over = max(query.limit * 3, 24)
         vector_scores: dict[str, float] = {}
         for vec in query_vecs:
-            if not vec:
+            if not vec or not any(vec):
+                # Zero vector (unknown/unmapped text) carries no cosine signal.
                 continue
             try:
                 search = (
@@ -931,14 +933,31 @@ class LanceDBLexiconStore:
         """Deterministic keyword evidence: exact > prefix > substring.
 
         Scans a non-embedding projection of the (already SQL-filtered) rows
-        and scores normalized term matches. O(rows) per query — fine at
-        personal-scale lexicons, and it keeps the store dependency-free.
+        and scores normalized matches against candidate terms plus the
+        chunk's individual words (glossaries are term-level; a lowercase
+        word like "privacy" is exactly what a glossary contains). O(rows)
+        per query — fine at personal-scale lexicons, and it keeps the
+        store dependency-free.
         """
         terms = [normalize_term(t) for t in candidate_terms(query.source_chunk)]
+        terms.extend(
+            normalize_term(w)
+            for w in re.findall(r"[^\W_]+", query.source_chunk, re.UNICODE)
+            if len(w) >= 3
+        )
         chunk_norm = normalize_term(query.source_chunk[:80])
         if chunk_norm:
             terms.append(chunk_norm)
-        if not any(terms):
+        seen: set[str] = set()
+        deduped: list[str] = []
+        for term in terms:
+            if not term or term in seen:
+                continue
+            seen.add(term)
+            deduped.append(term)
+            if len(deduped) >= 24:
+                break
+        if not deduped:
             return {}
         try:
             search = self._table.search()

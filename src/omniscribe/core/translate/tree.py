@@ -32,7 +32,9 @@ logger = logging.getLogger(__name__)
 TranslatorFn = Callable[[str, str], Awaitable[str]]
 
 # A pluggable async judge: (source_text, translated_text) -> (score, feedback).
-EvaluatorFn = Callable[[str, str], Awaitable[tuple[float, str]]]
+# ``score`` is None when the judge is unavailable/unparseable — the loop
+# treats that as "accept unverified" rather than retrying blind.
+EvaluatorFn = Callable[[str, str], Awaitable[tuple[float | None, str]]]
 
 
 def build_context_block(
