@@ -64,6 +64,26 @@ class TestCalibrationEnabled:
         # confidence defaults to 0.0 → trust_score == 0.0
         assert out[0].trust_score == pytest.approx(0.0)
 
+    def test_below_threshold_blocks_reported_in_event(self, caplog):
+        import logging
+
+        caplog.set_level(
+            logging.DEBUG, logger="omniscribe.core.ocr_quality.events"
+        )
+        blocks = [
+            _block("low", confidence=0.2),
+            _block("high", confidence=0.9),
+        ]
+        settings = OCrQualitySettings(calibration_enabled=True)
+        orchestrator.run(blocks, None, settings, model_id="x")
+        decisions = [
+            r.getMessage()
+            for r in caplog.records
+            if "sub_module=orchestrator" in r.getMessage()
+        ]
+        assert decisions, "orchestrator event missing"
+        assert any("below_threshold" in d and "1/2" in d for d in decisions)
+
 
 class TestHallucinationEnabled:
     def test_clean_text_no_flags(self):

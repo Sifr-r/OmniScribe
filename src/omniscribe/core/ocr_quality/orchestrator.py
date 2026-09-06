@@ -392,12 +392,19 @@ def run(
         settings,
     )
 
+    scored = [b for b in new_blocks if b.trust_score is not None]
+    flagged = sum(1 for b in scored if b.trust_score < settings.trust_flag_threshold)
+    if flagged:
+        decision = f"{flagged}/{len(new_blocks)} blocks below_threshold"
+    else:
+        decision = f"{len(new_blocks)} blocks"
+
     emit(
         "orchestrator",
         doc_id="-",
         page=-1,
         duration_ms=int((time.monotonic() - started) * 1000),
-        decision=f"{len(new_blocks)} blocks",
+        decision=decision,
         fallback_used=fallback_used_box[0],
     )
 

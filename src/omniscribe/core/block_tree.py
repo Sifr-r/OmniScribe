@@ -107,6 +107,10 @@ class BlockNode:
     page_idx: int
     block_id: str = field(default_factory=_new_block_id)
     confidence: float | None = None
+    # OCR quality trust-layer outputs (see DocumentBlock). ``None`` when the
+    # trust layer is disabled; serialized so clients can flag blocks for review.
+    trust_score: float | None = None
+    trust_flags: tuple[str, ...] | None = None
     children: list[BlockNode] = field(default_factory=list)
     parent_id: str | None = None
     level: int = 0  # heading level (1..6) for SECTION_HEADER; list depth for LIST_ITEM
@@ -129,6 +133,8 @@ class BlockNode:
             "text": self.text,
             "page_idx": self.page_idx,
             "confidence": self.confidence,
+            "trust_score": self.trust_score,
+            "trust_flags": list(self.trust_flags) if self.trust_flags else None,
             "level": self.level,
             "section_hierarchy": list(self.section_hierarchy),
             "spans": [s.to_dict() for s in self.spans],
@@ -150,6 +156,16 @@ class BlockNode:
             confidence=(
                 float(data["confidence"])
                 if data.get("confidence") is not None
+                else None
+            ),
+            trust_score=(
+                float(data["trust_score"])
+                if data.get("trust_score") is not None
+                else None
+            ),
+            trust_flags=(
+                tuple(str(f) for f in data["trust_flags"])
+                if data.get("trust_flags")
                 else None
             ),
             children=[BlockNode.from_dict(c) for c in data.get("children", [])],
@@ -496,6 +512,8 @@ def from_document_result(document: DocumentResult) -> DocumentTree:
                     text=block.text,
                     page_idx=page.page_index,
                     confidence=block.confidence,
+                    trust_score=block.trust_score,
+                    trust_flags=block.trust_flags,
                     metadata=dict(block.metadata),
                     image_bytes=fig_node.image_bytes,
                 )
@@ -513,6 +531,8 @@ def from_document_result(document: DocumentResult) -> DocumentTree:
                 text=block.text,
                 page_idx=page.page_index,
                 confidence=block.confidence,
+                trust_score=block.trust_score,
+                trust_flags=block.trust_flags,
                 metadata=dict(block.metadata),
             )
             tree_page.children.append(node)

@@ -8,8 +8,10 @@ from omniscribe.core.block_tree import (
     DocumentTree,
     PageTree,
     TableNode,
+    from_document_result,
     from_pages_data,
 )
+from omniscribe.core.document import DocumentBlock, DocumentPage, DocumentResult
 
 
 def test_block_node_to_dict_round_trip():
@@ -29,6 +31,57 @@ def test_block_node_to_dict_round_trip():
     assert d["bbox"] == [0.0, 0.1, 0.5, 0.15]
     # block_id is non-empty
     assert isinstance(d["block_id"], str) and d["block_id"]
+
+
+def test_block_node_trust_fields_round_trip():
+    node = BlockNode(
+        block_type=BlockType.PARAGRAPH,
+        bbox=(0.0, 0.0, 0.5, 0.1),
+        text="flagged text",
+        page_idx=0,
+        trust_score=0.42,
+        trust_flags=("LOW_CALIBRATED_CONF",),
+    )
+    d = node.to_dict()
+    assert d["trust_score"] == 0.42
+    assert d["trust_flags"] == ["LOW_CALIBRATED_CONF"]
+    restored = BlockNode.from_dict(d)
+    assert restored.trust_score == 0.42
+    assert restored.trust_flags == ("LOW_CALIBRATED_CONF",)
+
+
+def test_block_node_trust_fields_default_none():
+    node = BlockNode(
+        block_type=BlockType.PARAGRAPH,
+        bbox=(0.0, 0.0, 0.5, 0.1),
+        text="clean",
+        page_idx=0,
+    )
+    d = node.to_dict()
+    assert d["trust_score"] is None
+    assert d["trust_flags"] is None
+
+
+def test_from_document_result_copies_trust_fields():
+    page = DocumentPage(
+        page_index=0,
+        blocks=[
+            DocumentBlock(
+                bbox=(0.0, 0.0, 0.5, 0.1),
+                text="flagged",
+                trust_score=0.42,
+                trust_flags=("LOW_CALIBRATED_CONF",),
+            ),
+            DocumentBlock(bbox=(0.0, 0.2, 0.5, 0.3), text="clean"),
+        ],
+    )
+    tree = from_document_result(DocumentResult(pages=[page]))
+    flagged = tree.pages[0].children[0]
+    clean = tree.pages[0].children[1]
+    assert flagged.trust_score == 0.42
+    assert flagged.trust_flags == ("LOW_CALIBRATED_CONF",)
+    assert clean.trust_score is None
+    assert clean.trust_flags is None
 
 
 def test_from_pages_data_basic():
