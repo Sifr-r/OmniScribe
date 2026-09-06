@@ -238,8 +238,14 @@ class LanceDBLexiconStore:
         except Exception:
             return
         if "entry_hash" not in field_names:
+            # A typed pa.Schema (not an SQL "NULL" literal, which yields a
+            # Null-typed column that later rejects Utf8 rows).
+            import pyarrow as pa
+
             try:
-                self._table.add_columns({"entry_hash": "NULL"})
+                self._table.add_columns(
+                    pa.schema([pa.field("entry_hash", pa.string())])
+                )
                 logger.info("Added entry_hash column to legacy lexicon table")
             except Exception as exc:
                 logger.warning("Could not add entry_hash column: %s", exc)
