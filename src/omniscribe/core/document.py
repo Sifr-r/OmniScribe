@@ -8,7 +8,7 @@ metadata, and future extraction/export features. Keep bboxes normalized in
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import TYPE_CHECKING
@@ -89,12 +89,17 @@ class DocumentResult:
         *,
         source_path: str | None = None,
         source_processor: str = "ocr",
+        confidence_fn: Callable[[str], float] | None = None,
     ) -> DocumentResult:
         """Build a result from legacy ``{page: [(bbox, text)]}`` payloads.
 
         The conversion validates every bbox up front so downstream processors can
         assume normalized ``[x0, y0, x1, y1]`` geometry. Invalid or pixel-space
         boxes raise ``ValueError`` instead of being embedded silently.
+
+        ``confidence_fn`` (e.g. the OCR workflow's ``_estimate_confidence``)
+        populates ``DocumentBlock.confidence`` at build time so the trust
+        layer and repair triggers consume real signal instead of a default 0.0.
         """
 
         pages: list[DocumentPage] = []
@@ -105,6 +110,11 @@ class DocumentResult:
                     text=text,
                     source_processor=source_processor,
                     reading_order=reading_order,
+                    confidence=(
+                        confidence_fn(text)
+                        if confidence_fn is not None and text.strip()
+                        else None
+                    ),
                 )
                 for reading_order, (bbox, text) in enumerate(pages_data[page_index])
             ]

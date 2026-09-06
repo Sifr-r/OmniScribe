@@ -22,6 +22,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Runtime import (no cycle: utils imports base only under TYPE_CHECKING) —
+# feeds from_pages_data's confidence_fn so the trust layer sees real signal.
+from omniscribe.core.workflows.utils import _estimate_confidence  # noqa: E402
+
 ProgressCallback = Callable[[str, int, int, str], Awaitable[None]]
 WarningCallback = Callable[[int, BaseException], Awaitable[None]]
 OutputWriter = Callable[[str, str, dict, int], None]
@@ -393,7 +397,10 @@ class EngineBase:
             await self._run_spellcheck(pages_data, page_nums, spellcheck)
 
         document_result = DocumentResult.from_pages_data(
-            pages_data, source_path=source_path, source_processor=source_processor
+            pages_data,
+            source_path=source_path,
+            source_processor=source_processor,
+            confidence_fn=_estimate_confidence,
         )
 
         if page_metadata_overlays:

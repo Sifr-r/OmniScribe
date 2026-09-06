@@ -37,6 +37,27 @@ def test_document_result_rejects_non_normalized_bbox():
         DocumentResult.from_pages_data({0: [((0.0, 0.0, 2.0, 1.0), "bad")]})
 
 
+def test_from_pages_data_estimates_confidence() -> None:
+    result = DocumentResult.from_pages_data(
+        {0: [((0.0, 0.0, 1.0, 0.1), "Several well formed words here")]},
+        confidence_fn=lambda t: 0.99 if len(t.split()) >= 3 else 0.4,
+    )
+    assert result.pages[0].blocks[0].confidence == 0.99
+
+
+def test_from_pages_data_confidence_fn_skips_blank_text() -> None:
+    result = DocumentResult.from_pages_data(
+        {0: [((0.0, 0.0, 1.0, 0.1), "   ")]},
+        confidence_fn=lambda t: 0.99,
+    )
+    assert result.pages[0].blocks[0].confidence is None
+
+
+def test_from_pages_data_without_confidence_fn_keeps_none() -> None:
+    result = DocumentResult.from_pages_data({0: [((0.0, 0.0, 1.0, 0.1), "text")]})
+    assert result.pages[0].blocks[0].confidence is None
+
+
 def test_bbox_alias_is_fixed_length_tuple():
     """Regression for §4.6: ``BBox`` must be ``tuple[float, float, float, float]``.
 
