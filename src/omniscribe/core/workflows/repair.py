@@ -24,7 +24,14 @@ from omniscribe.core.callbacks import (
     BlockRevisedCallback,
 )
 from omniscribe.core.ocr.resilience import CircuitOpenError
-from omniscribe.core.workflows.utils import _estimate_confidence
+from omniscribe.core.recall.text_layer import (
+    TEXT_LAYER_AGREEMENT_TARGET,
+    token_agreement,
+)
+from omniscribe.core.workflows.utils import (
+    WELL_FORMED_CONFIDENCE,
+    _estimate_confidence,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +65,20 @@ class PageRepairSummary:
     below_target_count: int
 
 
+def _text_layer_mismatch(text: str, conf: float, layer_text: str | None) -> bool:
+    """True when a well-formed block disagrees with the PDF text layer.
+
+    The shape heuristic caps at :data:`WELL_FORMED_CONFIDENCE`, so a fluent
+    hallucination is indistinguishable from real text to ``repair_page``'s
+    confidence gate. When the page's embedded text layer is available, a
+    token-agreement share below :data:`TEXT_LAYER_AGREEMENT_TARGET` marks
+    the block as a likely hallucination worth one re-OCR pass.
+    """
+    if layer_text is None or conf < WELL_FORMED_CONFIDENCE:
+        return False
+    return token_agreement(text, layer_text) < TEXT_LAYER_AGREEMENT_TARGET
+
+
 class QualityRepairLoop:
     """Re-OCRs below-target blocks until they reach the target, stall, or exhaust retries."""
 
@@ -81,11 +102,17 @@ class QualityRepairLoop:
         re_ocr: ReOcrBlock,
         on_block_retry: BlockRetryCallback | None = None,
         on_block_revised: BlockRevisedCallback | None = None,
+        layer_text: str | None = None,
     ) -> PageRepairSummary:
         """Repair one page in place; ``page_blocks`` entries are updated on accept.
 
         Empty blocks are skipped entirely (the refine stage already owns
         empty-box recovery) and are excluded from the summary stats.
+
+        ``layer_text`` (the PDF's embedded text layer for this page, when
+        available) enables the fluent-hallucination trigger: a well-formed
+        block whose OCR tokens barely appear in the layer is repaired even
+        though the shape heuristic scores it 0.99.
         """
         opts = self.options
         if not opts.enabled:
@@ -110,7 +137,7 @@ class QualityRepairLoop:
             # block is processed with the most pessimistic score.
             estimated = self._estimate(text)
             conf: float = 0.0 if estimated is None else estimated
-            if conf >= opts.target:
+            if conf >= opts.target and not _text_layer_mismatch(text, conf, layer_text):
                 confidences.append(conf)
                 continue
 

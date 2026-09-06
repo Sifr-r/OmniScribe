@@ -19,6 +19,7 @@ per-page fail-open guard limits the blast radius.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 
 import pymupdf as fitz  # PyMuPDF
@@ -57,6 +58,10 @@ _STRADDLE_MIN_OVERLAP = STRADDLE_MIN_OVERLAP
 # text-layer boxes per page, kept in extraction (reading) order. Bounds
 # n_boxes inflation toward dense_threshold on pathological text layers.
 _MAX_TEXT_LAYER_BOXES_PER_PAGE = MAX_RECALL_BOXES_PER_PAGE
+
+#: Blocks whose OCR tokens agree with the PDF text layer below this share
+#: are treated as likely fluent hallucinations by the quality repair loop.
+TEXT_LAYER_AGREEMENT_TARGET = 0.2
 
 
 @dataclass(frozen=True, slots=True)
@@ -138,6 +143,29 @@ class PdfTextLayerRecall:
         self._doc = None
         if doc is not None:
             doc.close()
+
+    def page_text(self, page_num: int) -> str:
+        """Raw text of one page from the open document; ``""`` when unavailable.
+
+        Used by the quality repair loop's text-layer agreement trigger.
+        Fail-open: closed doc, out-of-range page, or extraction errors all
+        return ``""`` (which makes the agreement check neutral).
+        """
+        if self._doc is None:
+            return ""
+        try:
+            if page_num < 0 or page_num >= len(self._doc):
+                return ""
+            page_text_str: str = self._doc[page_num].get_text()
+            return page_text_str
+        except Exception as exc:
+            logger.warning(
+                "Text-layer page_text failed on page %d: %s: %s",
+                page_num,
+                type(exc).__name__,
+                exc,
+            )
+            return ""
 
     def supplement(self, page_num: int, existing_boxes: list[BBox]) -> list[BBox]:
         """Return text-line boxes from the text layer not covered by ``existing_boxes``.
@@ -223,6 +251,26 @@ class PdfTextLayerRecall:
         # dropped by dedup or the cap (run-summary counter).
         self.candidates_dropped += len(candidates) - len(kept)
         return kept
+
+
+def token_agreement(ocr_text: str, layer_text: str) -> float:
+    """Share of OCR tokens present in the PDF text layer (0..1).
+
+    The repair trigger's text-shape heuristic can't see fluent
+    hallucinations (they score 0.99 like real text); a low token overlap
+    against the PDF's own text layer is the missing signal. Tokens shorter
+    than 3 chars are ignored on the OCR side (function words carry no
+    signal); no evidence on either side returns 1.0 so missing layers
+    never flag.
+    """
+    if not ocr_text.strip() or not layer_text.strip():
+        return 1.0
+    layer_tokens = {t.casefold() for t in re.findall(r"\w+", layer_text)}
+    ocr_tokens = [t.casefold() for t in re.findall(r"\w+", ocr_text) if len(t) >= 3]
+    if not ocr_tokens:
+        return 1.0
+    hits = sum(1 for t in ocr_tokens if t in layer_tokens)
+    return hits / len(ocr_tokens)
 
 
 def _overlaps_existing(candidate: BBox, existing_boxes: list[BBox]) -> bool:

@@ -40,6 +40,7 @@ from omniscribe.core.workflows.repair import (
     PageRepairSummary,
     QualityRepairLoop,
     RepairOptions,
+    _text_layer_mismatch,
 )
 from omniscribe.core.workflows.utils import (
     _decode_page_image,
@@ -76,12 +77,18 @@ async def run_repair_phase(
     progress: ProgressCallback | None,
     on_warning: WarningCallback | None = None,
     decoded_get: Callable[[int], Image.Image | None],
+    text_layers: dict[int, str] | None = None,
 ) -> list[PageRepairSummary]:
     """Phase 4b — re-OCR non-empty blocks below the quality target.
 
     Audit catalog: split out of ``HybridEngine._repair_pages`` so the
     engine's ``execute()`` is a clean phase driver. The shared
     ``completed`` counter is carried via a single-element list.
+
+    ``text_layers`` maps page number → the PDF's embedded text-layer text
+    for that page (when the input is a digital PDF). It enables the
+    fluent-hallucination trigger: well-formed blocks whose tokens don't
+    appear in the layer become repair targets too.
 
     ``engine`` is duck-typed against ``HybridEngine`` for the
     ``ocr_processor``, ``block_callbacks``, and ``_decoded_get`` /
@@ -97,6 +104,7 @@ async def run_repair_phase(
         page_nums=page_nums,
         pages_structured=pages_structured,
         target=repair_options.target,
+        text_layers=text_layers,
     )
     if not targets:
         return []
@@ -140,6 +148,7 @@ async def run_repair_phase(
             targets=targets,
             on_warning=on_warning,
             progress=progress,
+            text_layers=text_layers,
         )
         summaries.append(summary)
     return summaries
@@ -150,14 +159,27 @@ def _count_repair_targets(
     page_nums: Sequence[int],
     pages_structured: dict[int, PageBoxes],
     target: float,
+    text_layers: dict[int, str] | None = None,
 ) -> int:
-    """Count non-empty blocks whose estimated confidence is below ``target``."""
-    return sum(
-        1
-        for p_num in page_nums
-        for _, text in pages_structured.get(p_num, [])
-        if text.strip() and _estimate_confidence(text) < target
-    )
+    """Count blocks that need re-OCR.
+
+    A block counts when its estimated confidence is below ``target``, or —
+    when the page's text layer is known — when the block is well-formed
+    (shape heuristic 0.99) but its tokens barely appear in the layer
+    (fluent-hallucination trigger).
+    """
+    count = 0
+    for p_num in page_nums:
+        layer_text = text_layers.get(p_num) if text_layers is not None else None
+        for _, text in pages_structured.get(p_num, []):
+            if not text.strip():
+                continue
+            est = _estimate_confidence(text)
+            if est < target or (
+                layer_text is not None and _text_layer_mismatch(text, est, layer_text)
+            ):
+                count += 1
+    return count
 
 
 async def repair_single_page(
@@ -172,6 +194,7 @@ async def repair_single_page(
     targets: int,
     on_warning: WarningCallback | None,
     progress: ProgressCallback | None,
+    text_layers: dict[int, str] | None = None,
 ) -> PageRepairSummary:
     """Re-OCR one page's below-target blocks; emit per-page summary.
 
@@ -231,6 +254,7 @@ async def repair_single_page(
         re_ocr=re_ocr,
         on_block_retry=cb.on_block_retry,
         on_block_revised=cb.on_block_revised,
+        layer_text=text_layers.get(p_num) if text_layers is not None else None,
     )
     if cb.on_quality_summary is not None:
         await cb.on_quality_summary(

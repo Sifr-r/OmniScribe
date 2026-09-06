@@ -164,6 +164,124 @@ class TestQualityRepairLoop:
         assert second.kwargs["attempt"] == 2
 
 
+class TestTextLayerAgreementRepair:
+    def test_token_agreement_flags_foreign_text(self) -> None:
+        from omniscribe.core.recall.text_layer import token_agreement
+
+        assert (
+            token_agreement(
+                "The committee unanimously approved the budget",
+                "Der Haushalt wurde einstimmig genehmigt",
+            )
+            < 0.2
+        )
+
+    def test_token_agreement_passes_real_text(self) -> None:
+        from omniscribe.core.recall.text_layer import token_agreement
+
+        layer = "The committee unanimously approved the budget after long debate."
+        assert token_agreement(layer, layer) > 0.8
+
+    def test_token_agreement_no_evidence_is_neutral(self) -> None:
+        from omniscribe.core.recall.text_layer import token_agreement
+
+        assert token_agreement("", "layer text") == 1.0
+        assert token_agreement("ocr text", "") == 1.0
+
+    async def test_repair_page_flags_fluent_hallucination_with_layer(self) -> None:
+        """A well-formed block (est 0.99, normally exempt) whose text does
+        not appear in the PDF text layer becomes a repair target."""
+        loop = QualityRepairLoop(
+            options=RepairOptions(enabled=True, target=0.9, max_retries=1)
+        )
+        page_blocks = [
+            (
+                (0.0, 0.0, 1.0, 1.0),
+                "The committee unanimously approved the budget",
+            )
+        ]
+        re_ocr = AsyncMock(return_value="Der Haushalt wurde einstimmig genehmigt")
+
+        await loop.repair_page(
+            page_idx=0,
+            page_blocks=page_blocks,
+            re_ocr=re_ocr,
+            layer_text="Der Haushalt wurde einstimmig genehmigt",
+        )
+
+        re_ocr.assert_called_once()
+
+    async def test_repair_page_skips_when_layer_agrees(self) -> None:
+        loop = QualityRepairLoop(
+            options=RepairOptions(enabled=True, target=0.9, max_retries=1)
+        )
+        text = "The committee unanimously approved the budget"
+        page_blocks = [((0.0, 0.0, 1.0, 1.0), text)]
+        re_ocr = AsyncMock()
+
+        await loop.repair_page(
+            page_idx=0,
+            page_blocks=page_blocks,
+            re_ocr=re_ocr,
+            layer_text=text,
+        )
+
+        re_ocr.assert_not_called()
+
+    async def test_run_repair_phase_flows_text_layers(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from PIL import Image
+
+        from omniscribe.core.workflows.hybrid_repair import run_repair_phase
+
+        monkeypatch.setattr(
+            "omniscribe.core.workflows.hybrid_repair._decode_page_image",
+            lambda image_b64: Image.effect_noise((64, 64), 64).convert("RGB"),
+        )
+
+        class _StubOCR:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            async def perform_ocr_on_crop(self, crop_b64: str, **kwargs: object) -> str:
+                self.calls += 1
+                return "repaired text"
+
+        stub_ocr = _StubOCR()
+
+        class _StubEngine:
+            ocr_processor = stub_ocr
+            block_callbacks = BlockCallbackSet()
+
+        summaries = await run_repair_phase(
+            engine=_StubEngine(),
+            pages_structured={
+                0: [
+                    (
+                        (0.0, 0.0, 1.0, 1.0),
+                        "The committee unanimously approved the budget",
+                    )
+                ],
+            },
+            images_dict={0: "img-0"},
+            page_nums=[0],
+            repair_options=RepairOptions(enabled=True, target=0.9, max_retries=1),
+            concurrency=1,
+            progress=None,
+            on_warning=None,
+            decoded_get=lambda p_num: None,
+            text_layers={0: "Der Haushalt wurde einstimmig genehmigt"},
+        )
+
+        assert summaries[0].block_count == 1
+        # The well-formed block was re-OCRed because it disagreed with the
+        # text layer (its own estimate can't rise above 0.99, so the stall
+        # guard keeps the original text — the trigger fired, which is what
+        # this task tests).
+        assert stub_ocr.calls == 1
+
+
 class TestJobRepairSummary:
     async def test_emit_job_repair_summary_aggregates_properly(self) -> None:
         on_summary = AsyncMock()

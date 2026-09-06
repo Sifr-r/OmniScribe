@@ -284,6 +284,7 @@ class HybridEngine(EngineBase):
 
         # --- Phase 4b: quality repair of below-target blocks (spec §3.2) ---
         if repair_options is not None and repair_options.enabled:
+            text_layers = await self._collect_text_layers(input_path, page_nums)
             repair_summaries = await run_repair_phase(
                 engine=self,
                 pages_structured=pages_structured,
@@ -294,6 +295,7 @@ class HybridEngine(EngineBase):
                 progress=progress,
                 on_warning=on_warning,
                 decoded_get=decoded_get,
+                text_layers=text_layers,
             )
             await emit_job_repair_summary(self.block_callbacks, repair_summaries)
 
@@ -313,6 +315,35 @@ class HybridEngine(EngineBase):
             trust_images_dict=images_dict.copy(),
             cancel_check=cancel_check,
         )
+
+    async def _collect_text_layers(
+        self,
+        input_path: str,
+        page_nums: Sequence[int],
+    ) -> dict[int, str] | None:
+        """Per-page embedded-text-layer text for the repair phase's
+        fluent-hallucination trigger. ``None`` when unavailable (image
+        inputs, disabled recall, scan-like PDFs) so the trigger stays off.
+
+        Opens the layer fresh: the layout phase already closed it, and a
+        second short-lived open is cheaper than holding the document
+        across the whole OCR phase.
+        """
+        tl = self.text_layer_recall
+        if tl is None or not tl.enabled or not input_path:
+            return None
+        opened = await asyncio.to_thread(tl.open, input_path)
+        if not opened:
+            return None
+        try:
+            layers: dict[int, str] = {}
+            for p_num in page_nums:
+                text = await asyncio.to_thread(tl.page_text, p_num)
+                if text.strip():
+                    layers[p_num] = text
+            return layers or None
+        finally:
+            await asyncio.to_thread(tl.close)
 
     async def _convert_pages(
         self,
