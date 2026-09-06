@@ -622,9 +622,6 @@ class TestApiWhisperEngineErrorHandling:
             (401, "Invalid API key or unauthorized access."),
             (403, "Invalid API key or unauthorized access."),
             (404, "Model or endpoint not found: test-model"),
-            (429, "Audio API transcription failed with status 429"),
-            (500, "Audio API transcription failed with status 500"),
-            (503, "Audio API transcription failed with status 503"),
         ],
     )
     async def test_api_status_code_error_mappings(
@@ -636,6 +633,7 @@ class TestApiWhisperEngineErrorHandling:
 
         fake_resp = MagicMock(spec=httpx.Response)
         fake_resp.status_code = status_code
+        fake_resp.headers = {}
         fake_resp.text = f"API error with code {status_code}"
 
         mock_client = AsyncMock()
@@ -649,6 +647,34 @@ class TestApiWhisperEngineErrorHandling:
 
         assert exc_info.value.status_code == status_code
         assert expected_msg_fragment in exc_info.value.message
+
+    @pytest.mark.parametrize("status_code", [429, 500, 503])
+    async def test_retryable_status_exhausts_attempts_then_502(
+        self, status_code: int
+    ) -> None:
+        engine = ApiWhisperEngine(model="test-model", api_key="sk-test")
+
+        fake_resp = MagicMock(spec=httpx.Response)
+        fake_resp.status_code = status_code
+        fake_resp.headers = {}
+        fake_resp.text = f"API error with code {status_code}"
+
+        mock_client = AsyncMock()
+        mock_client.post.return_value = fake_resp
+        mock_client.__aenter__.return_value = mock_client
+        mock_client.__aexit__.return_value = None
+
+        with (
+            patch("httpx.AsyncClient", return_value=mock_client),
+            patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep,
+        ):
+            with pytest.raises(TranscriptionError) as exc_info:
+                await engine.transcribe(b"audio", "file.wav")
+
+        assert mock_client.post.call_count == 3
+        assert mock_sleep.call_count == 2
+        assert exc_info.value.status_code == 502
+        assert f"status {status_code}" in exc_info.value.message
 
     async def test_transient_connection_timeout_retries_and_succeeds(self) -> None:
         engine = ApiWhisperEngine(model="whisper-1")
@@ -723,6 +749,58 @@ class TestApiWhisperEngineErrorHandling:
         # Only 1 attempt made
         assert mock_client.post.call_count == 1
         mock_sleep.assert_not_called()
+
+    async def test_retry_hoists_client_and_honors_retry_after(self) -> None:
+        """One client across attempts; Retry-After beats exponential backoff."""
+        engine = ApiWhisperEngine(model="whisper-1")
+
+        resp_500 = MagicMock(spec=httpx.Response)
+        resp_500.status_code = 500
+        resp_500.headers = {}
+        resp_500.text = "server exploded"
+        resp_429 = MagicMock(spec=httpx.Response)
+        resp_429.status_code = 429
+        resp_429.headers = {"Retry-After": "7"}
+        resp_429.text = "slow down"
+        resp_ok = MagicMock(spec=httpx.Response)
+        resp_ok.status_code = 200
+        resp_ok.json.return_value = {"text": "finally"}
+
+        mock_client = AsyncMock()
+        mock_client.post.side_effect = [resp_500, resp_429, resp_ok]
+        mock_client.__aenter__.return_value = mock_client
+        mock_client.__aexit__.return_value = None
+
+        constructed = []
+
+        def _fake_client(*args: Any, **kwargs: Any) -> AsyncMock:
+            constructed.append(True)
+            return mock_client
+
+        with (
+            patch("httpx.AsyncClient", side_effect=_fake_client),
+            patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep,
+        ):
+            res = await engine.transcribe(b"bytes", "file.wav")
+
+        assert res.text == "finally"
+        assert len(constructed) == 1, "client must be constructed once, not per attempt"
+        assert mock_client.post.call_count == 3
+        delays = [call.args[0] for call in mock_sleep.call_args_list]
+        assert delays == [1.0, 7.0], "exponential then Retry-After honored"
+
+    def test_retry_delay_caps_and_fallbacks(self) -> None:
+        engine = ApiWhisperEngine(model="whisper-1")
+        # Exponential 1/2/4 base with 16s cap.
+        assert engine._retry_delay_s(1, None) == 1.0
+        assert engine._retry_delay_s(2, None) == 2.0
+        assert engine._retry_delay_s(3, None) == 4.0
+        assert engine._retry_delay_s(9, None) == 16.0
+        # Retry-After wins but is capped at 60.
+        assert engine._retry_delay_s(1, "7") == 7.0
+        assert engine._retry_delay_s(1, "500") == 60.0
+        # Invalid Retry-After falls back to exponential.
+        assert engine._retry_delay_s(1, "soon") == 1.0
 
 
 class TestApiWhisperEngineEmptyAndSilentAudio:

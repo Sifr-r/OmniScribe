@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -66,18 +67,31 @@ class GenericAudioAPIEngine:
         max_attempts = 3
         last_exception: Exception | None = None
 
-        for attempt in range(1, max_attempts + 1):
-            try:
-                async with httpx.AsyncClient(timeout=self.timeout) as client:
+        # One client across all attempts — connection pooling and no
+        # per-attempt socket churn.
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            for attempt in range(1, max_attempts + 1):
+                try:
                     response = await client.post(
                         url, headers=headers, data=data, files=files
                     )
+                except TranscriptionError:
+                    raise
+                except Exception as exc:
+                    last_exception = exc
+                    if is_transient_error(exc) and attempt < max_attempts:
+                        logger.warning(
+                            "Transient error in audio transcription (attempt %d/%d): %s",
+                            attempt,
+                            max_attempts,
+                            exc,
+                        )
+                        await asyncio.sleep(self._retry_delay_s(attempt, None))
+                        continue
+                    break
 
                 if response.status_code == 200:
-                    payload = response.json()
-                    return self._parse_verbose_json(payload)
-
-                err_msg = f"Audio API transcription failed with status {response.status_code}: {response.text}"
+                    return self._parse_verbose_json(response.json())
                 if response.status_code in (401, 403):
                     raise TranscriptionError(
                         "Invalid API key or unauthorized access.",
@@ -88,28 +102,32 @@ class GenericAudioAPIEngine:
                         f"Model or endpoint not found: {self.model}", status_code=404
                     )
 
-                raise TranscriptionError(err_msg, status_code=response.status_code)
-
-            except TranscriptionError:
-                raise
-            except Exception as exc:
-                last_exception = exc
-                if is_transient_error(exc) and attempt < max_attempts:
-                    logger.warning(
-                        "Transient error in audio transcription (attempt %d/%d): %s",
-                        attempt,
-                        max_attempts,
-                        exc,
+                retry_after = response.headers.get("Retry-After")
+                last_exception = TranscriptionError(
+                    f"Audio API transcription failed with status {response.status_code}: {response.text}",
+                    status_code=response.status_code,
+                )
+                retryable_status = response.status_code in (429, 500, 502, 503, 504)
+                if attempt < max_attempts and retryable_status:
+                    await asyncio.sleep(
+                        self._retry_delay_s(attempt, retry_after)
                     )
-                    import asyncio
-
-                    await asyncio.sleep(1.0 * attempt)
-                else:
-                    break
+                    continue
+                break
 
         raise TranscriptionError(
             f"Audio transcription API request failed: {last_exception}", status_code=502
         ) from last_exception
+
+    @staticmethod
+    def _retry_delay_s(attempt: int, retry_after: str | None) -> float:
+        """Exponential backoff (1/2/4s base, 16s cap); Retry-After wins."""
+        if retry_after:
+            try:
+                return min(float(retry_after), 60.0)
+            except ValueError:
+                pass
+        return min(1.0 * (2 ** (attempt - 1)), 16.0)
 
     def _parse_verbose_json(self, payload: dict[str, Any]) -> TranscriptionResult:
         full_text = payload.get("text", "")
