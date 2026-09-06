@@ -52,7 +52,7 @@ dependencies = [
     # Schemas (pydantic), and cordis.yml parsing (pyyaml) are direct
     # imports — declared here instead of relying on transitive edges.
     "pydantic>=2.7",
-    "pydantic-settings>=2.5",
+    "pydantic-settings>=2.15.0",
     "pyyaml>=6.0",
 ]
 
