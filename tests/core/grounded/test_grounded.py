@@ -779,3 +779,57 @@ class TestGLMParserDenyList:
         resp = parsers.parse_glm_layout_details(payload)
         assert len(resp.blocks) == 1
         assert resp.blocks[0].text == "No label"
+
+
+class TestGLMParserHardening:
+    """Malformed bbox payloads must not crash the parser; alias keys parse."""
+
+    def _payload(self, *blocks: dict) -> dict:
+        return {
+            "data_info": {"pages": [{"width": 1000, "height": 2000}]},
+            "layout_details": [list(blocks)],
+        }
+
+    def test_bbox_alias_keys_parse(self) -> None:
+        payload = self._payload(
+            {"content": "via bbox", "bbox": [100, 200, 500, 260]},
+            {"content": "via box", "box": [110, 210, 510, 270]},
+        )
+        resp = parsers.parse_glm_layout_details(payload)
+        assert [b.text for b in resp.blocks] == ["via bbox", "via box"]
+
+    def test_missing_or_malformed_bbox_is_skipped(self) -> None:
+        payload = self._payload(
+            {"content": "no bbox at all"},
+            {"content": "wrong length", "bbox_2d": [100, 200, 500]},
+            {"content": "non numeric", "bbox_2d": [100, 200, "x", 500]},
+            {"content": "fine", "bbox_2d": [100, 200, 500, 260]},
+        )
+        resp = parsers.parse_glm_layout_details(payload)
+        assert [b.text for b in resp.blocks] == ["fine"]
+
+    def test_non_finite_bbox_is_skipped(self) -> None:
+        payload = self._payload(
+            {"content": "nan box", "bbox_2d": [0, 0, float("nan"), 100]},
+            {"content": "inf box", "bbox_2d": [0, 0, float("inf"), 100]},
+            {"content": "fine", "bbox_2d": [100, 200, 500, 260]},
+        )
+        resp = parsers.parse_glm_layout_details(payload)
+        assert [b.text for b in resp.blocks] == ["fine"]
+
+    def test_parser_emits_drop_events(self, caplog) -> None:
+        import logging
+
+        caplog.set_level(logging.DEBUG, logger="omniscribe.core.ocr_quality.events")
+        payload = self._payload(
+            {"content": "no bbox at all"},
+            {"content": "non numeric", "bbox_2d": [100, 200, "x", 500]},
+        )
+        parsers.parse_glm_layout_details(payload)
+        messages = [
+            r.getMessage()
+            for r in caplog.records
+            if "sub_module=parsers" in r.getMessage()
+        ]
+        assert any("drop:missing_bbox" in m for m in messages)
+        assert any("drop:bad_bbox" in m for m in messages)

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import re
 from collections.abc import Sequence
 from typing import Any
@@ -24,6 +25,7 @@ from omniscribe.core.grounded.models import (
     GroundedBlock,
     GroundedResponse,
 )
+from omniscribe.core.ocr_quality.events import emit as _emit_quality_event
 
 logger = logging.getLogger(__name__)
 
@@ -212,7 +214,22 @@ def parse_glm_layout_details(
         content = (b.get("content") or "").strip()
         if not content:
             continue
-        x0, y0, x1, y1 = b["bbox_2d"]
+        # C9 hardening: bbox keys vary across GLM schema versions and
+        # malformed payloads used to raise bare KeyError/ValueError and
+        # abort the whole parse. Alias + guard + structured drop event.
+        bbox_raw = b.get("bbox_2d") or b.get("bbox") or b.get("box")
+        if not isinstance(bbox_raw, (list, tuple)) or len(bbox_raw) != 4:
+            _emit_drop(page_index, "drop:missing_bbox")
+            continue
+        try:
+            x0, y0, x1, y1 = (float(v) for v in bbox_raw)
+        except (TypeError, ValueError):
+            _emit_drop(page_index, "drop:bad_bbox")
+            continue
+        if not all(math.isfinite(v) for v in (x0, y0, x1, y1)):
+            # NaN/inf would poison _clamp and the normalized bbox contract.
+            _emit_drop(page_index, "drop:bad_bbox")
+            continue
         blocks.append(
             GroundedBlock(
                 bbox=[
@@ -226,6 +243,18 @@ def parse_glm_layout_details(
             )
         )
     return GroundedResponse(blocks=blocks, page_sizes=page_sizes)
+
+
+def _emit_drop(page_index: int, decision: str) -> None:
+    """One structured drop event per malformed block (ops visibility)."""
+    _emit_quality_event(
+        "parsers",
+        doc_id="-",
+        page=page_index,
+        duration_ms=0,
+        decision=decision,
+        fallback_used=False,
+    )
 
 
 def _recover_truncated_json_array(text: str) -> Any | None:

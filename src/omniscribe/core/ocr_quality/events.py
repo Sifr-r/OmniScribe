@@ -28,7 +28,8 @@ def emit(
     ----------
     sub_module:
         One of ``"watermark"``, ``"script_detect"``, ``"hallucination"``,
-        ``"calibration"``, ``"trust_scorer"``, ``"orchestrator"``.
+        ``"calibration"``, ``"trust_scorer"``, ``"orchestrator"``,
+        ``"parsers"``.
     doc_id:
         Opaque document identifier (``"-"`` when not yet assigned).
     page:
