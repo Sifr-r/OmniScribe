@@ -29,6 +29,8 @@ from omniscribe.core.llm.temperatures import (
     TEMPERATURE_TRANSLATION,
 )
 from omniscribe.core.translate.config import TranslationSettings
+from omniscribe.core.translate.length_bands import effective_band
+from omniscribe.core.translate.prompts import build_translation_prompt
 from omniscribe.utils.prompt_safety import sanitize_prompt_input
 
 logger = logging.getLogger(__name__)
@@ -66,6 +68,43 @@ EVALUATION_SYSTEM_MESSAGE = (
 # :class:`omniscribe.core.translate.config.TranslationSettings` (env-driven
 # via ``OMNISCRIBE_TRANSLATION_*``); see refactor §2.8.
 LEXICON_RESULT_COUNT = 3
+
+
+# ---------------------------------------------------------------------------
+# Deterministic adequacy checks
+# ---------------------------------------------------------------------------
+
+_URL_RE = re.compile(r"https?://[^\s)>\"']+", re.IGNORECASE)
+_ACRONYM_RE = re.compile(r"\b[A-Z0-9]{2,6}\b")
+_NUMBER_RE = re.compile(r"\d[\d.,]*")
+
+
+def deterministic_quality_issues(source: str, translated: str) -> list[str]:
+    """Cheap, script-agnostic adequacy checks that run before the LLM judge.
+
+    Catches failure modes a length-band check is blind to: altered URLs,
+    dropped acronyms, and mangled numbers. Kept deterministic so no LLM
+    call is spent on translations that are already provably lossy.
+    """
+    issues: list[str] = []
+    src_urls = set(_URL_RE.findall(source))
+    if src_urls and src_urls - set(_URL_RE.findall(translated)):
+        issues.append(
+            "URL(s) from the source are missing or altered in the translation."
+        )
+    src_acronyms = {m for m in _ACRONYM_RE.findall(source) if not m.isdigit()}
+    translated_acronyms = set(_ACRONYM_RE.findall(translated))
+    missing_acronyms = src_acronyms - translated_acronyms
+    if missing_acronyms:
+        issues.append(
+            f"Acronym(s) {sorted(missing_acronyms)} not preserved in the translation."
+        )
+    src_numbers = set(_NUMBER_RE.findall(source))
+    if src_numbers and src_numbers - set(_NUMBER_RE.findall(translated)):
+        issues.append(
+            "Numeric value(s) from the source are missing or altered in the translation."
+        )
+    return issues
 
 
 # ---------------------------------------------------------------------------
@@ -129,9 +168,8 @@ def retrieve_lexicon_context(state: Any) -> dict[str, list[str]]:
                 source_chunk=state["source_chunk"],
                 source_lang=state.get("source_lang") or None,
                 target_lang=state.get("target_lang") or state.get("target_language"),
-                limit=settings.lexicon_result_count
-                if hasattr(settings, "lexicon_result_count")
-                else LEXICON_RESULT_COUNT,
+                limit=settings.lexicon_result_count,
+                min_score=settings.lexicon_min_score,
             )
         )
     except Exception as exc:
@@ -164,39 +202,16 @@ async def translate_node(state: Any) -> dict[str, str | int]:
     """
     settings = _state_settings(state)
 
-    prompt_parts = [
-        f"Translate the following text into {state['target_language']}.\n\n"
-    ]
-
-    if state.get("glossary_prompt_block"):
-        prompt_parts.append(state["glossary_prompt_block"] + "\n\n")
-
-    if state.get("entity_memory_prompt_block"):
-        prompt_parts.append(state["entity_memory_prompt_block"] + "\n\n")
-
-    if state.get("rag_context"):
-        prompt_parts.append(
-            "Use the following lexicon definitions to ensure correct terminology:\n"
-        )
-        prompt_parts.append("\n".join(state["rag_context"]) + "\n\n")
-
-    if state.get("sliding_window"):
-        prompt_parts.append(
-            "PREVIOUS CONTEXT (do not translate again, just stay consistent):\n"
-            + state["sliding_window"]
-            + "\n\n"
-        )
-
-    if state.get("feedback"):
-        prompt_parts.append(
-            f"Previous translation had issues. Feedback: {state['feedback']}\nPlease fix these issues.\n\n"
-        )
-
-    # The source chunk is user-controlled (uploaded document text that
-    # already passed OCR). Sanitize at the prompt boundary so a crafted
-    # chunk can't truncate the controlled prompt region above.
-    prompt_parts.append(f"SOURCE TEXT:\n{sanitize_prompt_input(state['source_chunk'])}")
-    prompt = "".join(prompt_parts)
+    prompt = build_translation_prompt(
+        source_chunk=state["source_chunk"],
+        target_language=state["target_language"],
+        glossary_block=state.get("glossary_prompt_block"),
+        entity_block=state.get("entity_memory_prompt_block"),
+        rag_context=state.get("rag_context"),
+        sliding_window=state.get("sliding_window"),
+        feedback=state.get("feedback"),
+        block_type=None,
+    )
 
     try:
         translated = await call_llm(
@@ -204,6 +219,7 @@ async def translate_node(state: Any) -> dict[str, str | int]:
             api_base=settings.api_base,
             api_key=settings.api_key,
             temperature=TEMPERATURE_TRANSLATION,
+            max_tokens=settings.max_tokens,
             system_prompt=TRANSLATION_SYSTEM_MESSAGE,
             messages=[{"role": "user", "content": prompt}],
         )
@@ -213,84 +229,115 @@ async def translate_node(state: Any) -> dict[str, str | int]:
     return {"translated_chunk": translated, "attempts": state.get("attempts", 0) + 1}
 
 
-async def evaluate_node(state: Any) -> dict[str, float | str]:
-    """Evaluates translation quality using the configured LLM.
+async def evaluate_node(state: Any) -> dict[str, float | str | bool]:
+    """Evaluates translation quality; fail-safe, never fails open silently.
 
-    Fast paths (no LLM call):
-    - Translation API failure → score 0.0 with retry feedback (or 1.0 if max attempts reached).
-    - Max attempts reached → force accept 1.0 to break the loop.
-    - Source has no letters or is < 5 chars → score 1.0 (deterministic, no point asking).
-    - Length ratio below ``settings.min_length_ratio`` → score 0.0 (deterministic sanity check).
-    - Length ratio above ``settings.max_length_ratio`` → score 0.0 (catches garbled / hallucinated output).
-    - Length ratio in band AND no glossary (``rag_context`` empty) → score 1.0
-      (skip the LLM eval when there are no glossary terms to verify against; see refactor §2.5).
+    Ordering of gates:
 
-    Real path: ask the configured LLM to score the translation 0.0-1.0 and return
-    JSON ``{score, feedback, issues}``. If the LLM call fails or the response is
-    unrecoverable, fall back to ``(1.0, "")`` so the graph doesn't loop forever.
+    1. Translation API failure (``[Translation Error`` prefix): revert to
+       the best earlier attempt when one exists; mark ``failed`` when
+       max attempts are exhausted (the caller raises — the error marker
+       never reaches final output).
+    2. ``evaluate_enabled=False`` → accept without judging (single-call path).
+    3. Max attempts → return the best-scoring attempt, not the last.
+    4. Trivial source (no letters / < 5 chars) → accept.
+    5. Script-aware length band (``effective_band``) → reject out-of-band.
+    6. Deterministic adequacy checks (URLs / acronyms / numbers) → reject
+       provably lossy output without an LLM call.
+    7. LLM judge. Judge errors or unparseable scores no longer count as a
+       silent 1.0 pass — the attempt is accepted at ``acceptance_score``
+       and flagged ``judge_unverified`` so the caller can observe it.
     """
     settings = _state_settings(state)
-    max_attempts = settings.max_attempts
-    min_length_ratio = settings.min_length_ratio
-    max_length_ratio = settings.max_length_ratio
     attempts = state.get("attempts", 0)
-
     translated = state.get("translated_chunk", "")
+    source = state.get("source_chunk", "")
+    best_score = float(state.get("best_score", 0.0))
+    best_translation = str(state.get("best_translation", ""))
+
     if translated.startswith("[Translation Error"):
-        if attempts >= max_attempts:
-            return {"evaluation_score": 1.0, "feedback": "Failed after max attempts."}
+        if best_translation and not best_translation.startswith("[Translation Error"):
+            return {
+                "evaluation_score": 1.0,
+                "translated_chunk": best_translation,
+                "feedback": "Reverted to best attempt.",
+            }
+        if attempts >= settings.max_attempts:
+            return {
+                "evaluation_score": 1.0,
+                "failed": True,
+                "translated_chunk": translated,
+                "feedback": "Failed after max attempts.",
+            }
         return {"evaluation_score": 0.0, "feedback": "Translation API call failed."}
 
-    if attempts >= max_attempts:
-        # Force accept after N tries to prevent infinite loops
-        return {"evaluation_score": 1.0, "feedback": ""}
+    if not settings.evaluate_enabled:
+        return {"evaluation_score": 1.0, "feedback": "Evaluation disabled."}
 
-    source = state.get("source_chunk", "")
+    if attempts >= settings.max_attempts:
+        return {
+            "evaluation_score": 1.0,
+            "translated_chunk": best_translation or translated,
+            "failed": False,
+            "feedback": "",
+        }
+
     has_letters = any(c.isalpha() for c in source)
     if not has_letters or len(source.strip()) < 5:
         return {"evaluation_score": 1.0, "feedback": "Looks good"}
 
-    if len(translated) < len(source) * min_length_ratio:
+    min_ratio, max_ratio = effective_band(source, translated)
+    if len(translated) < len(source) * min_ratio:
         return {
             "evaluation_score": 0.0,
             "feedback": "Translation too short. Ensure you translate the entire chunk.",
         }
 
-    # Upper bound: a translation > max_length_ratio x source length is almost
-    # certainly garbled output (hallucination, repeated text, or untranslated
-    # padding). Refactor §2.5 fast path — score 0.0 without an LLM call.
-    if len(translated) > len(source) * max_length_ratio:
+    if len(translated) > len(source) * max_ratio:
         return {
             "evaluation_score": 0.0,
             "feedback": "Translation too long. Likely garbled or padded output.",
         }
 
-    # Accept-within-band fast path: when length is in the sane range AND there
-    # is no glossary to verify against, the only thing the LLM eval can
-    # meaningfully check is word-choice nuance. Skip the LLM call. Refactor §2.5.
-    if not state.get("rag_context"):
-        return {
-            "evaluation_score": 1.0,
-            "feedback": "Length ratio in normal range; no glossary terms to verify.",
-        }
+    issues = deterministic_quality_issues(source, translated)
+    if issues:
+        return {"evaluation_score": 0.0, "feedback": "; ".join(issues)}
 
-    # Real LLM-based evaluation. Fall back to "looks good" if the call fails
-    # so a transient LLM outage doesn't trap us in a retry loop.
     try:
         score, feedback = await _llm_evaluate_translation(state)
     except Exception as exc:
-        logger.warning("LLM evaluation failed; accepting as-is: %s", exc)
-        return {"evaluation_score": 1.0, "feedback": ""}
+        logger.warning("LLM evaluation failed; accepting unverified: %s", exc)
+        return {
+            "evaluation_score": settings.acceptance_score,
+            "judge_unverified": True,
+            "feedback": "Judge unavailable.",
+        }
 
-    return {"evaluation_score": score, "feedback": feedback}
+    if score is None:
+        logger.warning("Judge returned unparseable score; accepting unverified.")
+        return {
+            "evaluation_score": settings.acceptance_score,
+            "judge_unverified": True,
+            "feedback": feedback or "Judge output unparseable.",
+        }
+
+    updated: dict[str, float | str | bool] = {
+        "evaluation_score": score,
+        "feedback": feedback,
+    }
+    if score > best_score:
+        updated["best_score"] = score
+        updated["best_translation"] = translated
+    return updated
 
 
-async def _llm_evaluate_translation(state: Any) -> tuple[float, str]:
+async def _llm_evaluate_translation(state: Any) -> tuple[float | None, str]:
     """Run the configured LLM to score a translation and parse the JSON response.
 
-    Returns ``(score, feedback)``. Raises on LLM error so the caller can decide
-    on a fallback; JSON-parse failures are caught inside ``parse_evaluation_response``
-    and converted to the same fallback pair.
+    Returns ``(score, feedback)`` where ``score`` is ``None`` when the
+    response carried no parseable score. Raises on LLM error so the caller
+    can decide on a fallback; JSON-parse failures are converted to the
+    ``None``-score pair inside ``parse_evaluation_response``.
     """
     settings = _state_settings(state)
     prompt = build_evaluation_prompt(
@@ -305,6 +352,7 @@ async def _llm_evaluate_translation(state: Any) -> tuple[float, str]:
         api_base=settings.api_base,
         api_key=settings.api_key,
         temperature=TEMPERATURE_EVALUATION,
+        max_tokens=settings.max_tokens,
         system_prompt=EVALUATION_SYSTEM_MESSAGE,
         messages=[{"role": "user", "content": prompt}],
     )
@@ -383,21 +431,22 @@ def build_evaluation_prompt(
 _FENCED_JSON_RE = re.compile(r"\A```(?:json)?\s*(.*?)\s*```\s*\Z", re.DOTALL | re.I)
 
 
-def parse_evaluation_response(content: str) -> tuple[float, str]:
+def parse_evaluation_response(content: str) -> tuple[float | None, str]:
     """Parse the LLM's evaluation JSON into ``(score, feedback)``.
 
     Tolerant of fenced blocks and embedded objects. Behavior:
 
-    - No parseable dict at all → ``(1.0, "")`` (LLM didn't speak JSON).
-    - Valid numeric score → clamp to ``[0, 1]`` and pair with feedback if any.
-    - Missing or wrong-type score → ``(1.0, feedback)`` (default-accept; the
-      LLM gave us partial info and we'd rather surface it than lose it).
+    - No parseable dict at all, or a missing / wrong-type score →
+      ``(None, feedback)``. The caller decides the fail-safe policy
+      (flag the evaluation unverified) — this parser no longer hands
+      out silent passes.
+    - Valid numeric score → clamp to ``[0, 1]`` and pair with feedback.
       ``bool`` is explicitly rejected as a score even though it subclasses
       ``int`` in Python, otherwise JSON ``true`` would silently pass as 1.0.
     """
     stripped = content.strip()
     if not stripped:
-        return 1.0, ""
+        return None, ""
 
     parsed = _extract_json_object(stripped)
     feedback = ""
@@ -407,7 +456,7 @@ def parse_evaluation_response(content: str) -> tuple[float, str]:
             feedback = raw_feedback.strip()
 
     if parsed is None:
-        return 1.0, feedback
+        return None, feedback
 
     raw_score = parsed.get("score")
     # bool is a subclass of int — guard against it coercing to 1.0 silently.
@@ -418,8 +467,8 @@ def parse_evaluation_response(content: str) -> tuple[float, str]:
     ):
         return max(0.0, min(1.0, float(raw_score))), feedback
 
-    # Score missing or wrong-type → default-accept, preserve any feedback.
-    return 1.0, feedback
+    # Score missing or wrong-type → no verdict; caller flags unverified.
+    return None, feedback
 
 
 def _extract_json_object(text: str) -> dict[str, Any] | None:

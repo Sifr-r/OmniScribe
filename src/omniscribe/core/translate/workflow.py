@@ -20,6 +20,7 @@ from typing import Any, TypedDict
 
 from omniscribe.core.translate.config import (
     AsyncTranslationUnavailable,
+    TranslationError,
     TranslationSettings,
 )
 from omniscribe.core.translate.nodes import (
@@ -56,7 +57,15 @@ class TranslationState(TypedDict, total=False):
     feedback: str
     attempts: int
     settings: TranslationSettings
-    # Phase 4 additions
+    # Fail-safe judge bookkeeping (LLM-remediation wave): the graph keeps
+    # the best-scoring attempt so a late bad retry can't win, and marks
+    # ``failed`` when every attempt errored (caller raises TranslationError).
+    best_translation: str
+    best_score: float
+    judge_unverified: bool
+    failed: bool
+    # Phase 4 additions (test-pinned passthroughs — populated by
+    # tests/core/translate/test_translation_boundary.py)
     glossary_prompt_block: str
     entity_memory_prompt_block: str
     sliding_window: str
@@ -197,6 +206,11 @@ def run_translation(
             "settings": active_settings,
         }
         result = app.invoke(initial_state)
+        if result.get("failed"):
+            raise TranslationError(
+                f"Translation failed after {active_settings.max_attempts} attempts "
+                f"for chunk starting: {chunk[:80]!r}"
+            )
         translated = result.get("translated_chunk", "")
         if translated:
             translated_chunks.append(translated)
