@@ -34,12 +34,12 @@ from omniscribe.core.translate.config import (
 )
 from omniscribe.core.translate.entity_memory import EntityMemory
 from omniscribe.core.translate.glossary import Glossary
+from omniscribe.core.translate.nllb import NLLBEngine
 from omniscribe.core.translate.nodes import (
     EVALUATION_SYSTEM_MESSAGE,
     build_evaluation_prompt,
     parse_evaluation_response,
 )
-from omniscribe.core.translate.nllb import NLLBEngine
 from omniscribe.core.translate.tree import EvaluatorFn, TranslatorFn, translate_tree
 from omniscribe.core.translate.workflow import get_translation_app
 from omniscribe.plugins.artifacts import ArtifactStore
@@ -278,7 +278,7 @@ async def _judge_once(
 # Keyed on (source hash, target, api_base, model). The sync path injects no
 # RAG/glossary context, so no lexicon fingerprint is needed.
 _TRANSLATION_CACHE_MAX = 256
-_translation_cache: "OrderedDict[tuple[str, str, str, str], str]" = OrderedDict()
+_translation_cache: OrderedDict[tuple[str, str, str, str], str] = OrderedDict()
 
 
 def _cache_key(

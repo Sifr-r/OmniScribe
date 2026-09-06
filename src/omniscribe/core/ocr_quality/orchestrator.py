@@ -392,8 +392,11 @@ def run(
         settings,
     )
 
-    scored = [b for b in new_blocks if b.trust_score is not None]
-    flagged = sum(1 for b in scored if b.trust_score < settings.trust_flag_threshold)
+    scored_scores: list[float] = []
+    for b in new_blocks:
+        if b.trust_score is not None:
+            scored_scores.append(b.trust_score)
+    flagged = sum(1 for ts in scored_scores if ts < settings.trust_flag_threshold)
     if flagged:
         decision = f"{flagged}/{len(new_blocks)} blocks below_threshold"
     else:

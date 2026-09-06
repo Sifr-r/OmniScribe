@@ -239,7 +239,9 @@ def _int_env(name: str, default: int, *, minimum: int) -> int:
     try:
         parsed = int(raw)
     except ValueError:
-        logger.warning("Env %s=%r is not a valid integer; using default %s", name, raw, default)
+        logger.warning(
+            "Env %s=%r is not a valid integer; using default %s", name, raw, default
+        )
         return default
     if parsed < minimum:
         logger.warning(
@@ -262,7 +264,9 @@ def _float_env(
     try:
         parsed = float(raw)
     except ValueError:
-        logger.warning("Env %s=%r is not a valid number; using default %s", name, raw, default)
+        logger.warning(
+            "Env %s=%r is not a valid number; using default %s", name, raw, default
+        )
         return default
     if parsed < minimum:
         logger.warning(
@@ -298,7 +302,9 @@ def _bool_env(name: str, default: bool) -> bool:
         return True
     if value in _BOOL_FALSE:
         return False
-    logger.warning("Env %s=%r is not a valid boolean; using default %s", name, raw, default)
+    logger.warning(
+        "Env %s=%r is not a valid boolean; using default %s", name, raw, default
+    )
     return default
 
 

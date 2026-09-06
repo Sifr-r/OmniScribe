@@ -35,7 +35,7 @@ from pathlib import Path
 from typing import Any
 
 from .embedding import EmbeddingModel, get_default_embedding_model
-from .lancedb_store import GlossaryNotFoundError, LanceDBLexiconStore
+from .lancedb_store import LanceDBLexiconStore
 
 logger = logging.getLogger(__name__)
 

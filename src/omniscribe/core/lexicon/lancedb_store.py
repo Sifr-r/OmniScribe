@@ -32,7 +32,7 @@ import uuid
 from collections.abc import Callable, Iterable, Sequence
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 import pyarrow as pa
 
@@ -518,9 +518,7 @@ class LanceDBLexiconStore:
             if existing is not None:
                 resolved_id = existing.id
                 reusable = self._embeddings_by_entry_hash(existing.id)
-                self._table.delete(
-                    where=f"glossary_id = '{_sql_escape(existing.id)}'"
-                )
+                self._table.delete(where=f"glossary_id = '{_sql_escape(existing.id)}'")
         glossary_id = resolved_id or _new_id()
 
         # Batch-embed the source_text for all entries, reusing stored
@@ -687,7 +685,7 @@ class LanceDBLexiconStore:
     RRF_K = 60
     # Projection for keyword/row lookups: everything except the embedding
     # column, so scans don't drag vectors into memory.
-    _KEYWORD_PROJECTION = [
+    _KEYWORD_PROJECTION: ClassVar[list[str]] = [
         "id",
         "glossary_id",
         "source_text",
@@ -965,11 +963,7 @@ class LanceDBLexiconStore:
             if where:
                 search = search.where(where, prefilter=True)
             tbl = search.to_arrow()
-            cols = [
-                c
-                for c in self._KEYWORD_PROJECTION
-                if c in tbl.column_names
-            ]
+            cols = [c for c in self._KEYWORD_PROJECTION if c in tbl.column_names]
             rows = tbl.select(cols).to_pylist()
         except Exception as exc:
             logger.debug("keyword leg scan failed: %s", exc)

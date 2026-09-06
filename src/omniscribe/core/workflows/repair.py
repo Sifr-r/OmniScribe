@@ -28,9 +28,11 @@ from omniscribe.core.workflows.utils import _estimate_confidence
 
 logger = logging.getLogger(__name__)
 
-#: Per-block re-OCR primitive supplied by the engine:
-#: ``(block_idx, bbox) -> new_text``.
-ReOcrBlock = Callable[[int, tuple[float, float, float, float]], Awaitable[str]]
+#: Per-block re-OCR primitive supplied by the engine. Engines must
+#: accept ``(block_idx, bbox, *, previous_text: str = "", attempt: int = 1)``;
+#: the loop forwards the block's current text and the 1-based retry
+#: number so the engine can build an informed repair prompt.
+ReOcrBlock = Callable[..., Awaitable[str]]
 
 
 @dataclass(frozen=True)
@@ -119,7 +121,9 @@ class QualityRepairLoop:
                         page_idx, block_idx, attempt, conf, opts.target
                     )
                 try:
-                    new_text = await re_ocr(block_idx, bbox)
+                    new_text = await re_ocr(
+                        block_idx, bbox, previous_text=text, attempt=attempt
+                    )
                 except CircuitOpenError:
                     # Infrastructure-level fail-fast: never swallow the
                     # breaker signal — the whole run aborts just like
@@ -143,6 +147,9 @@ class QualityRepairLoop:
                 if new_conf <= conf:
                     break  # stall guard: keep the best text seen so far
                 page_blocks[block_idx] = (bbox, new_text.strip())
+                # The accepted revision becomes the next attempt's
+                # "previous text" so the re-OCR prompt stays informed.
+                text = new_text.strip()
                 if on_block_revised is not None:
                     await on_block_revised(
                         page_idx,

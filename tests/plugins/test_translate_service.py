@@ -369,12 +369,15 @@ async def test_translate_text_judge_retry_keeps_best(monkeypatch) -> None:
         calls.append(dict(kwargs))
         if kwargs.get("system_prompt") == translate_service.EVALUATION_SYSTEM_MESSAGE:
             # First judge call rejects, second accepts.
-            if sum(
-                1
-                for c in calls
-                if c.get("system_prompt")
-                == translate_service.EVALUATION_SYSTEM_MESSAGE
-            ) == 1:
+            if (
+                sum(
+                    1
+                    for c in calls
+                    if c.get("system_prompt")
+                    == translate_service.EVALUATION_SYSTEM_MESSAGE
+                )
+                == 1
+            ):
                 return '{"score": 0.2, "feedback": "wrong term", "issues": []}'
             return '{"score": 0.95, "feedback": "good", "issues": []}'
         if "Feedback:" in str(kwargs.get("messages", "")):

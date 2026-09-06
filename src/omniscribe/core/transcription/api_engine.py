@@ -109,9 +109,7 @@ class GenericAudioAPIEngine:
                 )
                 retryable_status = response.status_code in (429, 500, 502, 503, 504)
                 if attempt < max_attempts and retryable_status:
-                    await asyncio.sleep(
-                        self._retry_delay_s(attempt, retry_after)
-                    )
+                    await asyncio.sleep(self._retry_delay_s(attempt, retry_after))
                     continue
                 break
 
@@ -127,7 +125,8 @@ class GenericAudioAPIEngine:
                 return min(float(retry_after), 60.0)
             except ValueError:
                 pass
-        return min(1.0 * (2 ** (attempt - 1)), 16.0)
+        base: float = 1.0 * (2 ** (attempt - 1))
+        return min(base, 16.0)
 
     def _parse_verbose_json(self, payload: dict[str, Any]) -> TranscriptionResult:
         full_text = payload.get("text", "")

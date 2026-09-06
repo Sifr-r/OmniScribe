@@ -97,6 +97,9 @@ class RepairableGroundedBackend(Protocol):
         input_path: str,
         page_index: int,
         bbox: tuple[float, float, float, float] | Sequence[float],
+        *,
+        previous_text: str = "",
+        attempt: int = 1,
     ) -> str: ...
 
 

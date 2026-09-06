@@ -89,8 +89,13 @@ class ChatClient:
         timeout: float,
         max_tokens: int,
         system_prompt: str | None = None,
+        temperature: float | None = None,
     ) -> str:
         """Call the VLM with retry-on-transient and circuit-breaker protection.
+
+        ``temperature=None`` keeps the default ``TEMPERATURE_OCR``; callers
+        may pass an explicit value (e.g. the quality repair loop's per-retry
+        bump) to override it for one call.
 
         Returns the model's stripped text. Raises :class:`LLMCallError`
         after exhausting retries on a transient error, or immediately on
@@ -115,7 +120,7 @@ class ChatClient:
                     model=self.model,
                     api_base=self.api_base,
                     api_key=self.api_key,
-                    temperature=TEMPERATURE_OCR,
+                    temperature=TEMPERATURE_OCR if temperature is None else temperature,
                     max_tokens=max_tokens,
                     timeout=timeout,
                     system_prompt=system_prompt,

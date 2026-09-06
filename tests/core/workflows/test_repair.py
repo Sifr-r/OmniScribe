@@ -136,6 +136,33 @@ class TestQualityRepairLoop:
         assert summary.block_count == 1
         assert summary.below_target_count == 1
 
+    async def test_repair_passes_previous_text_and_attempt(self) -> None:
+        """re_ocr receives the block's current text and the attempt number."""
+        conf_by_text = {"Mangled OCR text": 0.4, "Better but imperfect text": 0.5}
+
+        def fake_estimator(text: str) -> float:
+            return conf_by_text.get(text, 0.95)
+
+        loop = QualityRepairLoop(
+            options=RepairOptions(enabled=True, target=0.9, max_retries=2),
+            confidence_estimator=fake_estimator,
+        )
+        page_blocks = [((0.0, 0.0, 1.0, 1.0), "Mangled OCR text")]
+        re_ocr = AsyncMock(
+            side_effect=["Better but imperfect text", "Perfectly clean final text"]
+        )
+
+        await loop.repair_page(page_idx=0, page_blocks=page_blocks, re_ocr=re_ocr)
+
+        assert re_ocr.call_count == 2
+        first, second = re_ocr.call_args_list
+        assert first.args == (0, (0.0, 0.0, 1.0, 1.0))
+        assert first.kwargs["previous_text"] == "Mangled OCR text"
+        assert first.kwargs["attempt"] == 1
+        # The accepted attempt-1 revision becomes the previous text of attempt 2.
+        assert second.kwargs["previous_text"] == "Better but imperfect text"
+        assert second.kwargs["attempt"] == 2
+
 
 class TestJobRepairSummary:
     async def test_emit_job_repair_summary_aggregates_properly(self) -> None:
@@ -201,7 +228,7 @@ class TestRepairPhasePageDecode:
         )
 
         class _StubOCR:
-            async def perform_ocr_on_crop(self, crop_b64: str) -> str:
+            async def perform_ocr_on_crop(self, crop_b64: str, **kwargs: object) -> str:
                 return "abc"
 
         class _StubEngine:

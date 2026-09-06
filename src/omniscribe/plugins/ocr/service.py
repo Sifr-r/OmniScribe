@@ -339,9 +339,7 @@ class OCRServiceImpl:
             # doubles may not, hence the getattr fallback to ``None``.
             doc_result = getattr(pipeline, "last_document_result", None)
             trust_summary = (
-                document_trust_summary(doc_result)
-                if doc_result is not None
-                else None
+                document_trust_summary(doc_result) if doc_result is not None else None
             )
             return output_path.read_bytes(), pages_data, trust_summary
         finally:

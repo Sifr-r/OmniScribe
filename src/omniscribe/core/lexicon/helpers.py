@@ -64,9 +64,7 @@ def preview(store: LexiconStore) -> dict[str, object]:
             source = normalize_term(entry.source_text)
             if not source:
                 continue
-            by_source.setdefault(source, []).append(
-                (meta.name, entry.target_text)
-            )
+            by_source.setdefault(source, []).append((meta.name, entry.target_text))
 
     conflicts: list[dict[str, object]] = []
     for source_key, values in sorted(by_source.items()):

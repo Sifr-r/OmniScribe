@@ -453,12 +453,12 @@ def test_entry_hash_stable_and_case_sensitive() -> None:
 
 def test_reopen_with_different_model_raises(tmp_path: Path) -> None:
     """Opening a lexicon built with model A using model B must fail loud."""
+    from fake_embedder import HashEmbedder
+
     from omniscribe.core.lexicon.lancedb_store import (
         EmbeddingModelMismatchError,
         LanceDBLexiconStore,
     )
-
-    from fake_embedder import HashEmbedder
 
     store = LanceDBLexiconStore(path=tmp_path, embedding_model=HashEmbedder("model-a"))
     store.save_glossary(
@@ -472,9 +472,9 @@ def test_reopen_with_different_model_raises(tmp_path: Path) -> None:
 
 
 def test_reopen_with_same_model_ok(tmp_path: Path) -> None:
-    from omniscribe.core.lexicon.lancedb_store import LanceDBLexiconStore
-
     from fake_embedder import HashEmbedder
+
+    from omniscribe.core.lexicon.lancedb_store import LanceDBLexiconStore
 
     store = LanceDBLexiconStore(path=tmp_path, embedding_model=HashEmbedder("model-a"))
     store.save_glossary(
@@ -490,11 +490,10 @@ def test_reopen_with_same_model_ok(tmp_path: Path) -> None:
 def test_legacy_table_without_meta_adopts_current_model(tmp_path: Path) -> None:
     """A pre-``_meta`` lexicon opens fine and records the current model."""
     import lancedb
+    from fake_embedder import HashEmbedder
 
     from omniscribe.core.lexicon.lancedb_store import LanceDBLexiconStore
     from omniscribe.core.lexicon.schema import LEXICON_SCHEMA
-
-    from fake_embedder import HashEmbedder
 
     # Simulate a legacy lexicon: terms table only, no _meta table.
     db = lancedb.connect(str(tmp_path))
@@ -520,11 +519,10 @@ def test_legacy_table_without_entry_hash_gets_backfilled(tmp_path: Path) -> None
     """A pre-``entry_hash`` table adopts the column and accepts new rows."""
     import lancedb
     import pyarrow as pa
+    from fake_embedder import HashEmbedder
 
     from omniscribe.core.lexicon.lancedb_store import LanceDBLexiconStore
     from omniscribe.core.lexicon.schema import LEXICON_SCHEMA
-
-    from fake_embedder import HashEmbedder
 
     legacy_fields = [f for f in LEXICON_SCHEMA if f.name != "entry_hash"]
     legacy_schema = pa.schema(legacy_fields)
@@ -633,9 +631,7 @@ def test_ensure_index_called_after_bulk_save(
     store.save_glossary(
         name="bulk",
         format="csv",
-        entries=[
-            {"source": f"term {i}", "target": f"terme {i}"} for i in range(200)
-        ],
+        entries=[{"source": f"term {i}", "target": f"terme {i}"} for i in range(200)],
     )
     assert calls, "create_index was never called"
     assert calls[0]["index_type"] in {"hnsw", "ivf_pq"}
@@ -684,20 +680,23 @@ def test_save_glossary_upsert_replaces_same_name_and_uri(
     )
     assert second.id == first.id
     assert len(store.list_glossaries()) == 1
-    assert [e.target_text for e in store.list_entries(first.id)] == [
-        "Union européenne"
-    ]
+    assert [e.target_text for e in store.list_entries(first.id)] == ["Union européenne"]
 
 
 def test_save_glossary_upsert_different_uri_creates_new(
     store: LanceDBLexiconStore,
 ) -> None:
     store.save_glossary(
-        name="g", format="csv", source_uri="file://a.csv",
+        name="g",
+        format="csv",
+        source_uri="file://a.csv",
         entries=[{"source": "a", "target": "A"}],
     )
     second = store.save_glossary(
-        name="g", format="csv", source_uri="file://b.csv", upsert=True,
+        name="g",
+        format="csv",
+        source_uri="file://b.csv",
+        upsert=True,
         entries=[{"source": "b", "target": "B"}],
     )
     metas = store.list_glossaries()

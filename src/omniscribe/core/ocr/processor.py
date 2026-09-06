@@ -64,6 +64,7 @@ from omniscribe.core.ocr.resilience import (
     get_default_circuit_breaker_registry,
 )
 from omniscribe.utils.env import env_int
+from omniscribe.utils.prompt_safety import sanitize_prompt_input
 
 if TYPE_CHECKING:
     from omniscribe.core.ocr.trocr import TrOCREngine
@@ -470,6 +471,8 @@ class OCRProcessor:
         self_correction: bool = False,
         binarize: bool = False,
         dual_engine: bool = False,
+        repair_hint: str | None = None,
+        temperature: float | None = None,
     ) -> str:
         """OCR a single cropped box region. Returns a single whitespace-joined string.
 
@@ -478,6 +481,11 @@ class OCRProcessor:
         ``self_correction`` runs a second VLM pass with the correction prompt
         and unconditionally replaces the first-pass text (accept-always); an
         empty correction pass returns "".
+
+        ``repair_hint`` (quality repair loop) is appended verbatim after
+        sanitization so the VLM sees its rejected previous attempt;
+        ``temperature`` overrides the crop-call default (the repair loop
+        bumps it per retry attempt).
         """
         if binarize:
             image_base64 = await asyncio.to_thread(
@@ -491,16 +499,25 @@ class OCRProcessor:
             if draft:
                 prompt = fill_dual_engine_crop(draft)
 
+        if repair_hint:
+            prompt = prompt + sanitize_prompt_input(repair_hint)
+
         crop_system = self._resolve_crop_system(
             handwriting_mode=handwriting_mode, dual_engine=dual_engine
         )
 
+        # ``temperature`` is only forwarded when the caller overrides it so
+        # legacy ``_chat`` overrides (which predate the kwarg) keep working.
+        chat_kwargs: dict[str, float] = {}
+        if temperature is not None:
+            chat_kwargs["temperature"] = temperature
         text = await self._chat(
             prompt,
             image_base64,
             timeout=self.crop_timeout_s,
             max_tokens=self.crop_max_tokens,
             system_prompt=crop_system,
+            **chat_kwargs,
         )
         if not text:
             return ""
@@ -543,6 +560,7 @@ class OCRProcessor:
         timeout: float,
         max_tokens: int,
         system_prompt: str | None = None,
+        temperature: float | None = None,
     ) -> str:
         """Backward-compat thin wrapper around the :class:`ChatClient`.
 
@@ -570,6 +588,7 @@ class OCRProcessor:
             timeout=timeout,
             max_tokens=max_tokens,
             system_prompt=system_prompt,
+            temperature=temperature,
         )
 
     def _get_tesseract_draft(self, image_base64: str) -> str:

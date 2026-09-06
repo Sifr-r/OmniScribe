@@ -23,7 +23,7 @@ _FASTER_WHISPER_MISSING_MSG = (
     "Install it with `uv sync --extra transcription` or `pip install 'omniscribe[transcription]'`."
 )
 
-_SENTENCE_END = tuple("。！？!?.…")
+_SENTENCE_END = tuple("。！？!?.…")  # noqa: RUF001 — fullwidth CJK punctuation is intentional
 
 
 def _join_segment_texts(parts: list[str]) -> str:

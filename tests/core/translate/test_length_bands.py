@@ -27,7 +27,7 @@ def test_cjk_target_shrinks_upper_bound() -> None:
 def test_cjk_source_expands_upper_bound() -> None:
     src = "こんにちは世界、これは日本語の段落です。"
     tgt = "Hello world, this is a longer English translation paragraph."
-    lo, hi = effective_band(src, tgt)
+    _lo, hi = effective_band(src, tgt)
     assert hi > DEFAULT_MAX_RATIO
 
 

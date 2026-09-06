@@ -186,6 +186,9 @@ async def repair_single_page(
     async def re_ocr(
         block_idx: int,
         bbox: tuple[float, float, float, float],
+        *,
+        previous_text: str = "",
+        attempt: int = 1,
     ) -> str:
         page_image = await get_page_image(p_num)
         crop_b64 = await asyncio.to_thread(
@@ -193,8 +196,19 @@ async def repair_single_page(
         )
         if crop_b64 is None:
             return ""
+        hint = (
+            f"\nREPAIR PASS {attempt}: your previous reading of this region was:\n"
+            f"{previous_text}\nIt was rejected as unreliable (confidence below "
+            "target or garbled). Re-read the crop carefully; keep every line, "
+            "fix misreads, do not add commentary."
+            if previous_text
+            else ""
+        )
+        temperature = 0.1 + 0.1 * (attempt - 1) if attempt > 1 else None
         try:
-            text = await engine.ocr_processor.perform_ocr_on_crop(crop_b64)
+            text = await engine.ocr_processor.perform_ocr_on_crop(
+                crop_b64, repair_hint=hint or None, temperature=temperature
+            )
         except CircuitOpenError:
             raise
         except Exception as exc:

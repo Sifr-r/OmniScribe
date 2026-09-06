@@ -14,7 +14,9 @@ def _ngrams(text: str, n: int) -> Counter[str]:
     return Counter(text[i : i + n] for i in range(len(text) - n + 1))
 
 
-def chrf(reference: str, hypothesis: str, *, max_n: int = 6, beta: float = 2.0) -> float:
+def chrf(
+    reference: str, hypothesis: str, *, max_n: int = 6, beta: float = 2.0
+) -> float:
     """Character n-gram F-score in [0.0, 1.0]; 1.0 for identical strings."""
     if not reference.strip() or not hypothesis.strip():
         return 0.0

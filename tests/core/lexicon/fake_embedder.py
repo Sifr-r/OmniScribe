@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 
-from omniscribe.core.lexicon.embedding import EMBEDDING_DIM, EmbeddingModel
+from omniscribe.core.lexicon.embedding import EMBEDDING_DIM
 
 
 class HashEmbedder:

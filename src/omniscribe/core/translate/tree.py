@@ -14,11 +14,11 @@ from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 
 from omniscribe.core.block_tree import BlockNode
+from omniscribe.core.translate.config import TranslationSettings
 from omniscribe.core.translate.entity_memory import EntityMemory
 from omniscribe.core.translate.glossary import Glossary
 from omniscribe.core.translate.length_bands import effective_band
 from omniscribe.core.translate.prompts import build_translation_prompt
-from omniscribe.core.translate.config import TranslationSettings
 from omniscribe.utils.prompt_safety import sanitize_prompt_input
 
 if TYPE_CHECKING:

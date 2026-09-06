@@ -39,7 +39,7 @@ def entry_hash(source: str, target: str) -> str:
     a different entry and must be re-embedded rather than silently reusing
     the old vector.
     """
-    return hashlib.sha256(f"{source}\x1f{target}".encode("utf-8")).hexdigest()
+    return hashlib.sha256(f"{source}\x1f{target}".encode()).hexdigest()
 
 
 @dataclass(frozen=True, slots=True)
@@ -181,6 +181,7 @@ class LexiconStore(Protocol):
         derived artifacts (e.g. translations) keyed on lexicon state.
         """
         ...
+
     def health(self) -> dict[str, object]: ...
     def close(self) -> None: ...
 

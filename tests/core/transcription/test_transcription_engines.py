@@ -333,7 +333,7 @@ class TestLocalWhisperEngineTranscribe:
             "Skipped empty.\nNext"
         )
         # CJK sentence-final punctuation also breaks lines.
-        assert _join_segment_texts(["こんにちは。", "次の文"] ) == "こんにちは。\n次の文"
+        assert _join_segment_texts(["こんにちは。", "次の文"]) == "こんにちは。\n次の文"
 
     async def test_transcribe_cleans_up_temporary_file_on_success(self) -> None:
         engine = LocalWhisperEngine()

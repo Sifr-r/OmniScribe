@@ -67,9 +67,7 @@ class TestCalibrationEnabled:
     def test_below_threshold_blocks_reported_in_event(self, caplog):
         import logging
 
-        caplog.set_level(
-            logging.DEBUG, logger="omniscribe.core.ocr_quality.events"
-        )
+        caplog.set_level(logging.DEBUG, logger="omniscribe.core.ocr_quality.events")
         blocks = [
             _block("low", confidence=0.2),
             _block("high", confidence=0.9),

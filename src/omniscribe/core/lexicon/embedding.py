@@ -83,9 +83,7 @@ class _SentenceTransformerEmbeddingModel:
         # constant — with OMNISCRIBE_EMBEDDING_MODEL overrides the two can
         # differ, and health()/guards must not lie about the vector space.
         if self._model is not None:
-            getter = getattr(
-                self._model, "get_sentence_embedding_dimension", None
-            )
+            getter = getattr(self._model, "get_sentence_embedding_dimension", None)
             if callable(getter):
                 dim = getter()
                 if isinstance(dim, int) and dim > 0:

@@ -51,11 +51,7 @@ async def dual_translate(
     mid = (lo + hi) / 2.0
     p_ratio = len(primary_text) / src_len
     s_ratio = len(secondary_text) / src_len
-    chosen = (
-        secondary_text
-        if abs(s_ratio - mid) < abs(p_ratio - mid)
-        else primary_text
-    )
+    chosen = secondary_text if abs(s_ratio - mid) < abs(p_ratio - mid) else primary_text
     return chosen, {
         "primary": primary_text,
         "secondary": secondary_text,

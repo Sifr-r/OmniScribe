@@ -308,11 +308,19 @@ class GroundedEngine(EngineBase):
                 block_idx: int,
                 bbox: tuple[float, float, float, float],
                 *,
+                previous_text: str = "",
+                attempt: int = 1,
                 _page: int = page_idx,
             ) -> str:
                 nonlocal completed
                 try:
-                    text: str = await crop_ocr(input_path, _page, bbox)
+                    text: str = await crop_ocr(
+                        input_path,
+                        _page,
+                        bbox,
+                        previous_text=previous_text,
+                        attempt=attempt,
+                    )
                 except CircuitOpenError:
                     raise
                 except Exception as exc:

@@ -575,7 +575,8 @@ class TestFailSafeJudgeSemantics:
 class TestDeterministicQualityIssues:
     def test_url_altered_detected(self) -> None:
         issues = translation.deterministic_quality_issues(
-            "Visit https://example.com/a today", "Visitez https://exemple.fr/a aujourd'hui"
+            "Visit https://example.com/a today",
+            "Visitez https://exemple.fr/a aujourd'hui",
         )
         assert any("URL" in i for i in issues)
 

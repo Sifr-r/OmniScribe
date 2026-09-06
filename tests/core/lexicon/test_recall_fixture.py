@@ -14,9 +14,9 @@ import pytest
 pytest.importorskip("pyarrow")
 pytest.importorskip("lancedb")
 
-from omniscribe.core.lexicon import LanceDBLexiconStore, LexiconQuery
-
 from fake_embedder import MappedEmbedder, unit_vector
+
+from omniscribe.core.lexicon import LanceDBLexiconStore, LexiconQuery
 
 
 def _store(tmp_path: Path) -> LanceDBLexiconStore:
@@ -26,9 +26,7 @@ def _store(tmp_path: Path) -> LanceDBLexiconStore:
         "données": unit_vector(2),
         "GDPR": unit_vector(3),
     }
-    store = LanceDBLexiconStore(
-        path=tmp_path, embedding_model=MappedEmbedder(mapping)
-    )
+    store = LanceDBLexiconStore(path=tmp_path, embedding_model=MappedEmbedder(mapping))
     store.save_glossary(
         name="terms",
         format="csv",

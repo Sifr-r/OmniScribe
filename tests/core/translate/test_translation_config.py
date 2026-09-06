@@ -10,15 +10,15 @@ from omniscribe.core.translate.config import (
     DEFAULT_TRANSLATION_ACCEPTANCE_SCORE,
     DEFAULT_TRANSLATION_API_BASE,
     DEFAULT_TRANSLATION_API_KEY,
+    DEFAULT_TRANSLATION_ENTITY_MEMORY_CAP,
+    DEFAULT_TRANSLATION_EVALUATE,
+    DEFAULT_TRANSLATION_LEXICON_MIN_SCORE,
+    DEFAULT_TRANSLATION_LEXICON_RESULT_COUNT,
     DEFAULT_TRANSLATION_MAX_ATTEMPTS,
     DEFAULT_TRANSLATION_MAX_LENGTH_RATIO,
     DEFAULT_TRANSLATION_MAX_TOKENS,
     DEFAULT_TRANSLATION_MIN_LENGTH_RATIO,
     DEFAULT_TRANSLATION_MODEL,
-    DEFAULT_TRANSLATION_ENTITY_MEMORY_CAP,
-    DEFAULT_TRANSLATION_EVALUATE,
-    DEFAULT_TRANSLATION_LEXICON_MIN_SCORE,
-    DEFAULT_TRANSLATION_LEXICON_RESULT_COUNT,
     TranslationSettings,
 )
 
@@ -186,7 +186,7 @@ def test_translation_settings_new_fields_validation() -> None:
     with pytest.raises(ValueError, match="entity_memory_cap must be an integer"):
         TranslationSettings(entity_memory_cap=False)
     with pytest.raises(
-        ValueError, match="lexicon_min_score must be between 0.0 and 1.0"
+        ValueError, match=r"lexicon_min_score must be between 0\.0 and 1\.0"
     ):
         TranslationSettings(lexicon_min_score=1.5)
 

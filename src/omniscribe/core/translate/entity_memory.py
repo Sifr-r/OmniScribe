@@ -10,8 +10,8 @@ from __future__ import annotations
 
 import re
 from collections import Counter
+from collections import Counter as CounterT
 from dataclasses import dataclass, field
-from typing import Counter as CounterT
 
 # Common stopwords (English-only stoplist — multilingual stopwords would
 # bloat the per-chunk context block).

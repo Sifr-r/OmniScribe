@@ -471,6 +471,54 @@ class TestProcessorSystemPromptWiring:
         await proc.perform_ocr_on_crop(image_base64="aW1hZ2U=")
         assert captured["system_prompt"] is OCR_SYSTEM_MESSAGE
 
+    async def test_crop_repair_hint_appended_and_default_temperature_kept(self):
+        proc = self._make_processor(model="qwen/qwen3-vl-8b")
+        captured: dict = {}
+
+        async def fake_chat(
+            prompt,
+            image_base64,
+            *,
+            timeout,
+            max_tokens,
+            system_prompt=None,
+            temperature=None,
+        ):
+            captured["prompt"] = prompt
+            captured["temperature"] = temperature
+            return "fixed text"
+
+        proc._chat = fake_chat  # type: ignore[method-assign]
+        await proc.perform_ocr_on_crop(
+            image_base64="aW1hZ2U=",
+            repair_hint="REPAIR PASS 2: your previous reading of this region was:\nwrong text",
+        )
+        assert "REPAIR PASS 2" in captured["prompt"]
+        assert "wrong text" in captured["prompt"]
+        assert captured["temperature"] is None
+
+    async def test_crop_repair_temperature_override_reaches_chat(self):
+        proc = self._make_processor(model="qwen/qwen3-vl-8b")
+        captured: dict = {}
+
+        async def fake_chat(
+            prompt,
+            image_base64,
+            *,
+            timeout,
+            max_tokens,
+            system_prompt=None,
+            temperature=None,
+        ):
+            captured["temperature"] = temperature
+            return "fixed text"
+
+        proc._chat = fake_chat  # type: ignore[method-assign]
+        await proc.perform_ocr_on_crop(
+            image_base64="aW1hZ2U=", repair_hint="hint", temperature=0.2
+        )
+        assert captured["temperature"] == 0.2
+
     async def test_dual_engine_crop_path_sends_dual_engine_system_message(self):
         proc = self._make_processor(model="qwen/qwen3-vl-8b")
         captured: list = []

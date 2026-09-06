@@ -50,6 +50,7 @@ from omniscribe.core.ocr.resilience import (
     is_transient_error,
 )
 from omniscribe.core.workflows.base import OCRCancelled
+from omniscribe.utils.prompt_safety import sanitize_prompt_input
 
 logger = logging.getLogger(__name__)
 
@@ -114,6 +115,14 @@ CROP_OCR_PROMPT = (
     "or contains no readable text, return an empty string. Do not "
     "paraphrase, summarize, or add commentary. Output the text only — "
     "no JSON, no markdown fences, no leading or trailing prose."
+)
+
+REPAIR_CROP_PROMPT = (
+    "You are a precise OCR engine. A previous attempt at reading this "
+    "cropped region produced:\n\n{previous_text}\n\nThat reading was "
+    "REJECTED ({rejection_reason}). Re-transcribe EVERY line of text in "
+    "the image carefully; keep line breaks; return only the corrected "
+    "text — no commentary. If the crop is blank, return an empty string."
 )
 
 
@@ -319,6 +328,9 @@ class PromptedGroundedOCR:
         input_path: str,
         page_index: int,
         bbox: Sequence[float],
+        *,
+        previous_text: str = "",
+        attempt: int = 1,
     ) -> str:
         """Re-OCR a single normalized-bbox crop from one page.
 
@@ -326,6 +338,12 @@ class PromptedGroundedOCR:
         feature-detects this method (``hasattr``) — it is intentionally
         NOT part of the :class:`GroundedOCRBackend` protocol, so adding
         it changes no existing backend contract.
+
+        ``previous_text`` / ``attempt`` come from the repair loop: when a
+        previous reading exists, the prompt switches to
+        :data:`REPAIR_CROP_PROMPT` and the temperature rises with the
+        attempt number (capped at 0.3) so retries explore instead of
+        repeating the same misread.
 
         Audit P2-9: page images come from the per-instance raster cache
         populated by :meth:`ocr_document`, so repair no longer
@@ -341,10 +359,26 @@ class PromptedGroundedOCR:
         crop_b64 = await asyncio.to_thread(_crop_normalized, b64, bbox, w, h)
         if crop_b64 is None:
             return ""
-        text = await self._call_with_retry(crop_b64, prompt=CROP_OCR_PROMPT)
+        if previous_text:
+            prompt = REPAIR_CROP_PROMPT.format(
+                previous_text=sanitize_prompt_input(previous_text),
+                rejection_reason="confidence below target or garbled",
+            )
+            temperature = min(TEMPERATURE_GROUNDED + 0.1 * (attempt - 1), 0.3)
+        else:
+            prompt = CROP_OCR_PROMPT
+            temperature = TEMPERATURE_GROUNDED
+        text = await self._call_with_retry(
+            crop_b64, prompt=prompt, temperature=temperature
+        )
         return text.strip()
 
-    async def _call_with_retry(self, image_b64: str, prompt: str | None = None) -> str:
+    async def _call_with_retry(
+        self,
+        image_b64: str,
+        prompt: str | None = None,
+        temperature: float = TEMPERATURE_GROUNDED,
+    ) -> str:
         """One grounded VLM page call with retry + circuit-breaker protection.
 
         Same policy as :meth:`OCRProcessor._chat`: transient failures are
@@ -363,7 +397,7 @@ class PromptedGroundedOCR:
                     model=self.model,
                     api_base=self.api_base,
                     api_key=self.api_key,
-                    temperature=TEMPERATURE_GROUNDED,
+                    temperature=temperature,
                     max_tokens=self.max_tokens,
                     timeout=self.timeout_s,
                     system_prompt=(
@@ -508,5 +542,6 @@ __all__ = [
     "DEFAULT_GROUNDING_PROMPT",
     "GROUNDED_OCR_SYSTEM_MESSAGE",
     "PROMPT_VERSION",
+    "REPAIR_CROP_PROMPT",
     "PromptedGroundedOCR",
 ]

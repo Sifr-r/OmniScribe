@@ -260,7 +260,7 @@ class _CropCapableStubBackend(_StubGroundedBackend):
         # pin the exact arguments the engine forwards to ``ocr_crop``.
         self.crop_args: list[tuple[str, int, tuple[float, float, float, float]]] = []
 
-    async def ocr_crop(self, input_path, page_index, bbox):
+    async def ocr_crop(self, input_path, page_index, bbox, **kwargs):
         self.crop_calls += 1
         self.crop_args.append((input_path, page_index, tuple(bbox)))
         return self.crop_text
@@ -365,7 +365,7 @@ class TestGroundedRepair:
 
     async def test_circuit_open_error_propagates(self) -> None:
         class _BreakerBackend(_CropCapableStubBackend):
-            async def ocr_crop(self, input_path, page_index, bbox):
+            async def ocr_crop(self, input_path, page_index, bbox, **kwargs):
                 raise CircuitOpenError(failures=5, retry_after=30.0)
 
         backend = _BreakerBackend(self._below_target_response())
@@ -381,7 +381,7 @@ class TestGroundedRepair:
 
     async def test_crop_failure_emits_warning_and_keeps_best_text(self) -> None:
         class _ExplodingBackend(_CropCapableStubBackend):
-            async def ocr_crop(self, input_path, page_index, bbox):
+            async def ocr_crop(self, input_path, page_index, bbox, **kwargs):
                 raise RuntimeError("VLM exploded")
 
         backend = _ExplodingBackend(self._below_target_response())

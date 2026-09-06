@@ -45,8 +45,10 @@ from omniscribe.core.grounded.prompted import (
     CROP_OCR_PROMPT,
     DEFAULT_GROUNDING_PROMPT,
     GROUNDED_OCR_SYSTEM_MESSAGE,
+    REPAIR_CROP_PROMPT,
     PromptedGroundedOCR,
 )
+from omniscribe.core.llm.temperatures import TEMPERATURE_GROUNDED
 from omniscribe.core.ocr.resilience import CircuitOpenError
 from omniscribe.core.processors.reading_order import ReadingOrderProcessor
 from omniscribe.core.workflows.base import OCRCancelled
@@ -182,7 +184,59 @@ class TestPromptBuilder:
             )
 
         assert text == "Extracted crop text"
-        mock_call.assert_called_once_with("crop_b64", prompt=CROP_OCR_PROMPT)
+        mock_call.assert_called_once_with(
+            "crop_b64", prompt=CROP_OCR_PROMPT, temperature=TEMPERATURE_GROUNDED
+        )
+
+    def test_repair_crop_prompt_includes_previous_text_and_reason(self) -> None:
+        assert "previous attempt" in REPAIR_CROP_PROMPT.lower()
+        assert "{previous_text}" in REPAIR_CROP_PROMPT
+        assert "{rejection_reason}" in REPAIR_CROP_PROMPT
+
+    async def test_ocr_crop_repair_pass_uses_repair_prompt_and_warmer_temp(
+        self,
+    ) -> None:
+        """ocr_crop with previous_text builds REPAIR_CROP_PROMPT and bumps temperature."""
+        backend = PromptedGroundedOCR()
+
+        with (
+            patch.object(
+                backend, "_get_page_images", new_callable=AsyncMock
+            ) as mock_get_pages,
+            patch(
+                "omniscribe.core.grounded.prompted._crop_normalized",
+                return_value="crop_b64",
+            ),
+            patch.object(
+                backend, "_call_with_retry", new_callable=AsyncMock
+            ) as mock_call,
+        ):
+            mock_get_pages.return_value = [("page0_b64", 100, 100)]
+            mock_call.return_value = "corrected crop text"
+
+            text = await backend.ocr_crop(
+                "dummy.pdf",
+                page_index=0,
+                bbox=[0.1, 0.1, 0.5, 0.5],
+                previous_text="garbled attempt",
+                attempt=2,
+            )
+
+            assert text == "corrected crop text"
+            mock_call.assert_called_once()
+            kwargs = mock_call.call_args.kwargs
+            assert "garbled attempt" in kwargs["prompt"]
+            assert "confidence below target or garbled" in kwargs["prompt"]
+            # TEMPERATURE_GROUNDED + 0.1 * (attempt - 1), capped at 0.3.
+            assert kwargs["temperature"] == pytest.approx(
+                min(TEMPERATURE_GROUNDED + 0.1 * (2 - 1), 0.3)
+            )
+
+            # First attempt with no previous text keeps the plain crop prompt.
+            mock_call.reset_mock()
+            await backend.ocr_crop("dummy.pdf", page_index=0, bbox=[0.1, 0.1, 0.5, 0.5])
+            assert mock_call.call_args.kwargs["prompt"] == CROP_OCR_PROMPT
+            assert mock_call.call_args.kwargs["temperature"] == TEMPERATURE_GROUNDED
 
 
 # ---------------------------------------------------------------------------
