@@ -9,7 +9,9 @@ prompt. This is the single highest-leverage quality fix for the
 from __future__ import annotations
 
 import re
+from collections import Counter
 from dataclasses import dataclass, field
+from typing import Counter as CounterT
 
 # Common stopwords (English-only stoplist — multilingual stopwords would
 # bloat the per-chunk context block).
@@ -99,52 +101,75 @@ _PROPER_RE = re.compile(
 
 @dataclass(slots=True)
 class EntityMemory:
-    """In-memory bag of named entities and dates extracted from a document."""
+    """In-memory bag of named entities and dates extracted from a document.
 
-    names: set[str] = field(default_factory=set)
-    dates: set[str] = field(default_factory=set)
-    acronyms: set[str] = field(default_factory=set)
+    Buckets are frequency ``Counter``s so the prompt block can cap each
+    section to the most frequent entities (audit: unbounded context
+    blocks grew every chunk prompt with document size).
+    """
+
+    names: CounterT[str] = field(default_factory=Counter)
+    dates: CounterT[str] = field(default_factory=Counter)
+    acronyms: CounterT[str] = field(default_factory=Counter)
 
     def add_text(self, text: str) -> None:
         for m in _DATE_RE.findall(text):
-            self.dates.add(m)
+            self.dates[m] += 1
         for m in _PROPER_RE.findall(text):
             if m.lower() in _STOPWORDS:
                 continue
             # Acronyms (all-caps, length 2..6) get their own bucket.
             stripped = m.strip()
             if 2 <= len(stripped) <= 6 and stripped.isupper():
-                self.acronyms.add(stripped)
+                self.acronyms[stripped] += 1
             else:
-                self.names.add(stripped)
+                self.names[stripped] += 1
 
     def merge(self, other: EntityMemory) -> EntityMemory:
         merged = EntityMemory(
-            names=set(self.names) | set(other.names),
-            dates=set(self.dates) | set(other.dates),
-            acronyms=set(self.acronyms) | set(other.acronyms),
+            names=Counter(self.names) + Counter(other.names),
+            dates=Counter(self.dates) + Counter(other.dates),
+            acronyms=Counter(self.acronyms) + Counter(other.acronyms),
         )
         return merged
 
-    def to_prompt_block(self) -> str:
-        """Return a context block suitable for injection into a translation prompt."""
+    def to_prompt_block(self, max_items: int | None = None) -> str:
+        """Context block for a translation prompt.
+
+        ``max_items`` caps each section to the most frequent entities
+        (ties broken alphabetically) so document size doesn't inflate
+        every chunk prompt.
+        """
         parts: list[str] = []
         if self.names:
-            parts.append(
-                "PROPER NOUNS (use these names consistently):\n"
-                + "\n".join(f"- {n}" for n in sorted(self.names))
-            )
+            lines = _top(self.names, max_items)
+            if lines:
+                parts.append(
+                    "PROPER NOUNS (use these names consistently):\n"
+                    + "\n".join(f"- {n}" for n in lines)
+                )
         if self.dates:
-            parts.append(
-                "DATES (preserve the original date format when possible):\n"
-                + "\n".join(f"- {d}" for d in sorted(self.dates))
-            )
+            lines = _top(self.dates, max_items)
+            if lines:
+                parts.append(
+                    "DATES (preserve the original date format when possible):\n"
+                    + "\n".join(f"- {d}" for d in lines)
+                )
         if self.acronyms:
-            parts.append(
-                "ACRONYMS (preserve capitalization):\n"
-                + "\n".join(f"- {a}" for a in sorted(self.acronyms))
-            )
+            lines = _top(self.acronyms, max_items)
+            if lines:
+                parts.append(
+                    "ACRONYMS (preserve capitalization):\n"
+                    + "\n".join(f"- {a}" for a in lines)
+                )
         return "\n\n".join(parts)
 
     def is_empty(self) -> bool:
         return not (self.names or self.dates or self.acronyms)
+
+
+def _top(counter: CounterT[str], max_items: int | None) -> list[str]:
+    items = sorted(counter.items(), key=lambda kv: (-kv[1], kv[0]))
+    if max_items is not None:
+        items = items[: max(0, max_items)]
+    return [name for name, _count in items]

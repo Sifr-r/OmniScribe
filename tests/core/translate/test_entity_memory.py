@@ -55,3 +55,25 @@ def test_entity_memory_merge_combines():
     assert "Wozniak" in merged.names
     # Multi-word names are also captured
     assert "Tesla Motors" in merged.names
+
+
+def test_prompt_block_caps_by_frequency():
+    mem = EntityMemory()
+    for _ in range(5):
+        mem.add_text("We saw Alice and Bob. Then Alice and Bob spoke.")
+    block = mem.to_prompt_block(max_items=1)
+    assert "Alice" in block
+    assert "Bob" not in block
+
+
+def test_cap_zero_items_drops_section():
+    mem = EntityMemory()
+    mem.add_text("We saw Alice and Bob.")
+    assert mem.to_prompt_block(max_items=0) == ""
+
+
+def test_no_cap_keeps_everything():
+    mem = EntityMemory()
+    mem.add_text("We saw Alice and Bob.")
+    block = mem.to_prompt_block()
+    assert "Alice" in block and "Bob" in block
