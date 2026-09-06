@@ -307,8 +307,33 @@ class TestLocalWhisperEngineTranscribe:
         assert temp_file_arg.endswith(".mp3")
         assert call_kwargs["language"] == "de"
         assert call_kwargs["initial_prompt"] == "Sitzungsprotokoll"
-        assert call_kwargs["temperature"] == 0.3
+        # Temperature fallback tuple: requested value first, escalation after.
+        assert call_kwargs["temperature"] == (0.3, 0.2, 0.4, 0.6, 0.8, 1.0)
+        assert call_kwargs["beam_size"] == 5
+        assert call_kwargs["condition_on_previous_text"] is False
+        assert call_kwargs["vad_filter"] is True
         assert call_kwargs["word_timestamps"] is True
+
+    def test_join_segment_texts_newline_after_sentence_end(self) -> None:
+        from omniscribe.core.transcription.local_engine import _join_segment_texts
+
+        assert (
+            _join_segment_texts(["Hello world.", "Second part"])
+            == "Hello world.\nSecond part"
+        )
+        # No terminal punctuation → space join (previous behaviour).
+        assert _join_segment_texts(["Hello", "world"]) == "Hello world"
+
+    def test_join_segment_texts_edge_cases(self) -> None:
+        from omniscribe.core.transcription.local_engine import _join_segment_texts
+
+        assert _join_segment_texts([]) == ""
+        assert _join_segment_texts(["Only one."]) == "Only one."
+        assert _join_segment_texts(["", "Skipped empty.", "Next"]) == (
+            "Skipped empty.\nNext"
+        )
+        # CJK sentence-final punctuation also breaks lines.
+        assert _join_segment_texts(["こんにちは。", "次の文"] ) == "こんにちは。\n次の文"
 
     async def test_transcribe_cleans_up_temporary_file_on_success(self) -> None:
         engine = LocalWhisperEngine()

@@ -23,6 +23,23 @@ _FASTER_WHISPER_MISSING_MSG = (
     "Install it with `uv sync --extra transcription` or `pip install 'omniscribe[transcription]'`."
 )
 
+_SENTENCE_END = tuple("。！？!?.…")
+
+
+def _join_segment_texts(parts: list[str]) -> str:
+    """Join segments; newline after sentence-final punctuation, else space."""
+    out = ""
+    for part in parts:
+        if not part:
+            continue
+        if not out:
+            out = part
+        elif out.endswith(_SENTENCE_END):
+            out += "\n" + part
+        else:
+            out += " " + part
+    return out
+
 
 class WhisperLocalEngine:
     """Local offline transcription engine using faster-whisper."""
@@ -81,11 +98,18 @@ class WhisperLocalEngine:
         try:
 
             def _sync_transcribe() -> tuple[list[Any], Any]:
+                # condition_on_previous_text=False: hallucination loops on
+                # long audio; vad_filter=True: skips silence/music; the
+                # temperature tuple lets whisper escalate instead of
+                # silently returning garbage at temperature=0.
                 segments_iter, info = model.transcribe(
                     tmp_path,
                     language=language,
                     initial_prompt=prompt,
-                    temperature=temperature,
+                    temperature=(temperature, 0.2, 0.4, 0.6, 0.8, 1.0),
+                    beam_size=5,
+                    condition_on_previous_text=False,
+                    vad_filter=True,
                     word_timestamps=True,
                 )
                 return list(segments_iter), info
@@ -120,7 +144,7 @@ class WhisperLocalEngine:
                     )
                 )
 
-            full_text = " ".join(full_text_parts)
+            full_text = _join_segment_texts(full_text_parts)
             return TranscriptionResult(
                 text=full_text,
                 language=getattr(info, "language", language),
