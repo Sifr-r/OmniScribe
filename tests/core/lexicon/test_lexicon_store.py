@@ -444,3 +444,99 @@ def test_entry_hash_stable_and_case_sensitive() -> None:
     assert entry_hash("EU", "UE") == entry_hash("EU", "UE")
     assert entry_hash("EU", "UE") != entry_hash("eu", "ue")
     assert entry_hash("EU", "UE") != entry_hash("EU", "union européenne")
+
+
+# ---------------------------------------------------------------------------
+# Model guard + legacy-column backfill (LLM-remediation wave)
+# ---------------------------------------------------------------------------
+
+
+def test_reopen_with_different_model_raises(tmp_path: Path) -> None:
+    """Opening a lexicon built with model A using model B must fail loud."""
+    from omniscribe.core.lexicon.lancedb_store import (
+        EmbeddingModelMismatchError,
+        LanceDBLexiconStore,
+    )
+
+    from fake_embedder import HashEmbedder
+
+    store = LanceDBLexiconStore(path=tmp_path, embedding_model=HashEmbedder("model-a"))
+    store.save_glossary(
+        name="g", format="csv", entries=[{"source": "a", "target": "b"}]
+    )
+    store.close()
+    with pytest.raises(EmbeddingModelMismatchError, match="model-a"):
+        LanceDBLexiconStore(
+            path=tmp_path, embedding_model=HashEmbedder("model-b")
+        ).health()
+
+
+def test_reopen_with_same_model_ok(tmp_path: Path) -> None:
+    from omniscribe.core.lexicon.lancedb_store import LanceDBLexiconStore
+
+    from fake_embedder import HashEmbedder
+
+    store = LanceDBLexiconStore(path=tmp_path, embedding_model=HashEmbedder("model-a"))
+    store.save_glossary(
+        name="g", format="csv", entries=[{"source": "a", "target": "b"}]
+    )
+    store.close()
+    reopened = LanceDBLexiconStore(
+        path=tmp_path, embedding_model=HashEmbedder("model-a")
+    )
+    assert reopened.list_glossaries()
+
+
+def test_legacy_table_without_meta_adopts_current_model(tmp_path: Path) -> None:
+    """A pre-``_meta`` lexicon opens fine and records the current model."""
+    import lancedb
+
+    from omniscribe.core.lexicon.lancedb_store import LanceDBLexiconStore
+    from omniscribe.core.lexicon.schema import LEXICON_SCHEMA
+
+    from fake_embedder import HashEmbedder
+
+    # Simulate a legacy lexicon: terms table only, no _meta table.
+    db = lancedb.connect(str(tmp_path))
+    db.create_table("terms", schema=LEXICON_SCHEMA, mode="create")
+    del db
+
+    store = LanceDBLexiconStore(
+        path=tmp_path, embedding_model=HashEmbedder("legacy-adopt")
+    )
+    # Opening must not raise; _meta now exists with the adopted model.
+    assert store.health()["embedding_model"] == "legacy-adopt"
+    store.close()
+    # And a mismatched reopen is now guarded.
+    from omniscribe.core.lexicon.lancedb_store import EmbeddingModelMismatchError
+
+    with pytest.raises(EmbeddingModelMismatchError):
+        LanceDBLexiconStore(
+            path=tmp_path, embedding_model=HashEmbedder("other-model")
+        ).health()
+
+
+def test_legacy_table_without_entry_hash_gets_backfilled(tmp_path: Path) -> None:
+    """A pre-``entry_hash`` table adopts the column and accepts new rows."""
+    import lancedb
+    import pyarrow as pa
+
+    from omniscribe.core.lexicon.lancedb_store import LanceDBLexiconStore
+    from omniscribe.core.lexicon.schema import LEXICON_SCHEMA
+
+    from fake_embedder import HashEmbedder
+
+    legacy_fields = [f for f in LEXICON_SCHEMA if f.name != "entry_hash"]
+    legacy_schema = pa.schema(legacy_fields)
+
+    db = lancedb.connect(str(tmp_path))
+    db.create_table("terms", schema=legacy_schema, mode="create")
+    del db
+
+    store = LanceDBLexiconStore(path=tmp_path, embedding_model=HashEmbedder("m"))
+    meta = store.save_glossary(
+        name="g", format="csv", entries=[{"source": "x", "target": "y"}]
+    )
+    entries = store.list_entries(meta.id)
+    assert entries[0].source_text == "x"
+    store.close()

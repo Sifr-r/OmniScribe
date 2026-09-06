@@ -52,6 +52,14 @@ from .store import (
 logger = logging.getLogger(__name__)
 
 
+class EmbeddingModelMismatchError(RuntimeError):
+    """The lexicon was built with a different embedding model.
+
+    Cosine scores across mixed vector spaces are meaningless, so opening
+    the store fails loud instead of returning silently wrong rankings.
+    """
+
+
 def _new_id() -> str:
     """Generate a new entry/glossary ID. UUID4 hex — matches the legacy format."""
     return uuid.uuid4().hex
@@ -118,6 +126,7 @@ class LanceDBLexiconStore:
     """
 
     TABLE_NAME = "terms"
+    META_TABLE = "_meta"
 
     def __init__(
         self,
@@ -134,6 +143,7 @@ class LanceDBLexiconStore:
         self._table: Any = None
         self._init_lock = threading.Lock()
         self._initialized = False
+        self._fingerprint_cache: str | None = None
 
     # --- Lifecycle ----------------------------------------------------------
 
@@ -170,8 +180,69 @@ class LanceDBLexiconStore:
                 self._table = self._db.create_table(
                     self.TABLE_NAME, schema=LEXICON_SCHEMA, mode="create"
                 )
+            self._ensure_meta_and_compat(existing)
+            self._ensure_columns()
             self._initialized = True
             logger.info("LanceDBLexiconStore opened at %s", self._path)
+
+    def _ensure_meta_and_compat(self, existing_tables: set[str]) -> None:
+        """Guard against embedding-model drift; adopt legacy tables.
+
+        Records the model name + dim in a ``_meta`` table at creation time
+        and compares on every open. A pre-``_meta`` lexicon adopts the
+        currently-configured model (nothing to compare against yet).
+        """
+        import pyarrow as pa
+
+        model_name = self._embedding.model_name
+        dim = int(self._embedding.dim)
+        meta_schema = pa.schema(
+            [
+                pa.field("model_name", pa.string(), nullable=False),
+                pa.field("dim", pa.int32(), nullable=False),
+                pa.field("created_at", pa.timestamp("ms"), nullable=False),
+            ]
+        )
+        meta_row = {
+            "model_name": model_name,
+            "dim": dim,
+            "created_at": self._clock(),
+        }
+        if self.META_TABLE in existing_tables:
+            meta = self._db.open_table(self.META_TABLE)
+            rows = meta.to_arrow().to_pylist()
+            if rows:
+                stored_name = str(rows[0].get("model_name"))
+                stored_dim = int(rows[0].get("dim") or 0)
+                if stored_name != model_name or (stored_dim and stored_dim != dim):
+                    raise EmbeddingModelMismatchError(
+                        f"Lexicon at {self._path} was built with embedding model "
+                        f"'{stored_name}' (dim={stored_dim}) but is being opened "
+                        f"with '{model_name}' (dim={dim}). Vector spaces are "
+                        "incompatible; re-import the glossaries or unset "
+                        "OMNISCRIBE_EMBEDDING_MODEL."
+                    )
+                return
+            meta.add([meta_row])
+            return
+        self._db.create_table(
+            self.META_TABLE,
+            pa.Table.from_pylist([meta_row], schema=meta_schema),
+            mode="create",
+        )
+
+    def _ensure_columns(self) -> None:
+        """Add columns introduced after the table was created (legacy tables)."""
+        try:
+            field_names = set(self._table.schema.names)  # type: ignore[union-attr]
+        except Exception:
+            return
+        if "entry_hash" not in field_names:
+            try:
+                self._table.add_columns({"entry_hash": "NULL"})
+                logger.info("Added entry_hash column to legacy lexicon table")
+            except Exception as exc:
+                logger.warning("Could not add entry_hash column: %s", exc)
 
     def close(self) -> None:
         # LanceDB connections are lightweight and process-bound; nothing to
