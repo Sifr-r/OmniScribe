@@ -327,32 +327,18 @@ def run_migration(
             entries = g.get("entries", [])
             if not isinstance(entries, list):
                 continue
-            # Save under the original glossary id (idempotency on re-run).
-            existing = _existing_glossary_meta(store, str(g["id"]))
-            if existing is None:
-                store.save_glossary(
-                    name=str(g["name"]),
-                    format=str(g.get("format", "json_pairs")),
-                    entries=entries,
-                    source_uri=_opt_str_or_none(g.get("source_uri")),
-                    encoding=_opt_str_or_none(g.get("encoding")),
-                    group=str(g.get("group", "default") or "default"),
-                    priority=int(str(g.get("priority", 0))),
-                )
-            else:
-                # Re-use the same id by deleting and re-saving (rare case).
-                # This is a no-op when the data is unchanged; we trust the
-                # upstream GlossaryLibrary.save() validation.
-                store.delete_glossary(str(g["id"]))
-                store.save_glossary(
-                    name=str(g["name"]),
-                    format=str(g.get("format", "json_pairs")),
-                    entries=entries,
-                    source_uri=_opt_str_or_none(g.get("source_uri")),
-                    encoding=_opt_str_or_none(g.get("encoding")),
-                    group=str(g.get("group", "default") or "default"),
-                    priority=int(str(g.get("priority", 0))),
-                )
+            # Re-save under the original glossary id: save_glossary replaces
+            # same-id rows, so a dirty re-run is idempotent (no duplicates).
+            store.save_glossary(
+                name=str(g["name"]),
+                format=str(g.get("format", "json_pairs")),
+                entries=entries,
+                source_uri=_opt_str_or_none(g.get("source_uri")),
+                encoding=_opt_str_or_none(g.get("encoding")),
+                group=str(g.get("group", "default") or "default"),
+                priority=int(str(g.get("priority", 0))),
+                glossary_id=str(g["id"]),
+            )
             glossaries_migrated += 1
             entries_migrated += len(entries)
     except Exception as exc:
@@ -437,13 +423,6 @@ def auto_migrate_if_needed(
 # ---------------------------------------------------------------------------
 # Internals
 # ---------------------------------------------------------------------------
-
-
-def _existing_glossary_meta(store: LanceDBLexiconStore, glossary_id: str) -> Any:
-    try:
-        return store.get_glossary(glossary_id)
-    except GlossaryNotFoundError:
-        return None
 
 
 def _make_backup_dir(artifact_dir: Path, clock: Callable[[], datetime]) -> Path:

@@ -659,3 +659,92 @@ def test_index_skipped_below_threshold(
     assert calls == []
     health = store.health()
     assert "index_status" in health
+
+
+# ---------------------------------------------------------------------------
+# Upsert on re-import + embedding reuse (LLM-remediation wave)
+# ---------------------------------------------------------------------------
+
+
+def test_save_glossary_upsert_replaces_same_name_and_uri(
+    store: LanceDBLexiconStore,
+) -> None:
+    first = store.save_glossary(
+        name="eu",
+        format="csv",
+        source_uri="file://a.csv",
+        entries=[{"source": "EU", "target": "UE"}],
+    )
+    second = store.save_glossary(
+        name="eu",
+        format="csv",
+        source_uri="file://a.csv",
+        upsert=True,
+        entries=[{"source": "EU", "target": "Union européenne"}],
+    )
+    assert second.id == first.id
+    assert len(store.list_glossaries()) == 1
+    assert [e.target_text for e in store.list_entries(first.id)] == [
+        "Union européenne"
+    ]
+
+
+def test_save_glossary_upsert_different_uri_creates_new(
+    store: LanceDBLexiconStore,
+) -> None:
+    store.save_glossary(
+        name="g", format="csv", source_uri="file://a.csv",
+        entries=[{"source": "a", "target": "A"}],
+    )
+    second = store.save_glossary(
+        name="g", format="csv", source_uri="file://b.csv", upsert=True,
+        entries=[{"source": "b", "target": "B"}],
+    )
+    metas = store.list_glossaries()
+    assert len(metas) == 2
+    assert second.id != metas[0].id or second.id != metas[1].id
+
+
+def test_save_glossary_explicit_glossary_id_keeps_id(
+    store: LanceDBLexiconStore,
+) -> None:
+    meta = store.save_glossary(
+        name="g",
+        format="csv",
+        glossary_id="legacy-123",
+        entries=[{"source": "a", "target": "b"}],
+    )
+    assert meta.id == "legacy-123"
+    store.save_glossary(
+        name="g",
+        format="csv",
+        glossary_id="legacy-123",
+        entries=[{"source": "c", "target": "D"}],
+    )
+    assert len(store.list_glossaries()) == 1
+    assert [e.source_text for e in store.list_entries("legacy-123")] == ["c"]
+
+
+def test_reimport_reuses_embeddings_for_unchanged_entries(tmp_path: Path) -> None:
+    from fake_embedder import HashEmbedder
+
+    model = HashEmbedder("reuse-model")
+    store = LanceDBLexiconStore(path=tmp_path, embedding_model=model)
+    store.save_glossary(
+        name="g", format="csv", entries=[{"source": "a", "target": "b"}]
+    )
+    calls = {"n": 0}
+    real_batch = model.embed_batch
+
+    def counting_batch(texts: list[str]) -> list[list[float]]:
+        calls["n"] += len(texts)
+        return real_batch(texts)
+
+    model.embed_batch = counting_batch  # type: ignore[method-assign]
+    store.save_glossary(
+        name="g",
+        format="csv",
+        upsert=True,
+        entries=[{"source": "a", "target": "b"}, {"source": "c", "target": "d"}],
+    )
+    assert calls["n"] == 1  # only the new entry was embedded

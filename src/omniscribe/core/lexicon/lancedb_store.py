@@ -453,6 +453,8 @@ class LanceDBLexiconStore:
         encoding: str | None = None,
         group: str = "default",
         priority: int = 0,
+        glossary_id: str | None = None,
+        upsert: bool = False,
     ) -> GlossaryMeta:
         self._ensure_open()
 
@@ -495,18 +497,49 @@ class LanceDBLexiconStore:
         if not normalized:
             raise ValueError("Glossary must contain at least one valid entry.")
 
-        glossary_id = _new_id()
         now = self._clock()
 
-        # Batch-embed the source_text for all entries. The embedding model
-        # is process-cached so this is fast after the first call.
-        source_texts: list[str] = [str(e["source"]) for e in normalized]
-        embeddings = self._embedding.embed_batch(source_texts)
-        if len(embeddings) != len(normalized):
-            raise RuntimeError(
-                f"Embedding model returned {len(embeddings)} vectors for "
-                f"{len(normalized)} inputs."
+        # Resolve the glossary id: explicit id wins (legacy migration /
+        # re-save under the same id -- save_glossary deletes prior rows for
+        # that id first, so re-runs are idempotent); upsert replaces the
+        # glossary with the same (name, source_uri) instead of duplicating.
+        # Reusable embeddings are captured BEFORE the delete so unchanged
+        # entries don't pay a re-embed.
+        resolved_id = str(glossary_id).strip() if glossary_id else ""
+        reusable: dict[str, list[float]] = {}
+        if resolved_id:
+            reusable = self._embeddings_by_entry_hash(resolved_id)
+            self._table.delete(where=f"glossary_id = '{_sql_escape(resolved_id)}'")
+        elif upsert:
+            existing = self._find_by_name_and_uri(
+                clean_name, str(source_uri) if source_uri else None
             )
+            if existing is not None:
+                resolved_id = existing.id
+                reusable = self._embeddings_by_entry_hash(existing.id)
+                self._table.delete(
+                    where=f"glossary_id = '{_sql_escape(existing.id)}'"
+                )
+        glossary_id = resolved_id or _new_id()
+
+        # Batch-embed the source_text for all entries, reusing stored
+        # embeddings for unchanged (source, target) pairs so a corrected
+        # re-import only embeds the diff. The embedding model is
+        # process-cached so this is fast after the first call.
+        source_texts: list[str] = [str(e["source"]) for e in normalized]
+        hashes = [entry_hash(str(e["source"]), str(e["target"])) for e in normalized]
+        missing_idx = [i for i, h in enumerate(hashes) if h not in reusable]
+        fresh = self._embedding.embed_batch([source_texts[i] for i in missing_idx])
+        if len(fresh) != len(missing_idx):
+            raise RuntimeError(
+                f"Embedding model returned {len(fresh)} vectors for "
+                f"{len(missing_idx)} inputs."
+            )
+        embeddings: list[list[float]] = [
+            list(reusable[h]) if h in reusable else [] for h in hashes
+        ]
+        for slot, i in enumerate(missing_idx):
+            embeddings[i] = fresh[slot]
 
         rows = [
             _row_from_entry(
@@ -764,6 +797,38 @@ class LanceDBLexiconStore:
         return [_entry_from_row(r) for r in tbl.to_pylist()]
 
     # --- Internal helpers ---------------------------------------------------
+
+    def _find_by_name_and_uri(
+        self, name: str, source_uri: str | None
+    ) -> GlossaryMeta | None:
+        target = name.casefold()
+        for meta in self.list_glossaries():
+            if meta.name.casefold() != target:
+                continue
+            if (meta.source_uri or None) != (source_uri or None):
+                continue
+            return meta
+        return None
+
+    def _embeddings_by_entry_hash(self, glossary_id: str) -> dict[str, list[float]]:
+        """Map entry_hash -> embedding for one glossary's existing rows."""
+        if not glossary_id:
+            return {}
+        try:
+            tbl = (
+                self._table.search()
+                .where(f"glossary_id = '{_sql_escape(glossary_id)}'")
+                .to_arrow()
+            )
+            if tbl.num_rows == 0 or "entry_hash" not in tbl.column_names:
+                return {}
+            return {
+                str(r["entry_hash"]): list(r["embedding"])
+                for r in tbl.select(["entry_hash", "embedding"]).to_pylist()
+                if r.get("entry_hash")
+            }
+        except Exception:
+            return {}
 
     def _matches_query(self, row: dict[str, Any], query: LexiconQuery) -> bool:
         """Evaluate query filter predicates against a row dict."""

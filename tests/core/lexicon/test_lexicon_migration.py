@@ -400,3 +400,42 @@ def test_cli_main_dry_run_and_verify_only_conflict(capsys) -> None:
     assert rc == 1
     out = capsys.readouterr().out
     assert "mutually exclusive" in out
+
+
+# ---------------------------------------------------------------------------
+# Migration idempotency (LLM-remediation wave)
+# ---------------------------------------------------------------------------
+
+
+def test_migration_rerun_refused_then_ids_preserved(
+    tmp_path: Path, fake_model: EmbeddingModel
+) -> None:
+    """Dirty-retry semantics: the ambiguity guard refuses a rerun while the
+    legacy library coexists with lexicon.lance; once the operator resolves
+    the ambiguity (lexicon removed, legacy is source of truth) the re-run
+    preserves the original glossary ids instead of minting new ones.
+    """
+    artifact_dir = tmp_path / "artifacts"
+    _seed_legacy_library(artifact_dir)
+    report1 = run_migration(artifact_dir=artifact_dir, embedding_model=fake_model)
+    assert report1.ran and report1.error is None
+
+    # Simulate a mid-run-crash retry: legacy state present again.
+    _seed_legacy_library(artifact_dir)
+    report2 = run_migration(artifact_dir=artifact_dir, embedding_model=fake_model)
+    assert not report2.ran
+    assert report2.error is not None
+    assert "coexists" in (report2.error or "")
+
+    # Operator resolution: legacy is source of truth; drop the lexicon.
+    import shutil
+
+    shutil.rmtree(artifact_dir / "lexicon.lance")
+    report3 = run_migration(artifact_dir=artifact_dir, embedding_model=fake_model)
+    assert report3.ran and report3.error is None
+
+    store = LanceDBLexiconStore(
+        path=artifact_dir / "lexicon.lance", embedding_model=fake_model
+    )
+    metas = store.list_glossaries()
+    assert sorted(m.id for m in metas) == ["legal-1", "tech-1"]

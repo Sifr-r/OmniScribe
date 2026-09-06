@@ -313,6 +313,7 @@ class GlossaryImportServiceImpl:
             entries=summary.entries,
             source_uri=summary.source_uri,
             encoding=summary.encoding,
+            upsert=True,
         )
         return {
             "glossary_id": meta.id,
@@ -370,6 +371,7 @@ class GlossaryImportServiceImpl:
             entries=summary.entries,
             source_uri=summary.source_uri,
             encoding=summary.encoding,
+            upsert=True,
         )
         outcome = {
             "glossary_id": meta.id,

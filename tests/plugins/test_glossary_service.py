@@ -64,9 +64,23 @@ class FakeLexiconStore:
         encoding: str | None = None,
         group: str = "default",
         priority: int = 0,
+        glossary_id: str | None = None,
+        upsert: bool = False,
     ) -> Any:
         self._counter += 1
-        gid = f"g{self._counter}"
+        gid = glossary_id or f"g{self._counter}"
+        if upsert:
+            existing = next(
+                (
+                    m
+                    for m in self._glossaries.values()
+                    if m.name.casefold() == name.casefold()
+                    and (m.source_uri or None) == (source_uri or None)
+                ),
+                None,
+            )
+            if existing is not None:
+                gid = existing.id
         self._glossaries[gid] = _FakeMeta(
             id=gid,
             name=name,
