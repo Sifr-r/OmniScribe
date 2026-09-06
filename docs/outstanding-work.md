@@ -19,6 +19,21 @@ All completed items (audit-remediation sprints 1–6, Phase C plugin slices 1–
   SSE sequence cursors, lazy repair-page decode, plugin `PluginError` /
   `TrimmedModel` dedup, dead config knobs, Flutter UX fixes, and the
   §7 status-map prune below.
+- **LLM-application remediation (2026-09-06):** the 2026-09-06
+  LLM-app-quality audit was remediated in three subsystems
+  (`docs/superpowers/specs/2026-09-06-llm-remediation-design.md`).
+  Subsystem 1 (translation + lexicon: fail-safe judge, best-attempt
+  tracking, script-aware length bands, RRF hybrid lexicon search,
+  migration upsert) and subsystem 2 (OCR / trust layer / transcription:
+  block confidence at the `from_pages_data` choke point, trust fields on
+  the block-tree JSON + `X-Document-Trust` header + Flutter export-modal
+  summary, `exp(avg_logprob)` transcription confidence, whisper
+  robustness kwargs, hoisted audio-API client with Retry-After backoff,
+  informed repair re-OCR with per-attempt temperature bump, text-layer
+  agreement as a fluent-hallucination repair trigger, GLM parser bbox
+  hardening with structured drop events, correction-pass fallback, and
+  the §6.55 PROMPT_VERSION split) are complete and green. Subsystem 3
+  (this doc + ARCHITECTURE.md refresh) closes the wave.
 
 ---
 
@@ -194,7 +209,12 @@ this list. What follows is what is actually still open.*
 4.2, 4.3, 4.4, 4.5, 4.8, 4.10, 4.12, 4.13, 4.14, 4.16, 4.17, 4.21, 4.25, 4.26,
 4.29, 4.30, 4.32, 4.37, 4.38, 4.39, 4.40, 4.41, 6.3 (dead field deleted),
 6.7, 6.9, 6.13, 6.30, 6.31, 6.34, 6.35, 6.40, 6.42, 6.45, 6.47, 6.48, 6.49
-(accept-always documented), 6.51, 6.52, 6.56, 6.68, 6.70, 6.74, 6.75, 6.76,
+(accept-always documented; superseded by the LLM-remediation wave — an
+empty/fallback correction pass now *falls back to the first pass* instead of
+erasing it, `31dee3b`), 6.51, 6.52, 6.55 (renamed to module-scoped constants:
+`grounded/prompted.py::GROUNDED_PROMPT_VERSION`,
+`translate/nodes.py::TRANSLATION_PROMPT_VERSION` — the OCR and documents
+prompts keep their own `PROMPT_VERSION`), 6.56, 6.68, 6.70, 6.74, 6.75, 6.76,
 6.77, 6.82, 6.83, 6.87.
 
 ### Not applicable
