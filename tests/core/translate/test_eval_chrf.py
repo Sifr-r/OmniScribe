@@ -12,7 +12,9 @@ def test_identical_is_one() -> None:
 
 
 def test_disjoint_is_zero() -> None:
-    assert chrf("abc def", "xyz uvw") == pytest.approx(0.0)
+    # No shared characters at all (a shared space would already give a
+    # small nonzero chrF under the standard definition).
+    assert chrf("abcdef", "xyzuvw") == pytest.approx(0.0)
 
 
 def test_empty_inputs_are_zero() -> None:
