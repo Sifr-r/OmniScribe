@@ -273,9 +273,15 @@ async def _judge_loop(
     current = first
     for attempt in range(1, settings.max_attempts + 1):
         score, feedback = await evaluator(source, current)
-        if score > best_score:
+        if score is not None and score > best_score:
             best, best_score = current, score
-        if score >= settings.acceptance_score or attempt >= settings.max_attempts:
+        if (
+            score is None
+            or score >= settings.acceptance_score
+            or attempt >= settings.max_attempts
+        ):
+            # None = judge unavailable/unparseable: accept unverified rather
+            # than retry blind.
             break
         retry_prompt = (
             prompt

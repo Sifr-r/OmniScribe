@@ -354,3 +354,89 @@ async def test_job_status_maps_all_queue_states(
     assert complete is not None
     assert complete["state"] == "SUCCESS"
     assert complete["result"] == {"page_count": 1}
+
+
+# ---------------------------------------------------------------------------
+# Judge loop on the sync path (LLM-remediation wave)
+# ---------------------------------------------------------------------------
+
+
+async def test_translate_text_judge_retry_keeps_best(monkeypatch) -> None:
+    translate_service._translation_cache.clear()
+    calls: list[dict] = []
+
+    async def fake_call_llm(**kwargs: object) -> str:
+        calls.append(dict(kwargs))
+        if kwargs.get("system_prompt") == translate_service.EVALUATION_SYSTEM_MESSAGE:
+            # First judge call rejects, second accepts.
+            if sum(
+                1
+                for c in calls
+                if c.get("system_prompt")
+                == translate_service.EVALUATION_SYSTEM_MESSAGE
+            ) == 1:
+                return '{"score": 0.2, "feedback": "wrong term", "issues": []}'
+            return '{"score": 0.95, "feedback": "good", "issues": []}'
+        if "Feedback:" in str(kwargs.get("messages", "")):
+            return "bonne traduction"
+        return "mauvaise traduction"
+
+    monkeypatch.setattr(translate_service, "call_llm", fake_call_llm)
+    result = await translate_service.translate_text(
+        TranslationRequest(text="Hello world", target_language="French"),
+        _settings(),
+    )
+    assert result == "bonne traduction"
+    assert len(calls) == 4  # translate, judge, retry-translate, judge
+
+
+async def test_translate_text_judge_disabled_single_call(monkeypatch) -> None:
+    translate_service._translation_cache.clear()
+    monkeypatch.setenv("OMNISCRIBE_TRANSLATION_EVALUATE", "false")
+    calls: list[dict] = []
+
+    async def fake_call_llm(**kwargs: object) -> str:
+        calls.append(dict(kwargs))
+        return "Bonjour"
+
+    monkeypatch.setattr(translate_service, "call_llm", fake_call_llm)
+    result = await translate_service.translate_text(
+        TranslationRequest(text="JudgeDisabled text", target_language="French"),
+        _settings(),
+    )
+    assert result == "Bonjour"
+    assert len(calls) == 1
+
+
+async def test_translate_text_judge_outage_never_fails_request(monkeypatch) -> None:
+    translate_service._translation_cache.clear()
+    calls: list[dict] = []
+
+    async def fake_call_llm(**kwargs: object) -> str:
+        calls.append(dict(kwargs))
+        if kwargs.get("system_prompt") == translate_service.EVALUATION_SYSTEM_MESSAGE:
+            raise RuntimeError("judge endpoint down")
+        return "Bonjour"
+
+    monkeypatch.setattr(translate_service, "call_llm", fake_call_llm)
+    result = await translate_service.translate_text(
+        TranslationRequest(text="Judge outage text", target_language="French"),
+        _settings(),
+    )
+    assert result == "Bonjour"
+
+
+async def test_translate_text_translates_max_tokens_passed(monkeypatch) -> None:
+    translate_service._translation_cache.clear()
+    calls: list[dict] = []
+
+    async def fake_call_llm(**kwargs: object) -> str:
+        calls.append(dict(kwargs))
+        return "Bonjour"
+
+    monkeypatch.setattr(translate_service, "call_llm", fake_call_llm)
+    await translate_service.translate_text(
+        TranslationRequest(text="Max tokens check", target_language="French"),
+        _settings(),
+    )
+    assert calls[0]["max_tokens"] == 2048

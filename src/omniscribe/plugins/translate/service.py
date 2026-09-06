@@ -11,25 +11,36 @@ mapping are JobQueue-backed and live here alongside the sync path.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import secrets
-from dataclasses import dataclass
+from collections import OrderedDict
+from dataclasses import dataclass, replace
 from typing import Any, ClassVar, Protocol
 
 from omniscribe.config import RuntimeSettings
 from omniscribe.core.block_tree import BlockNode
 from omniscribe.core.llm.client import call_llm
 from omniscribe.core.llm.temperatures import (
+    TEMPERATURE_EVALUATION,
     TEMPERATURE_TRANSLATION,
     TEMPERATURE_TRANSLATION_TREE,
 )
 from omniscribe.core.translate import TRANSLATION_SYSTEM_MESSAGE
-from omniscribe.core.translate.config import AsyncTranslationUnavailable
+from omniscribe.core.translate.config import (
+    AsyncTranslationUnavailable,
+    TranslationSettings,
+)
 from omniscribe.core.translate.entity_memory import EntityMemory
 from omniscribe.core.translate.glossary import Glossary
+from omniscribe.core.translate.nodes import (
+    EVALUATION_SYSTEM_MESSAGE,
+    build_evaluation_prompt,
+    parse_evaluation_response,
+)
 from omniscribe.core.translate.nllb import NLLBEngine
-from omniscribe.core.translate.tree import TranslatorFn, translate_tree
+from omniscribe.core.translate.tree import EvaluatorFn, TranslatorFn, translate_tree
 from omniscribe.core.translate.workflow import get_translation_app
 from omniscribe.plugins.artifacts import ArtifactStore
 from omniscribe.plugins.documents.service import build_tree, load_pages
@@ -97,10 +108,16 @@ async def translate_text(
     settings: RuntimeSettings,
     store: ArtifactStore | None = None,
 ) -> str:
-    """Sync single-shot translation; verbatim old semantics.
+    """Sync single-shot translation with a bounded evaluate/retry loop.
 
     ``store=None`` exists only so pure-function tests can call this
     without a store; the route always passes the injected store.
+
+    The judge loop (LLM-remediation wave) is on by default
+    (``OMNISCRIBE_TRANSLATION_EVALUATE``): after the first translation the
+    same endpoint scores the output, and low-scoring translations are
+    retried with the judge's feedback. The best-scoring attempt wins and
+    judge outages never fail the request.
     """
     source_text = request.text.strip()
     if not source_text and request.text_artifact_id and request.text_artifact_token:
@@ -122,13 +139,97 @@ async def translate_text(
     api_base, api_key, model = _resolve_coordinates(
         request.api_base, request.api_key, request.model, settings
     )
-    prompt = build_translation_prompt(source_text, request.target_language)
+    # Env-driven loop knobs (evaluate toggle, budgets) with the request's
+    # resolved endpoint coordinates on top.
+    t_settings = replace(
+        TranslationSettings.from_env(),
+        api_base=api_base,
+        api_key=api_key,
+        model=model,
+    )
+
+    cache_key = _cache_key(source_text, request.target_language, api_base, model)
+    cached = _translation_cache_get(cache_key)
+    if cached is not None:
+        return cached
+
+    if not t_settings.evaluate_enabled:
+        result = await _translate_once(
+            source_text,
+            request.target_language,
+            "",
+            api_base,
+            api_key,
+            model,
+            t_settings.max_tokens,
+        )
+        _translation_cache_put(cache_key, result)
+        return result
+
+    best, best_score = "", -1.0
+    retry_suffix = ""
+    current = ""
+    for attempt in range(1, t_settings.max_attempts + 1):
+        try:
+            current = await _translate_once(
+                source_text,
+                request.target_language,
+                retry_suffix,
+                api_base,
+                api_key,
+                model,
+                t_settings.max_tokens,
+            )
+        except TranslateError:
+            if best:
+                return best
+            raise
+        score, feedback = await _judge_once(
+            source_text,
+            current,
+            request.target_language,
+            api_base,
+            api_key,
+            model,
+            t_settings,
+        )
+        if score is not None and score > best_score:
+            best, best_score = current, score
+        if (
+            score is None
+            or score >= t_settings.acceptance_score
+            or attempt >= t_settings.max_attempts
+        ):
+            break
+        retry_suffix = (
+            "\n\nPrevious translation had issues. Feedback: "
+            + sanitize_prompt_input(feedback)
+            + "\nPlease fix these issues.\n"
+        )
+
+    if not best:
+        best = current
+    _translation_cache_put(cache_key, best.strip())
+    return best.strip()
+
+
+async def _translate_once(
+    source_text: str,
+    target_language: str,
+    extra_suffix: str,
+    api_base: str,
+    api_key: str,
+    model: str,
+    max_tokens: int,
+) -> str:
+    prompt = build_translation_prompt(source_text, target_language) + extra_suffix
     try:
         content = await call_llm(
             model=model,
             api_base=api_base,
             api_key=api_key,
             temperature=TEMPERATURE_TRANSLATION,
+            max_tokens=max_tokens,
             system_prompt=TRANSLATION_SYSTEM_MESSAGE,
             messages=[{"role": "user", "content": prompt}],
         )
@@ -136,6 +237,69 @@ async def translate_text(
         _LOGGER.exception("Translation request failed")
         raise TranslateError(502, "ai_error", "The AI service request failed.") from exc
     return content.strip()
+
+
+async def _judge_once(
+    source_text: str,
+    translated: str,
+    target_language: str,
+    api_base: str,
+    api_key: str,
+    model: str,
+    t_settings: TranslationSettings,
+) -> tuple[float | None, str]:
+    """Score a translation; returns ``(None, "")`` when the judge is unavailable."""
+    prompt = build_evaluation_prompt(
+        source=source_text,
+        translation=translated,
+        target_language=target_language,
+        rag_context=[],
+    )
+    try:
+        content = await call_llm(
+            model=model,
+            api_base=api_base,
+            api_key=api_key,
+            temperature=TEMPERATURE_EVALUATION,
+            max_tokens=t_settings.max_tokens,
+            system_prompt=EVALUATION_SYSTEM_MESSAGE,
+            prompt=prompt,
+        )
+    except Exception as exc:
+        _LOGGER.warning("Translation judge unavailable; accepting unverified: %s", exc)
+        return None, ""
+    score, feedback = parse_evaluation_response(content)
+    if score is None:
+        _LOGGER.warning("Translation judge unparseable; accepting unverified.")
+    return score, feedback
+
+
+# --- Process-local LRU for the sync path ------------------------------------
+# Keyed on (source hash, target, api_base, model). The sync path injects no
+# RAG/glossary context, so no lexicon fingerprint is needed.
+_TRANSLATION_CACHE_MAX = 256
+_translation_cache: "OrderedDict[tuple[str, str, str, str], str]" = OrderedDict()
+
+
+def _cache_key(
+    source_text: str, target_language: str, api_base: str, model: str
+) -> tuple[str, str, str, str]:
+    digest = hashlib.sha256(source_text.encode("utf-8")).hexdigest()
+    return digest, target_language, api_base, model
+
+
+def _translation_cache_get(key: tuple[str, str, str, str]) -> str | None:
+    hit = _translation_cache.get(key)
+    if hit is not None:
+        _translation_cache.move_to_end(key)
+    return hit
+
+
+def _translation_cache_put(key: tuple[str, str, str, str], value: str) -> None:
+    _translation_cache[key] = value
+    _translation_cache.move_to_end(key)
+    while len(_translation_cache) > _TRANSLATION_CACHE_MAX:
+        _translation_cache.popitem(last=False)
 
 
 @dataclass(frozen=True)
@@ -231,9 +395,14 @@ class TranslationServiceImpl:
             for line in lines:
                 memory.add_text(line)
         glossary = _build_glossary(request)
+        t_settings = TranslationSettings.from_env()
 
         translator = _make_translator(
-            request.api_base, request.api_key, request.model, self._settings
+            request.api_base,
+            request.api_key,
+            request.model,
+            self._settings,
+            max_tokens=t_settings.max_tokens,
         )
         second_translator = None
         if request.dual_translate:
@@ -242,17 +411,31 @@ class TranslationServiceImpl:
                 request.second_api_key,
                 request.second_model,
                 self._settings,
+                max_tokens=t_settings.max_tokens,
+            )
+        evaluator: EvaluatorFn | None = None
+        if t_settings.evaluate_enabled:
+            evaluator = _make_evaluator(
+                request.api_base,
+                request.api_key,
+                request.model,
+                self._settings,
+                t_settings,
+                glossary,
+                request.target_language,
             )
 
         translated_tree = await translate_tree(
             tree,
             target_language=request.target_language,
             translator=translator,
+            settings=t_settings,
             glossary=glossary,
             memory=memory,
             sliding_window_words=request.sliding_window_words,
             dual_translate=request.dual_translate,
             second_translator=second_translator,
+            evaluator=evaluator,
         )
 
         translated_pages = {
@@ -394,6 +577,8 @@ def _make_translator(
     request_key: str | None,
     request_model: str | None,
     settings: RuntimeSettings,
+    *,
+    max_tokens: int | None = None,
 ) -> TranslatorFn:
     api_base, api_key, model = _resolve_coordinates(
         request_base, request_key, request_model, settings
@@ -405,11 +590,56 @@ def _make_translator(
             api_base=api_base,
             api_key=api_key,
             temperature=TEMPERATURE_TRANSLATION_TREE,
+            max_tokens=max_tokens,
             system_prompt=TRANSLATION_SYSTEM_MESSAGE,
             prompt=prompt,
         )
 
     return translator
+
+
+def _make_evaluator(
+    request_base: str | None,
+    request_key: str | None,
+    request_model: str | None,
+    settings: RuntimeSettings,
+    t_settings: TranslationSettings,
+    glossary: Glossary | None,
+    target_language: str,
+) -> EvaluatorFn:
+    """Build the per-job LLM-as-judge for the async tree path.
+
+    The judge reuses the primary translator's endpoint coordinates and
+    receives the request-supplied glossary lines as its reference terms.
+    """
+    api_base, api_key, model = _resolve_coordinates(
+        request_base, request_key, request_model, settings
+    )
+    glossary_lines = [
+        line
+        for line in (glossary.to_prompt_block().splitlines() if glossary else [])
+        if line.startswith("- ")
+    ]
+
+    async def evaluator(source: str, translated: str) -> tuple[float | None, str]:
+        prompt = build_evaluation_prompt(
+            source=source,
+            translation=translated,
+            target_language=target_language,
+            rag_context=glossary_lines,
+        )
+        content = await call_llm(
+            model=model,
+            api_base=api_base,
+            api_key=api_key,
+            temperature=TEMPERATURE_EVALUATION,
+            max_tokens=t_settings.max_tokens,
+            system_prompt=EVALUATION_SYSTEM_MESSAGE,
+            prompt=prompt,
+        )
+        return parse_evaluation_response(content)
+
+    return evaluator
 
 
 # ---------------------------------------------------------------------------
