@@ -9,7 +9,11 @@ from __future__ import annotations
 from typing import Any
 
 from omniscribe.core.lexicon.lancedb_store import GlossaryNotFoundError
-from omniscribe.core.lexicon.store import LexiconEntry, LexiconStore
+from omniscribe.core.lexicon.store import (
+    LexiconEntry,
+    LexiconStore,
+    normalize_term,
+)
 from omniscribe.core.translate.glossary import Glossary, GlossaryEntry
 
 
@@ -28,14 +32,15 @@ def merged_enabled_glossary(store: LexiconStore) -> Glossary:
 
     The merge is last-wins (later entries override earlier ones). We sort
     by priority ASC so that the highest-priority glossary is the last writer
-    and the effective winner.
+    and the effective winner. Keys use the shared ``normalize_term`` so
+    merge and conflict-preview agree (ß/STRASSE are one term).
     """
     metas = [m for m in store.list_glossaries() if m.enabled]
     metas.sort(key=lambda m: m.priority)  # low -> high
     seen: dict[str, Any] = {}
     for meta in metas:
         for entry in store.list_entries(meta.id):
-            key = entry.source_text.lower()
+            key = normalize_term(entry.source_text)
             seen[key] = entry
     merged = Glossary(entries=[_legacy_entry_from_lexicon(e) for e in seen.values()])
     merged.source_format = "library"
@@ -48,16 +53,18 @@ def preview(store: LexiconStore) -> dict[str, object]:
     For every source term that appears in more than one enabled glossary,
     returns the list of distinct target translations across those glossaries.
     ``count`` returns the number of deduplicated entries in the merged glossary.
+    Keys use the shared ``normalize_term`` so the preview can't disagree
+    with the merge about what constitutes the same term.
     """
     merged = merged_enabled_glossary(store)
     metas = [m for m in store.list_glossaries() if m.enabled]
     by_source: dict[str, list[tuple[str, str]]] = {}
     for meta in metas:
         for entry in store.list_entries(meta.id):
-            source = entry.source_text.strip()
+            source = normalize_term(entry.source_text)
             if not source:
                 continue
-            by_source.setdefault(source.casefold(), []).append(
+            by_source.setdefault(source, []).append(
                 (meta.name, entry.target_text)
             )
 

@@ -748,3 +748,47 @@ def test_reimport_reuses_embeddings_for_unchanged_entries(tmp_path: Path) -> Non
         entries=[{"source": "a", "target": "b"}, {"source": "c", "target": "d"}],
     )
     assert calls["n"] == 1  # only the new entry was embedded
+
+
+def test_merge_and_preview_agree_on_casefold(store: LanceDBLexiconStore) -> None:
+    """ß vs ss must be the same key in BOTH merge and preview."""
+    store.save_glossary(
+        name="g1", format="csv", entries=[{"source": "Straße", "target": "rue"}]
+    )
+    store.save_glossary(
+        name="g2", format="csv", entries=[{"source": "STRASSE", "target": "boulevard"}]
+    )
+    merged = merged_enabled_glossary(store)
+    assert len(merged.entries) == 1  # same casefold key → one entry
+    report = preview(store)
+    assert report["count"] == 1
+    assert report["conflicts"]  # two glossaries, two targets → conflict
+
+
+def test_exact_lookup_respects_case_sensitive_flag(
+    store: LanceDBLexiconStore,
+) -> None:
+    store.save_glossary(
+        name="g",
+        format="csv",
+        entries=[
+            {"source": "EU", "target": "UE", "case_sensitive": True},
+            {"source": "Nato", "target": "OTAN", "case_sensitive": False},
+        ],
+    )
+    # Case-sensitive entry only matches its exact casing.
+    assert [
+        e.source_text for e in store.exact_lookup("eu", source_lang="", target_lang="")
+    ] == []
+    assert [
+        e.source_text for e in store.exact_lookup("EU", source_lang="", target_lang="")
+    ] == ["EU"]
+    # Case-insensitive entry matches any casing.
+    assert [
+        e.source_text
+        for e in store.exact_lookup("nato", source_lang="", target_lang="")
+    ] == ["Nato"]
+    assert [
+        e.source_text
+        for e in store.exact_lookup("NATO", source_lang="", target_lang="")
+    ] == ["Nato"]
