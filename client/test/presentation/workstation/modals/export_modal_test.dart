@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:omniscribe_client/core/theme/app_theme.dart';
+import 'package:omniscribe_client/data/models/document_result.dart';
 import 'package:omniscribe_client/data/models/feature_models.dart';
 import 'package:omniscribe_client/data/providers/repository_providers.dart';
 import 'package:omniscribe_client/data/providers/workstation_notifier.dart';
@@ -164,6 +165,62 @@ void main() {
         find.textContaining('Searchable PDF'),
         findsWidgets,
       );
+    });
+
+    testWidgets('shows flagged-block count when trust summary reports flags',
+        (tester) async {
+      final container = ProviderContainer(
+        overrides: [
+          featureRepositoryProvider.overrideWithValue(mockRepo),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      container.read(workstationProvider.notifier).loadDocument(
+            Uint8List.fromList([1, 2, 3]),
+            'scan.pdf',
+          );
+      container.read(workstationProvider.notifier).setTrustSummary(
+            const TrustSummary(
+              blockCount: 10,
+              scoredCount: 10,
+              flaggedCount: 3,
+              average: 0.71,
+            ),
+          );
+
+      await tester.pumpWidget(buildExportModal(container));
+      await tester.pumpAndSettle();
+
+      expect(find.text('3 blocks flagged for review'), findsOneWidget);
+    });
+
+    testWidgets('omits flagged-block line when trust summary has no flags',
+        (tester) async {
+      final container = ProviderContainer(
+        overrides: [
+          featureRepositoryProvider.overrideWithValue(mockRepo),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      container.read(workstationProvider.notifier).loadDocument(
+            Uint8List.fromList([1, 2, 3]),
+            'scan.pdf',
+          );
+      container.read(workstationProvider.notifier).setTrustSummary(
+            const TrustSummary(
+              blockCount: 10,
+              scoredCount: 10,
+              flaggedCount: 0,
+              average: 0.95,
+            ),
+          );
+
+      await tester.pumpWidget(buildExportModal(container));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('flagged for review'), findsNothing);
     });
   });
 }

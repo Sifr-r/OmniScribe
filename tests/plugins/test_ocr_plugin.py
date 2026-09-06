@@ -6,6 +6,7 @@ import asyncio
 import importlib
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import httpx
@@ -155,6 +156,56 @@ async def test_process_sync_returns_pdf_with_artifact_headers(fake_pipeline) -> 
         assert response.headers["content-type"].startswith("application/pdf")
         assert response.headers["x-text-artifact-id"]
         assert response.headers["x-text-artifact-token"]
+    finally:
+        await ctx.dispose()
+
+
+async def test_process_sync_sets_document_trust_header(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The sync response carries X-Document-Trust when the pipeline scored blocks."""
+    import json as json_mod
+
+    from omniscribe.core.document import DocumentBlock, DocumentPage, DocumentResult
+
+    doc_result = DocumentResult(
+        pages=[
+            DocumentPage(
+                page_index=0,
+                blocks=[
+                    DocumentBlock(
+                        bbox=(0.0, 0.0, 0.5, 0.1),
+                        text="flagged",
+                        trust_score=0.3,
+                        trust_flags=("LOW_CALIBRATED_CONF",),
+                    ),
+                    DocumentBlock(
+                        bbox=(0.0, 0.2, 0.5, 0.3), text="clean", trust_score=0.9
+                    ),
+                ],
+            )
+        ]
+    )
+    scored_pipeline = SimpleNamespace(last_document_result=doc_result)
+
+    def scored_build(settings: Any, request: Any, *, block_callbacks: Any = None):
+        return scored_pipeline
+
+    async def scored_run(*args: Any, **kwargs: Any) -> dict[int, list[str]]:
+        Path(kwargs["output_path"]).write_bytes(PDF_BYTES)
+        return {0: ["flagged", "clean"]}
+
+    monkeypatch.setattr(ocr_service_mod, "build_pipeline", scored_build)
+    monkeypatch.setattr(ocr_service_mod, "run_pipeline", scored_run)
+
+    ctx, app = await _boot()
+    try:
+        async with _client(app) as client:
+            response = await client.post("/api/process", **_upload())
+        assert response.status_code == 200
+        trust = json_mod.loads(response.headers["x-document-trust"])
+        assert trust["block_count"] == 2
+        assert trust["flagged_count"] == 1
     finally:
         await ctx.dispose()
 

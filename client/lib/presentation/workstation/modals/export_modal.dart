@@ -324,6 +324,13 @@ class _ExportModalState extends ConsumerState<ExportModal> {
                             color: colors.textMuted,
                           ),
                         ),
+                        if ((wsState.trustSummary?.flaggedCount ?? 0) > 0)
+                          Text(
+                            '${wsState.trustSummary!.flaggedCount} block${wsState.trustSummary!.flaggedCount == 1 ? "" : "s"} flagged for review',
+                            style: AppTypography.micro(
+                              color: colors.warning,
+                            ),
+                          ),
                       ],
                     ),
                   ),

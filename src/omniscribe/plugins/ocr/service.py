@@ -28,6 +28,7 @@ from fastapi.responses import Response
 from omniscribe.config import RuntimeSettings
 from omniscribe.core.ocr.exceptions import ModelNotLoadedError
 from omniscribe.core.ocr.processor import OCRProcessor
+from omniscribe.core.ocr_quality.summary import document_trust_summary
 from omniscribe.core.workflows.base import OCRCancelled
 from omniscribe.harness.events import Event
 from omniscribe.plugins.artifacts import ArtifactStore
@@ -224,7 +225,7 @@ class OCRServiceImpl:
         work_dir = Path(tempfile.mkdtemp(prefix="omniscribe-ocr-"))
         input_path = work_dir / f"input{suffix}"
         input_path.write_bytes(blob)
-        pdf_bytes, pages_data = await self._execute(
+        pdf_bytes, pages_data, trust_summary = await self._execute(
             options, input_path, filename, job_id=""
         )
         text_handle = await self._artifacts.put(
@@ -234,13 +235,16 @@ class OCRServiceImpl:
             content_type="application/json",
             owner_job_id="",
         )
+        headers: dict[str, str] = {
+            "X-Text-Artifact-Id": text_handle.id,
+            "X-Text-Artifact-Token": text_handle.token,
+        }
+        if trust_summary is not None:
+            headers["X-Document-Trust"] = json.dumps(trust_summary)
         return Response(
             content=pdf_bytes,
             media_type="application/pdf",
-            headers={
-                "X-Text-Artifact-Id": text_handle.id,
-                "X-Text-Artifact-Token": text_handle.token,
-            },
+            headers=headers,
         )
 
     async def submit(
@@ -298,7 +302,7 @@ class OCRServiceImpl:
             raise ValueError("OCR job queue received a foreign payload")
         job_id = self._submission_to_job.get(payload.submission_id, "")
         cancel_check = self._cancel_check(job_id, payload.request.progress_channel)
-        pdf_bytes, _ = await self._execute(
+        pdf_bytes, _, _trust_summary = await self._execute(
             payload.request, payload.input_path, payload.filename, job_id=job_id
         )
         if cancel_check is not None and cancel_check():
@@ -312,7 +316,7 @@ class OCRServiceImpl:
         filename: str,
         *,
         job_id: str,
-    ) -> tuple[bytes, dict[int, list[str]]]:
+    ) -> tuple[bytes, dict[int, list[str]], dict[str, Any] | None]:
         # Audit 2.8: input_path is the already-written per-job tempfile
         # (see ``submit`` and ``run_sync``). The worker re-uses the same
         # directory; the output PDF is written alongside it.
@@ -331,7 +335,15 @@ class OCRServiceImpl:
                 on_warning=self._warning_adapter(job_id, channel),
                 cancel_check=self._cancel_check(job_id, channel),
             )
-            return output_path.read_bytes(), pages_data
+            # Real pipelines carry the scored DocumentResult; faked/test
+            # doubles may not, hence the getattr fallback to ``None``.
+            doc_result = getattr(pipeline, "last_document_result", None)
+            trust_summary = (
+                document_trust_summary(doc_result)
+                if doc_result is not None
+                else None
+            )
+            return output_path.read_bytes(), pages_data, trust_summary
         finally:
             shutil.rmtree(work_dir, ignore_errors=True)
 
