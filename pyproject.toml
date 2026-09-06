@@ -108,14 +108,14 @@ lexicon = [
 
 # TrOCR specialist (handwriting OCR). Adds transformers + sentencepiece.
 trocr = [
-    "transformers>=5.15.1",
+    "transformers>=5.16.1",
     "sentencepiece>=0.2.0",
     "safetensors>=0.4.0",
 ]
 
 # NLLB-200 fast translation fallback. Reuses transformers + sentencepiece.
 nllb = [
-    "transformers>=5.15.1",
+    "transformers>=5.16.1",
     "sentencepiece>=0.2.0",
 ]
 
