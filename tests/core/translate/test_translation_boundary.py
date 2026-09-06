@@ -95,7 +95,7 @@ async def test_translate_node_uses_injected_settings(monkeypatch):
     assert captured["temperature"] == 0.3
     msgs = captured["messages"]
     assert isinstance(msgs, list) and msgs and isinstance(msgs[0], dict)
-    assert "SOURCE TEXT:" in msgs[0]["content"]
+    assert "SOURCE:" in msgs[0]["content"]
 
 
 async def test_translate_node_preserves_error_prefix_on_call_llm_failure(monkeypatch):
@@ -161,4 +161,4 @@ async def test_translate_node_includes_glossary_and_memory(monkeypatch):
     assert "NAMES: Paris" in prompt
     assert "PREVIOUS CONTEXT" in prompt
     assert "previously translated text" in prompt
-    assert "SOURCE TEXT" in prompt
+    assert "SOURCE:" in prompt

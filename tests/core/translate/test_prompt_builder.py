@@ -20,8 +20,8 @@ def test_includes_all_sections_in_order() -> None:
     assert prompt.index("PROPER NOUNS") < prompt.index("lexicon definitions")
     assert prompt.index("lexicon definitions") < prompt.index("PREVIOUS CONTEXT")
     assert prompt.index("PREVIOUS CONTEXT") < prompt.index("Feedback:")
-    assert prompt.index("Feedback:") < prompt.index("SOURCE TEXT:")
-    assert prompt.endswith("SOURCE TEXT:\nBody text")
+    assert prompt.index("Feedback:") < prompt.index("SOURCE:")
+    assert prompt.endswith("SOURCE:\nBody text")
 
 
 def test_sanitizes_every_injected_value() -> None:

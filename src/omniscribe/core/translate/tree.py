@@ -16,18 +16,23 @@ from typing import TYPE_CHECKING
 from omniscribe.core.block_tree import BlockNode
 from omniscribe.core.translate.entity_memory import EntityMemory
 from omniscribe.core.translate.glossary import Glossary
+from omniscribe.core.translate.length_bands import effective_band
+from omniscribe.core.translate.prompts import build_translation_prompt
+from omniscribe.core.translate.config import TranslationSettings
 from omniscribe.utils.prompt_safety import sanitize_prompt_input
 
 if TYPE_CHECKING:
     from omniscribe.core.block_tree import DocumentTree
     from omniscribe.core.callbacks import TranslateChunkCallback
-    from omniscribe.core.translate.config import TranslationSettings
 
 logger = logging.getLogger(__name__)
 
 
 # A pluggable async callable that takes a prompt and returns translated text.
 TranslatorFn = Callable[[str, str], Awaitable[str]]
+
+# A pluggable async judge: (source_text, translated_text) -> (score, feedback).
+EvaluatorFn = Callable[[str, str], Awaitable[tuple[float, str]]]
 
 
 def build_context_block(
@@ -76,6 +81,7 @@ async def translate_tree(
     sliding_window_words: int = 80,
     dual_translate: bool = False,
     second_translator: TranslatorFn | None = None,
+    evaluator: EvaluatorFn | None = None,
     on_translate_chunk: TranslateChunkCallback | None = None,
 ) -> DocumentTree:
     """Translate every text-bearing block in a :class:`DocumentTree`.
@@ -83,6 +89,12 @@ async def translate_tree(
     ``translator(prompt, target_language) -> translated_text`` is the only
     LLM hook. The caller wires it up to the configured LLM (sync or async
     translation path), NLLBEngine, or any other back-end.
+
+    When ``evaluator`` is supplied (an LLM-as-judge taking
+    ``(source_text, translated_text) -> (score, feedback)``), each block
+    goes through a bounded evaluate/retry loop keyed on
+    ``settings.acceptance_score`` / ``settings.max_attempts``, and the
+    best-scoring attempt wins.
 
     The function:
 
@@ -95,16 +107,11 @@ async def translate_tree(
     If ``on_translate_chunk`` is supplied, it is invoked once per
     successfully translated block with
     ``(chunk_idx, source_chars, translated_text, target_language)``.
-    The callback fires only for blocks whose translation actually
-    replaced the source text (skipped / empty / page-header blocks
-    are silent). This is the contract the live UI subscribes to
-    through ``manager.send_translate_chunk``; programmatic callers
-    can pass any coroutine (e.g. a logging sink) or omit the kwarg
-    entirely to disable the observer.
     """
 
     glossary = glossary or Glossary()
     memory = memory or EntityMemory()
+    active_settings = settings or TranslationSettings.from_env()
     last_window = ""
     chunk_idx = 0
 
@@ -121,6 +128,8 @@ async def translate_tree(
                     sliding_window_words=sliding_window_words,
                     dual_translate=dual_translate,
                     second_translator=second_translator,
+                    settings=active_settings,
+                    evaluator=evaluator,
                 )
                 if translated_text is not None:
                     node.text = translated_text
@@ -153,6 +162,8 @@ async def translate_tree(
                                 sliding_window_words=sliding_window_words,
                                 dual_translate=dual_translate,
                                 second_translator=second_translator,
+                                settings=active_settings,
+                                evaluator=evaluator,
                             )
                             if translated_text is not None:
                                 cell.text = translated_text
@@ -180,6 +191,8 @@ async def _translate_node(
     sliding_window_words: int,
     dual_translate: bool,
     second_translator: TranslatorFn | None,
+    settings: TranslationSettings,
+    evaluator: EvaluatorFn | None,
 ) -> tuple[str | None, str]:
     if node.block_type.value in _SKIP_TYPES:
         return None, last_window
@@ -189,80 +202,93 @@ async def _translate_node(
     # Update entity memory as we go.
     memory.add_text(node.text)
 
-    context = build_context_block(glossary, memory, last_window)
-    prompt = _build_translation_prompt(
-        text=node.text,
+    prompt = build_translation_prompt(
+        source_chunk=node.text,
         target_language=target_language,
-        context=context,
+        glossary_block=glossary.to_prompt_block() or None,
+        entity_block=memory.to_prompt_block(max_items=settings.entity_memory_cap)
+        or None,
+        rag_context=None,
+        sliding_window=last_window or None,
+        feedback=None,
         block_type=node.block_type.value,
     )
 
-    primary = await translator(prompt, target_language)
-    primary = _clean_translation(primary, source=node.text)
+    primary = _clean_translation(
+        await translator(prompt, target_language), source=node.text
+    )
 
     if dual_translate and second_translator is not None:
-        secondary = await second_translator(prompt, target_language)
-        secondary = _clean_translation(secondary, source=node.text)
-        # Pick the candidate that is closer in length to the source (cheap
-        # proxy for "didn't drop or hallucinate content").
-        if abs(len(secondary) - len(node.text)) < abs(len(primary) - len(node.text)):
-            chosen = secondary
-        else:
-            chosen = primary
+        secondary = _clean_translation(
+            await second_translator(prompt, target_language), source=node.text
+        )
+        chosen = _pick_by_expected_length(node.text, primary, secondary)
     else:
         chosen = primary
+
+    if evaluator is not None:
+        chosen = await _judge_loop(
+            source=node.text,
+            first=chosen,
+            prompt=prompt,
+            target_language=target_language,
+            translator=translator,
+            evaluator=evaluator,
+            settings=settings,
+        )
 
     new_window = _truncate_words(chosen, sliding_window_words)
     return chosen, new_window
 
 
-def _build_translation_prompt(
-    *, text: str, target_language: str, context: str, block_type: str
-) -> str:
-    # Sanitize the user-controlled text once. Control characters and
-    # boundary markers are the realistic injection vectors for a
-    # document that already passed OCR; sanitize rather than escape
-    # per-injection-site so a future block type can't forget.
-    safe_text = sanitize_prompt_input(text)
-    type_hint = ""
-    if block_type == "section_header":
-        type_hint = (
-            "\nNOTE: This is a document heading. Translate it as a concise heading; "
-            "do not add punctuation.\n"
-        )
-    elif block_type == "list_item":
-        type_hint = (
-            "\nNOTE: This is a list item. Keep it terse; preserve list semantics.\n"
-        )
-    elif block_type == "code":
-        return (
-            f"Translate only the natural-language parts of the following code block. "
-            f"Do not translate code identifiers, function names, or string literals. "
-            f"Target language: {target_language}.\n\n"
-            f"```\n{safe_text}\n```\n"
-        )
-    elif block_type == "key_value":
-        type_hint = (
-            "\nNOTE: This is a key-value pair. Translate only the value; keep keys "
-            "intact if they're labels (e.g. 'Invoice Number').\n"
-        )
+def _pick_by_expected_length(source: str, primary: str, secondary: str) -> str:
+    """Pick the candidate whose length best matches the script-aware band.
 
-    if context:
-        return (
-            f"Translate the following text into {target_language}. "
-            f"Preserve formatting, line breaks, and any inline runs.\n"
-            f"{type_hint}\n"
-            f"{context}\n\n"
-            f"SOURCE:\n{safe_text}\n\n"
-            f"TRANSLATION ({target_language}):"
+    Cheap proxy for "didn't drop or hallucinate content", now aware that
+    CJK→alphabetic translations legitimately expand (and vice versa) —
+    the flat length-closeness pick mis-picked across scripts.
+    """
+    lo, hi = effective_band(source, primary)
+    mid = (lo + hi) / 2.0
+    src = max(1, len(source))
+
+    def _deviation(candidate: str) -> float:
+        return abs(len(candidate) / src - mid)
+
+    return secondary if _deviation(secondary) < _deviation(primary) else primary
+
+
+async def _judge_loop(
+    *,
+    source: str,
+    first: str,
+    prompt: str,
+    target_language: str,
+    translator: TranslatorFn,
+    evaluator: EvaluatorFn,
+    settings: TranslationSettings,
+) -> str:
+    """Bounded evaluate/retry loop; the best-scoring attempt wins."""
+    best, best_score = first, -1.0
+    current = first
+    for attempt in range(1, settings.max_attempts + 1):
+        score, feedback = await evaluator(source, current)
+        if score > best_score:
+            best, best_score = current, score
+        if score >= settings.acceptance_score or attempt >= settings.max_attempts:
+            break
+        retry_prompt = (
+            prompt
+            + "\n\nPrevious translation had issues. Feedback: "
+            + sanitize_prompt_input(feedback)
+            + "\nPlease fix these issues.\n"
         )
-    return (
-        f"Translate the following text into {target_language}. "
-        f"Preserve formatting, line breaks, and any inline runs.\n"
-        f"{type_hint}\n"
-        f"SOURCE:\n{safe_text}\n\n"
-        f"TRANSLATION ({target_language}):"
-    )
+        current = _clean_translation(
+            await translator(retry_prompt, target_language), source=source
+        )
+        if current.startswith("[Translation Error"):
+            break
+    return best
 
 
 # Common LLM preambles to strip from translation outputs.

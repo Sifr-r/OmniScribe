@@ -77,5 +77,5 @@ def build_translation_prompt(
             "Previous translation had issues. Feedback: "
             f"{sanitize_prompt_input(feedback)}\nPlease fix these issues.\n\n"
         )
-    parts.append(f"SOURCE TEXT:\n{sanitize_prompt_input(source_chunk)}")
+    parts.append(f"SOURCE:\n{sanitize_prompt_input(source_chunk)}")
     return "".join(parts)

@@ -264,3 +264,116 @@ async def test_translate_tree_translates_table_node_cells():
     assert len(chunk_events) == 2
     assert chunk_events[0] == (0, 4, "Hola", "Spanish")
     assert chunk_events[1] == (1, 5, "Mundo", "Spanish")
+
+
+# ---------------------------------------------------------------------------
+# Judge loop (LLM-remediation wave)
+# ---------------------------------------------------------------------------
+
+
+async def test_evaluator_retry_uses_feedback_and_keeps_best():
+    calls: list[str] = []
+
+    async def translator(prompt: str, lang: str) -> str:
+        calls.append(prompt)
+        if "Feedback:" in prompt:
+            return "bonne traduction"
+        return "mauvaise"
+
+    async def evaluator(source: str, translated: str) -> tuple[float, str]:
+        if translated == "bonne traduction":
+            return (0.9, "ok")
+        return (0.2, "wrong term")
+
+    tree = DocumentTree(
+        pages=[
+            PageTree(
+                page_idx=0,
+                children=[
+                    BlockNode(
+                        block_type=BlockType.PARAGRAPH,
+                        bbox=(0, 0, 1, 0.1),
+                        text="good source text",
+                        page_idx=0,
+                    )
+                ],
+            )
+        ]
+    )
+    from omniscribe.core.translate.config import TranslationSettings
+
+    out = await translate_tree(
+        tree,
+        target_language="French",
+        translator=translator,
+        evaluator=evaluator,
+        settings=TranslationSettings(max_attempts=3),
+    )
+    block = out.pages[0].children[0]
+    assert block.text == "bonne traduction"  # type: ignore[union-attr]
+    assert any("Feedback:" in p for p in calls)
+
+
+async def test_no_evaluator_is_single_call():
+    n = 0
+
+    async def translator(prompt: str, lang: str) -> str:
+        nonlocal n
+        n += 1
+        return "ok"
+
+    tree = DocumentTree(
+        pages=[
+            PageTree(
+                page_idx=0,
+                children=[
+                    BlockNode(
+                        block_type=BlockType.PARAGRAPH,
+                        bbox=(0, 0, 1, 0.1),
+                        text="source",
+                        page_idx=0,
+                    )
+                ],
+            )
+        ]
+    )
+    await translate_tree(tree, target_language="French", translator=translator)
+    assert n == 1
+
+
+async def test_judge_loop_never_returns_worse_retry():
+    """A retry that scores lower than the first attempt must not win."""
+
+    async def translator(prompt: str, lang: str) -> str:
+        if "Feedback:" in prompt:
+            return "worse retry"
+        return "first attempt"
+
+    async def evaluator(source: str, translated: str) -> tuple[float, str]:
+        return (0.3, "meh") if translated == "first attempt" else (0.1, "worse")
+
+    tree = DocumentTree(
+        pages=[
+            PageTree(
+                page_idx=0,
+                children=[
+                    BlockNode(
+                        block_type=BlockType.PARAGRAPH,
+                        bbox=(0, 0, 1, 0.1),
+                        text="source text",
+                        page_idx=0,
+                    )
+                ],
+            )
+        ]
+    )
+    from omniscribe.core.translate.config import TranslationSettings
+
+    out = await translate_tree(
+        tree,
+        target_language="French",
+        translator=translator,
+        evaluator=evaluator,
+        settings=TranslationSettings(max_attempts=2),
+    )
+    assert out.pages[0].children[0].text == "first attempt"  # type: ignore[union-attr]
