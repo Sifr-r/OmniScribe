@@ -172,3 +172,59 @@ class TestJobRepairSummary:
         assert pytest.approx(args[3], 0.001) == 0.8666
         assert args[4] == 3  # repaired total: 1 + 2
         assert args[5] == 1  # below target total: 0 + 1
+
+
+class TestRepairPhasePageDecode:
+    async def test_run_repair_phase_skips_decoding_pages_without_targets(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Perf: pages with no below-target blocks must not have their
+        image decoded. The repair phase used to decode every page before
+        checking whether the page had any repair targets, costing a full
+        decode per clean page (~295 wasted decodes on a 300-page doc with
+        5 bad blocks)."""
+        from PIL import Image
+
+        from omniscribe.core.workflows.hybrid_repair import run_repair_phase
+
+        decode_calls: list[object] = []
+
+        def fake_decode(image_b64: object) -> Image.Image:
+            decode_calls.append(image_b64)
+            # Noisy texture: crop_for_ocr_from_image returns None for
+            # mostly-uniform regions, which would skip the re-OCR call.
+            return Image.effect_noise((64, 64), 64).convert("RGB")
+
+        monkeypatch.setattr(
+            "omniscribe.core.workflows.hybrid_repair._decode_page_image",
+            fake_decode,
+        )
+
+        class _StubOCR:
+            async def perform_ocr_on_crop(self, crop_b64: str) -> str:
+                return "abc"
+
+        class _StubEngine:
+            ocr_processor = _StubOCR()
+            block_callbacks = BlockCallbackSet()
+
+        summaries = await run_repair_phase(
+            engine=_StubEngine(),
+            pages_structured={
+                0: [((0.0, 0.0, 1.0, 1.0), "ab")],  # est. 0.4 -> below target 0.5
+                1: [((0.0, 0.0, 1.0, 1.0), "abc")],  # est. 0.7 -> above target
+            },
+            images_dict={0: "img-0", 1: "img-1"},
+            page_nums=[0, 1],
+            repair_options=RepairOptions(enabled=True, target=0.5, max_retries=2),
+            concurrency=1,
+            progress=None,
+            on_warning=None,
+            decoded_get=lambda p_num: None,
+        )
+
+        assert decode_calls == ["img-0"]
+        assert len(summaries) == 2
+        assert summaries[0].repaired_count == 1
+        assert summaries[1].repaired_count == 0
+        assert summaries[1].below_target_count == 0

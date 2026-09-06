@@ -9,7 +9,9 @@ from __future__ import annotations
 
 from enum import StrEnum
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import Field
+
+from omniscribe.plugins._schemas import TrimmedModel
 
 
 class ExtractionTemplate(StrEnum):
@@ -29,15 +31,8 @@ class DocumentExportFormat(StrEnum):
     MINERU = "mineru"
 
 
-class _TrimmedModel(BaseModel):
-    """Shared config: reject unknown fields, trim string values."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    @field_validator("*", mode="before")
-    @classmethod
-    def _strip_strings(cls, value: object) -> object:
-        return value.strip() if isinstance(value, str) else value
+class _TrimmedModel(TrimmedModel):
+    """Documents-plugin alias of the shared plugin schema base."""
 
 
 class ExtractionRequest(_TrimmedModel):

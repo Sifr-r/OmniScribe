@@ -150,7 +150,7 @@ void main() {
       final state = container.read(translationProvider);
       expect(state.isTranslating, isFalse);
       expect(state.error, contains('API error 500'));
-      expect(state.translatedOutput, contains('Translation failed'));
+      expect(state.translatedOutput, isEmpty);
     });
 
     test('translateAsync queues job and checkTranslationStatus polls result',

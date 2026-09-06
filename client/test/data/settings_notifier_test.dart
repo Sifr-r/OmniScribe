@@ -61,8 +61,6 @@ void main() {
       expect(state.runtimeConfig, config);
       expect(state.activeProviderId, 'openai');
       expect(state.ocrModels, ['allenai/olmocr-2-7b', 'qwen2-vl']);
-      expect(state.translationModels, isEmpty);
-      expect(state.transcriptionModels, isEmpty);
       expect(state.error, isNull);
       // Phase A: translation/transcription routes are deferred — the
       // deprecated namespace API must not be called anymore.
@@ -89,8 +87,6 @@ void main() {
       final state = container.read(settingsStateProvider);
       expect(state.activeProviderId, 'openai');
       expect(state.ocrModels, ['gpt-4o']);
-      expect(state.translationModels, isEmpty);
-      expect(state.transcriptionModels, isEmpty);
       verify(() => repo.getModelsForProvider('openai')).called(1);
     });
 

@@ -120,11 +120,6 @@ class RuntimeSettings(BaseSettings):
         default_factory=lambda: Path(tempfile.gettempdir()),
         validation_alias="OMNISCRIBE_ARTIFACT_DIR",
     )
-    artifact_cleanup_interval_s: float = Field(
-        default=60.0,
-        validation_alias="OMNISCRIBE_ARTIFACT_CLEANUP_INTERVAL_S",
-        ge=0,
-    )
 
     # OCR quality repair-loop seeds (pedantic 7.12). The shipped
     # ``cordis.yml`` also reads these env vars directly via
@@ -183,14 +178,6 @@ class RuntimeSettings(BaseSettings):
         default="sqlite",
         validation_alias="OMNISCRIBE_STATE_BACKEND",
     )
-    # Path to the SQLite file when ``state_backend="sqlite"``.
-    # Defaults to ``<artifact_dir>/omniscribe-state.db``; only
-    # consulted by :class:`SQLiteStateBackend`.
-    state_db_path: str | None = Field(
-        default=None,
-        validation_alias="OMNISCRIBE_STATE_DB_PATH",
-    )
-
     # Cordis-style harness boot config. ``cordis_config_path`` is the base
     # plugin tree (the package ships one under ``resources/cordis.yml``);
     # patch files are layered on top by :meth:`cordis_patch_paths`.
@@ -253,7 +240,7 @@ class RuntimeSettings(BaseSettings):
                 "Ignoring invalid integer environment value for %s",
                 "OMNISCRIBE_MAX_UPLOAD_MB",
             )
-            return 10_240
+            return 1_024
 
     @field_validator("rate_limit_per_min", mode="before")
     @classmethod
@@ -268,16 +255,6 @@ class RuntimeSettings(BaseSettings):
                 "OMNISCRIBE_RATE_LIMIT_PER_MIN",
             )
             return None
-
-    @field_validator("artifact_cleanup_interval_s", mode="before")
-    @classmethod
-    def _normalize_cleanup_interval(cls, value: object) -> float:
-        if value is None or (isinstance(value, str) and not value.strip()):
-            return 60.0
-        try:
-            return max(0.0, float(str(value).strip()))
-        except (TypeError, ValueError):
-            return 60.0
 
     @field_validator("state_backend", mode="before")
     @classmethod

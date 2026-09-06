@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:omniscribe_client/core/constants/api_constants.dart';
 import 'package:omniscribe_client/core/enums/app_tab.dart';
 import 'package:omniscribe_client/core/enums/server_health.dart';
 import 'package:omniscribe_client/core/network/api_client.dart';
@@ -55,7 +56,6 @@ class ServerHealthState {
     required this.status,
     this.latencyMs,
     this.endpoint = 'http://localhost:8000',
-    this.version = 'v2.0.0',
     this.lastChecked,
     this.error,
   });
@@ -63,7 +63,6 @@ class ServerHealthState {
   final ServerHealth status;
   final int? latencyMs;
   final String endpoint;
-  final String version;
   final DateTime? lastChecked;
   final String? error;
 
@@ -72,7 +71,6 @@ class ServerHealthState {
     int? latencyMs,
     bool clearLatencyMs = false,
     String? endpoint,
-    String? version,
     DateTime? lastChecked,
     String? error,
     bool clearError = false,
@@ -81,7 +79,6 @@ class ServerHealthState {
       status: status ?? this.status,
       latencyMs: clearLatencyMs ? null : (latencyMs ?? this.latencyMs),
       endpoint: endpoint ?? this.endpoint,
-      version: version ?? this.version,
       lastChecked: lastChecked ?? this.lastChecked,
       error: clearError ? null : (error ?? this.error),
     );
@@ -100,11 +97,7 @@ class ServerHealthNotifier extends Notifier<ServerHealthState> {
   @override
   ServerHealthState build() {
     _apiClient = ref.watch(apiClientProvider);
-    return ServerHealthState(
-      status: ServerHealth.online,
-      latencyMs: 38,
-      lastChecked: DateTime.now(),
-    );
+    return const ServerHealthState(status: ServerHealth.checking);
   }
 
   Future<void> checkHealth() async {
@@ -112,7 +105,7 @@ class ServerHealthNotifier extends Notifier<ServerHealthState> {
     setChecking();
     final stopwatch = Stopwatch()..start();
     try {
-      await _apiClient!.get<dynamic>('/api/health');
+      await _apiClient!.get<dynamic>(ApiConstants.apiHealth);
       stopwatch.stop();
       setOnline(latencyMs: stopwatch.elapsedMilliseconds);
     } catch (e) {
@@ -124,11 +117,10 @@ class ServerHealthNotifier extends Notifier<ServerHealthState> {
     state = state.copyWith(status: ServerHealth.checking);
   }
 
-  void setOnline({int? latencyMs, String? version}) {
+  void setOnline({int? latencyMs}) {
     state = state.copyWith(
       status: ServerHealth.online,
       latencyMs: latencyMs ?? state.latencyMs,
-      version: version ?? state.version,
       lastChecked: DateTime.now(),
       error: null,
     );

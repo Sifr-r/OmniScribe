@@ -15,8 +15,8 @@ The plugin also registers the :class:`JobRunner` the queue worker resolves
 at claim time, and subscribes to the job/progress events so the SSE route
 can replay them per job.
 
-Audit catalog (Sprint 6 long-file split): the 280-LOC
-:file:`omniscribe.plugins.ocr.service` module now holds
+Audit catalog (Sprint 6 long-file split):
+:file:`omniscribe.plugins.ocr.service` holds
 ``OCRServiceImpl`` + the SSE event-formatting helper + the
 queue/event-name lookup tables. This file is just the
 Protocol + plugin class + route factory.
@@ -91,7 +91,7 @@ class OCRService(Protocol):
         content_type: str | None = None,
     ) -> AsyncSubmitResponse: ...
 
-    def get_page_preview(
+    async def get_page_preview(
         self,
         job_id: str,
         page_index: int,
@@ -163,6 +163,35 @@ def _sniff_format(head: bytes) -> str | None:
     return None
 
 
+async def iter_sse_events(
+    service: OCRServiceImpl, job_id: str, keepalive_seconds: float
+) -> AsyncGenerator[str, None]:
+    """Yield SSE frames for a job's events with a sequence-based cursor.
+
+    Entries are stamped with per-job monotonic ``seq`` numbers by
+    ``record_event``; the cursor tracks the last delivered ``seq`` so a
+    ``maxlen`` deque rotation (which shifts list indices and evicts the
+    oldest entries) can never skip or replay unseen events.
+    """
+    cursor = 0
+    while True:
+        for entry in service.event_backlog(job_id):
+            seq = entry["seq"]
+            if seq <= cursor:
+                continue
+            cursor = seq
+            yield (f"event: {entry['event']}\ndata: {json.dumps(entry['data'])}\n\n")
+        if service.is_done(job_id):
+            return
+        try:
+            await asyncio.wait_for(
+                service.wait_for_events(job_id),
+                timeout=keepalive_seconds,
+            )
+        except TimeoutError:
+            yield ": keep-alive\n\n"
+
+
 def build_ocr_router(service: OCRServiceImpl) -> APIRouter:
     """Every OCR-plugin route from the spec's route table."""
     router = APIRouter(tags=["ocr"])
@@ -174,7 +203,7 @@ def build_ocr_router(service: OCRServiceImpl) -> APIRouter:
         upload = form.get("file")
         if upload is None or not hasattr(upload, "read"):
             raise HTTPException(status_code=400, detail="missing 'file' field")
-        cap = service._max_upload_mb * 1024 * 1024
+        cap = service.max_upload_mb * 1024 * 1024
         chunks: list[bytes] = []
         total_read = 0
         chunk_size = 1024 * 1024
@@ -186,7 +215,7 @@ def build_ocr_router(service: OCRServiceImpl) -> APIRouter:
             if total_read > cap:
                 raise HTTPException(
                     status_code=413,
-                    detail=f"upload exceeds {service._max_upload_mb} MB limit",
+                    detail=f"upload exceeds {service.max_upload_mb} MB limit",
                 )
             chunks.append(chunk)
         blob = b"".join(chunks)
@@ -250,7 +279,7 @@ def build_ocr_router(service: OCRServiceImpl) -> APIRouter:
             for key, value in form.items()
             if key != "file" and isinstance(value, str)
         }
-        for key, value in service._quality_defaults.items():
+        for key, value in service.quality_defaults.items():
             fields.setdefault(key, value)
         try:
             # model_validate (not **kwargs): form values are all strings and
@@ -297,28 +326,10 @@ def build_ocr_router(service: OCRServiceImpl) -> APIRouter:
         ):
             raise HTTPException(status_code=404, detail="unknown job")
 
-        async def stream() -> AsyncGenerator[str, None]:
-            cursor = 0
-            while True:
-                backlog = service.event_backlog(job_id)
-                while cursor < len(backlog):
-                    entry = backlog[cursor]
-                    cursor += 1
-                    yield (
-                        f"event: {entry['event']}\n"
-                        f"data: {json.dumps(entry['data'])}\n\n"
-                    )
-                if service.is_done(job_id):
-                    return
-                try:
-                    await asyncio.wait_for(
-                        service.wait_for_events(job_id),
-                        timeout=SSE_KEEPALIVE_SECONDS,
-                    )
-                except TimeoutError:
-                    yield ": keep-alive\n\n"
-
-        return StreamingResponse(stream(), media_type="text/event-stream")
+        return StreamingResponse(
+            iter_sse_events(service, job_id, SSE_KEEPALIVE_SECONDS),
+            media_type="text/event-stream",
+        )
 
     @router.get("/api/jobs")
     async def list_jobs() -> list[JobListItemResponse]:
@@ -340,7 +351,7 @@ def build_ocr_router(service: OCRServiceImpl) -> APIRouter:
         # (public) must set ``OMNISCRIBE_AUTH_TOKEN`` (the Bearer
         # AuthMiddleware on Profile 2+ rejects the unauthenticated
         # ``GET /api/jobs`` request before this handler runs).
-        records = await service._queue.list_jobs()
+        records = await service.queue.list_jobs()
         return [service.job_list_item(record) for record in records]
 
     @router.delete("/api/jobs")
@@ -356,7 +367,7 @@ def build_ocr_router(service: OCRServiceImpl) -> APIRouter:
                     ),
                 },
             )
-        cleared = await service._queue.clear()
+        cleared = await service.queue.clear()
         return {"status": "ok", "cleared": cleared}
 
     @router.get("/api/jobs/{job_id}/result")

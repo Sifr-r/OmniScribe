@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:omniscribe_client/core/enums/app_tab.dart';
+import 'package:omniscribe_client/core/enums/server_health.dart';
 import 'package:omniscribe_client/core/theme/app_theme.dart';
 import 'package:omniscribe_client/data/models/document_result.dart';
 import 'package:omniscribe_client/data/models/process_settings.dart';
@@ -30,6 +31,15 @@ class _MockOcrRepository extends Mock implements OcrRepository {}
 class _AuthRequiredTrue extends AuthRequiredNotifier {
   @override
   bool build() => true;
+}
+
+/// Tests mounting [AppShell] pin the health badge to a settled state: the
+/// seeded ``checking`` status drives an infinite pulse animation in
+/// [ServerHealthBadge], which would never let pumpAndSettle settle.
+class _OfflineHealth extends ServerHealthNotifier {
+  @override
+  ServerHealthState build() =>
+      const ServerHealthState(status: ServerHealth.offline);
 }
 
 /// No-op WebSocket client for tests. The real [WsClient] tries to open a
@@ -64,6 +74,9 @@ void main() {
 
   Widget buildAppShell() {
     return ProviderScope(
+      overrides: [
+        serverHealthProvider.overrideWith(_OfflineHealth.new),
+      ],
       child: MaterialApp(
         theme: AppTheme.darkTheme,
         home: const Scaffold(
@@ -328,6 +341,7 @@ void main() {
         ProviderScope(
           overrides: [
             authRequiredProvider.overrideWith(_AuthRequiredTrue.new),
+            serverHealthProvider.overrideWith(_OfflineHealth.new),
           ],
           child: const MaterialApp(home: AppShell()),
         ),
@@ -406,6 +420,7 @@ void main() {
           overrides: [
             ocrRepositoryProvider.overrideWithValue(ocrRepo),
             wsClientProvider.overrideWithValue(_FakeWsClient()),
+            serverHealthProvider.overrideWith(_OfflineHealth.new),
           ],
           child: MaterialApp(
             theme: AppTheme.darkTheme,

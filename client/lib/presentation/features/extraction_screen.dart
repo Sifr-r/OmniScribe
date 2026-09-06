@@ -10,6 +10,8 @@ import 'package:omniscribe_client/data/providers/settings_notifier.dart';
 import 'package:omniscribe_client/presentation/common/app_badge.dart';
 import 'package:omniscribe_client/presentation/common/app_button.dart';
 import 'package:omniscribe_client/presentation/common/app_card.dart';
+import 'package:omniscribe_client/presentation/common/error_banner.dart';
+import 'package:omniscribe_client/presentation/common/feature_screen_scaffold.dart';
 import 'package:omniscribe_client/presentation/common/section_header.dart';
 
 class ExtractionScreen extends ConsumerStatefulWidget {
@@ -88,273 +90,232 @@ class _ExtractionScreenState extends ConsumerState<ExtractionScreen> {
     final notifier = ref.read(extractionProvider.notifier);
     final colors = context.colors;
 
-    return Scaffold(
-      backgroundColor: colors.background,
-      body: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Header Bar
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Text(
-                          'Structured Information Extraction',
-                          style: AppTypography.displaySmall(
-                            color: colors.textPrimary,
+    return FeatureScreenScaffold(
+      title: 'Structured Information Extraction',
+      badge: const AppBadge(
+        label: 'JSON Schema / AST',
+        variant: AppBadgeVariant.brand,
+      ),
+      subtitle:
+          'Extract strongly-typed entities, tables, invoices, and key-values from OCR document trees',
+      headerAction:
+          // Template Segmented Control
+          Container(
+        padding: const EdgeInsets.all(3),
+        decoration: BoxDecoration(
+          color: colors.cardRaised,
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(color: colors.border),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: _templates.map((tpl) {
+            final isSelected = state.selectedTemplate == tpl['id'];
+            return InkWell(
+              onTap: () => notifier.setSelectedTemplate(tpl['id']!),
+              borderRadius: BorderRadius.circular(4),
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 5,
+                ),
+                decoration: BoxDecoration(
+                  color: isSelected ? colors.surface : Colors.transparent,
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: Text(
+                  tpl['label']!,
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: isSelected
+                        ? FontWeight.w600
+                        : FontWeight.normal,
+                    color: isSelected ? colors.brand : colors.textMuted,
+                  ),
+                ),
+              ),
+            );
+          }).toList(),
+        ),
+      ),
+      errorBanner: state.error != null
+          ? ErrorBanner(
+              message: state.error!,
+              onDismiss: notifier.clearError,
+            )
+          : null,
+      panes: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // Left Pane: Input Text & Custom Prompt
+          Expanded(
+            child: AppCard(
+              padding: AppCardPadding.md,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  SectionHeader(
+                    title: 'Input Text / Document Artifact',
+                    action: _inputTextController.text.isNotEmpty
+                        ? InkWell(
+                            onTap: () {
+                              _inputTextController.clear();
+                              notifier.clearInputText();
+                              setState(() {});
+                            },
+                            child: Text(
+                              'Clear',
+                              style: AppTypography.codeSmall(
+                                color: colors.error,
+                              ),
+                            ),
+                          )
+                        : null,
+                  ),
+                  const SizedBox(height: 8),
+                  Expanded(
+                    child: TextField(
+                      controller: _inputTextController,
+                      maxLines: null,
+                      expands: true,
+                      onChanged: notifier.setInputText,
+                      style: AppTypography.code(
+                        color: colors.textPrimary,
+                      ),
+                      decoration: InputDecoration(
+                        hintText:
+                            'Paste invoice text, resume, receipt, or academic table here…',
+                        hintStyle: AppTypography.code(
+                          color: colors.textMuted,
+                        ),
+                        border: InputBorder.none,
+                      ),
+                    ),
+                  ),
+                  if (state.selectedTemplate == 'custom') ...[
+                    const SizedBox(height: 12),
+                    Divider(color: colors.border, height: 1),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Custom JSON Schema Definition',
+                      style: AppTypography.labelMedium(
+                        color: colors.textMuted,
+                      ).copyWith(fontWeight: FontWeight.w600),
+                    ),
+                    const SizedBox(height: 6),
+                    SizedBox(
+                      height: 110,
+                      child: TextField(
+                        controller: _customSchemaController,
+                        maxLines: null,
+                        expands: true,
+                        onChanged: notifier.setCustomSchema,
+                        style: AppTypography.code(
+                          color: colors.success,
+                        ),
+                        decoration: InputDecoration(
+                          filled: true,
+                          fillColor: colors.cardRaised,
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(6),
+                            borderSide: BorderSide(color: colors.border),
                           ),
                         ),
-                        const SizedBox(width: 10),
-                        const AppBadge(
-                          label: 'JSON Schema / AST',
-                          variant: AppBadgeVariant.brand,
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      'Extract strongly-typed entities, tables, invoices, and key-values from OCR document trees',
-                      style: AppTypography.bodySmall(
-                        color: colors.textMuted,
                       ),
                     ),
                   ],
-                ),
-                // Template Segmented Control
-                Container(
-                  padding: const EdgeInsets.all(3),
-                  decoration: BoxDecoration(
-                    color: colors.cardRaised,
-                    borderRadius: BorderRadius.circular(6),
-                    border: Border.all(color: colors.border),
+                  const SizedBox(height: 14),
+                  AppButton(
+                    text: state.isExtracting
+                        ? 'Extracting…'
+                        : 'Run Structured Extraction',
+                    variant: AppButtonVariant.primary,
+                    fullWidth: true,
+                    loading: state.isExtracting,
+                    icon: const Icon(Icons.auto_fix_high, size: 16),
+                    onPressed: _handleExtract,
                   ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: _templates.map((tpl) {
-                      final isSelected = state.selectedTemplate == tpl['id'];
-                      return InkWell(
-                        onTap: () =>
-                            notifier.setSelectedTemplate(tpl['id']!),
-                        borderRadius: BorderRadius.circular(4),
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 10,
-                            vertical: 5,
-                          ),
-                          decoration: BoxDecoration(
-                            color: isSelected
-                                ? colors.surface
-                                : Colors.transparent,
-                            borderRadius: BorderRadius.circular(4),
-                          ),
-                          child: Text(
-                            tpl['label']!,
-                            style: TextStyle(
-                              fontSize: 12,
-                              fontWeight: isSelected
-                                  ? FontWeight.w600
-                                  : FontWeight.normal,
-                              color: isSelected
-                                  ? colors.brand
-                                  : colors.textMuted,
-                            ),
-                          ),
-                        ),
-                      );
-                    }).toList(),
-                  ),
-                ),
-              ],
+                ],
+              ),
             ),
-            const SizedBox(height: 16),
+          ),
+          const SizedBox(width: 16),
 
-            // Dual Pane: Input + Schema vs Extracted JSON
-            Expanded(
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
+          // Right Pane: Extracted JSON AST Output
+          Expanded(
+            child: AppCard(
+              padding: AppCardPadding.md,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // Left Pane: Input Text & Custom Prompt
+                  SectionHeader(
+                    title: 'Extracted Output AST',
+                    action: state.extractedData != null
+                        ? AppButton(
+                            text: 'Copy JSON',
+                            variant: AppButtonVariant.ghost,
+                            size: AppButtonSize.sm,
+                            icon: const Icon(Icons.copy, size: 14),
+                            onPressed: () => _copyJson(state.extractedData),
+                          )
+                        : null,
+                  ),
+                  const SizedBox(height: 8),
                   Expanded(
-                    child: AppCard(
-                      padding: AppCardPadding.md,
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          SectionHeader(
-                            title: 'Input Text / Document Artifact',
-                            action: _inputTextController.text.isNotEmpty
-                                ? InkWell(
-                                    onTap: () {
-                                      _inputTextController.clear();
-                                      notifier.clearInputText();
-                                      setState(() {});
-                                    },
-                                    child: Text(
-                                       'Clear',
-                                      style: AppTypography.codeSmall(
-                                        color: colors.error,
-                                      ),
+                    child: Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: colors.cardRaised,
+                        borderRadius: BorderRadius.circular(6),
+                        border: Border.all(color: colors.border),
+                      ),
+                      child: state.isExtracting
+                          ? Center(
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  CircularProgressIndicator(
+                                    valueColor:
+                                        AlwaysStoppedAnimation<Color>(
+                                      colors.brand,
                                     ),
-                                  )
-                                : null,
-                          ),
-                          const SizedBox(height: 8),
-                          Expanded(
-                            child: TextField(
-                              controller: _inputTextController,
-                              maxLines: null,
-                              expands: true,
-                              onChanged: notifier.setInputText,
-                              style: AppTypography.code(
-                                color: colors.textPrimary,
+                                  ),
+                                  const SizedBox(height: 12),
+                                  Text(
+                                    'Parsing entities and validating against schema…',
+                                    style: AppTypography.bodySmall(
+                                      color: colors.textMuted,
+                                    ),
+                                  ),
+                                ],
                               ),
-                              decoration: InputDecoration(
-                                hintText:
-                                    'Paste invoice text, resume, receipt, or academic table here…',
-                                hintStyle: AppTypography.code(
-                                  color: colors.textMuted,
-                                ),
-                                border: InputBorder.none,
-                              ),
-                            ),
-                          ),
-                          if (state.selectedTemplate == 'custom') ...[
-                            const SizedBox(height: 12),
-                            Divider(color: colors.border, height: 1),
-                            const SizedBox(height: 8),
-                            Text(
-                              'Custom JSON Schema Definition',
-                              style: AppTypography.labelMedium(
-                                color: colors.textMuted,
-                              ).copyWith(fontWeight: FontWeight.w600),
-                            ),
-                            const SizedBox(height: 6),
-                            SizedBox(
-                              height: 110,
-                              child: TextField(
-                                controller: _customSchemaController,
-                                maxLines: null,
-                                expands: true,
-                                onChanged: notifier.setCustomSchema,
-                                style: AppTypography.code(
-                                  color: colors.success,
-                                ),
-                                decoration: InputDecoration(
-                                  filled: true,
-                                  fillColor: colors.cardRaised,
-                                  border: OutlineInputBorder(
-                                    borderRadius: BorderRadius.circular(6),
-                                    borderSide:
-                                        BorderSide(color: colors.border),
+                            )
+                          : state.extractedData != null
+                              ? SingleChildScrollView(
+                                  child: SelectableText(
+                                    const JsonEncoder.withIndent('  ')
+                                        .convert(state.extractedData),
+                                    style: AppTypography.code(
+                                      color: colors.success,
+                                    ).copyWith(height: 1.4),
+                                  ),
+                                )
+                              : Center(
+                                  child: Text(
+                                    'Extracted JSON output structure will appear here after extraction.',
+                                    style: AppTypography.bodySmall(
+                                      color: colors.textMuted,
+                                    ),
                                   ),
                                 ),
-                              ),
-                            ),
-                          ],
-                          const SizedBox(height: 14),
-                          AppButton(
-                            text: state.isExtracting
-                                ? 'Extracting…'
-                                : 'Run Structured Extraction',
-                            variant: AppButtonVariant.primary,
-                            fullWidth: true,
-                            loading: state.isExtracting,
-                            icon: const Icon(Icons.auto_fix_high, size: 16),
-                            onPressed: _handleExtract,
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 16),
-
-                  // Right Pane: Extracted JSON AST Output
-                  Expanded(
-                    child: AppCard(
-                      padding: AppCardPadding.md,
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          SectionHeader(
-                            title: 'Extracted Output AST',
-                            action: state.extractedData != null
-                                ? AppButton(
-                                    text: 'Copy JSON',
-                                    variant: AppButtonVariant.ghost,
-                                    size: AppButtonSize.sm,
-                                    icon: const Icon(Icons.copy, size: 14),
-                                    onPressed: () =>
-                                        _copyJson(state.extractedData),
-                                  )
-                                : null,
-                          ),
-                          const SizedBox(height: 8),
-                          Expanded(
-                            child: Container(
-                              width: double.infinity,
-                              padding: const EdgeInsets.all(12),
-                              decoration: BoxDecoration(
-                                color: colors.cardRaised,
-                                borderRadius: BorderRadius.circular(6),
-                                border: Border.all(color: colors.border),
-                              ),
-                              child: state.isExtracting
-                                  ? Center(
-                                      child: Column(
-                                        mainAxisSize: MainAxisSize.min,
-                                        children: [
-                                          CircularProgressIndicator(
-                                            valueColor:
-                                                AlwaysStoppedAnimation<Color>(
-                                              colors.brand,
-                                            ),
-                                          ),
-                                          const SizedBox(height: 12),
-                                          Text(
-                                            'Parsing entities and validating against schema…',
-                                            style: AppTypography.bodySmall(
-                                              color: colors.textMuted,
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    )
-                                  : state.extractedData != null
-                                      ? SingleChildScrollView(
-                                          child: SelectableText(
-                                            const JsonEncoder.withIndent('  ')
-                                                .convert(state.extractedData),
-                                            style: AppTypography.code(
-                                              color: colors.success,
-                                            ).copyWith(height: 1.4),
-                                          ),
-                                        )
-                                      : Center(
-                                          child: Text(
-                                            'Extracted JSON output structure will appear here after extraction.',
-                                            style: AppTypography.bodySmall(
-                                              color: colors.textMuted,
-                                            ),
-                                          ),
-                                        ),
-                            ),
-                          ),
-                        ],
-                      ),
                     ),
                   ),
                 ],
               ),
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }

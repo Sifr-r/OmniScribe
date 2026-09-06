@@ -74,7 +74,7 @@ web = [
 ]
 preprocessing = [
     "opencv-python-headless>=4.8.0",
-    # numpy lives in the base deps (>=1.24.0,<2.3.0) — no duplicate here.
+    # numpy lives in the base deps (>=2.0,<2.5.0) — no duplicate here.
 ]
 # Async translation: the LLM-driven translation workflow. ``chromadb`` and
 # ``sentence-transformers`` are intentionally kept out so this extra is
@@ -82,7 +82,6 @@ preprocessing = [
 # for the lexicon-backed RAG feature; the translation module degrades
 # gracefully when the lexicon store is unavailable.
 async-translation = [
-    "celery>=5.4.0",
     # redis is a base dep — no duplicate here.
     "langgraph>=0.1.0",
 ]

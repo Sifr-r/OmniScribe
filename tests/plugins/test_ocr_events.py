@@ -111,3 +111,81 @@ async def test_rapid_record_events_do_not_lose_entries() -> None:
     assert len(backlog) == burst_size
     percents = [entry["data"]["percent"] for entry in backlog]
     assert percents == list(range(burst_size))
+
+
+async def test_backlog_entries_carry_strictly_increasing_seq_across_rotation() -> None:
+    """SSE cursor correctness: every backlog entry carries a per-job ``seq``
+    that keeps increasing even after the ``maxlen`` deque rotates (oldest
+    entries evicted). Consumers use ``seq`` as their cursor, so a rotation
+    must never reset or reuse sequence numbers.
+    """
+    service = _bare_service()
+    job_id = "j1"
+
+    for i in range(600):
+        await service.record_event(
+            events.ProgressFrame(
+                job_id=job_id,
+                channel_id="c1",
+                frame={"percent": i, "stage": "ocr"},
+            )
+        )
+
+    backlog = service.event_backlog(job_id)
+    assert len(backlog) == 500  # maxlen enforced
+    seqs = [entry["seq"] for entry in backlog]
+    assert seqs[0] == 101  # 100 oldest evicted by rotation
+    assert seqs == list(range(101, 601))
+
+
+async def test_sse_consumer_delivers_events_appended_after_full_backlog_seen() -> None:
+    """SSE cursor correctness: a single live SSE connection that has seen a
+    full 500-entry backlog must still receive the next events after a burst
+    rotates the deque. The old index-based cursor compared against the
+    snapshot length, so after rotation the cursor exceeded ``len(backlog)``
+    and every later event was silently skipped.
+    """
+    from omniscribe.plugins.ocr.plugin import iter_sse_events
+
+    service = _bare_service()
+    job_id = "j1"
+
+    for i in range(500):
+        await service.record_event(
+            events.ProgressFrame(
+                job_id=job_id,
+                channel_id="c1",
+                frame={"percent": i, "stage": "ocr"},
+            )
+        )
+
+    gen = iter_sse_events(service, job_id, 0.01)
+
+    async def next_event() -> str:
+        while True:
+            chunk = await asyncio.wait_for(gen.__anext__(), timeout=5.0)
+            if not chunk.startswith(":"):
+                return chunk
+
+    seen = [await next_event() for _ in range(500)]
+    assert '"percent": 0' in seen[0]
+    assert '"percent": 499' in seen[-1]
+
+    # Burst rotates the deque: the 500 oldest entries are evicted and 10
+    # new ones appended. The live connection must receive all 10.
+    for i in range(500, 510):
+        await service.record_event(
+            events.ProgressFrame(
+                job_id=job_id,
+                channel_id="c1",
+                frame={"percent": i, "stage": "ocr"},
+            )
+        )
+
+    for i in range(500, 510):
+        chunk = await next_event()
+        assert f'"percent": {i}' in chunk
+        seen.append(chunk)
+
+    assert len(seen) == 510
+    await gen.aclose()

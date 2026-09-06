@@ -139,7 +139,6 @@ class TranslationNotifier extends Notifier<TranslationState> {
       state = state.copyWith(
         isTranslating: false,
         error: e.toString(),
-        translatedOutput: 'Translation failed: $e',
       );
     }
   }
@@ -267,7 +266,7 @@ class TranscriptionNotifier extends Notifier<TranscriptionState> {
     state = state.copyWith(
       audioBytes: bytes,
       audioFilename: filename,
-      totalDuration: duration ?? 45.0,
+      totalDuration: duration ?? 0.0,
       currentPlaybackTime: 0.0,
       isPlaying: false,
       clearError: true,
@@ -428,7 +427,7 @@ class TranscriptionNotifier extends Notifier<TranscriptionState> {
       final dur = res.duration ??
           (res.segments.isNotEmpty
               ? res.segments.last.end
-              : (state.totalDuration > 0 ? state.totalDuration : 45.0));
+              : state.totalDuration);
 
       state = state.copyWith(
         isTranscribing: false,
@@ -524,9 +523,17 @@ class GlossaryNotifier extends Notifier<GlossaryState> {
   }
 
   Future<void> toggleLibrary(GlossaryListItem lib, bool enabled) async {
+    bool ok;
     try {
-      await _repo.toggleGlossaryLibrary(lib.id, enabled);
-    } catch (_) {}
+      ok = await _repo.toggleGlossaryLibrary(lib.id, enabled);
+    } catch (e) {
+      state = state.copyWith(error: e.toString());
+      return;
+    }
+    if (!ok) {
+      state = state.copyWith(error: 'Failed to toggle "${lib.name}".');
+      return;
+    }
 
     final updated = state.libraries.map((item) {
       if (item.id == lib.id) {
@@ -540,9 +547,17 @@ class GlossaryNotifier extends Notifier<GlossaryState> {
   }
 
   Future<void> deleteLibrary(String id) async {
+    bool ok;
     try {
-      await _repo.deleteGlossaryLibrary(id);
-    } catch (_) {}
+      ok = await _repo.deleteGlossaryLibrary(id);
+    } catch (e) {
+      state = state.copyWith(error: e.toString());
+      return;
+    }
+    if (!ok) {
+      state = state.copyWith(error: 'Failed to delete glossary library.');
+      return;
+    }
 
     final updated = state.libraries.where((item) => item.id != id).toList();
     final resetSelected = state.selectedLibrary?.id == id;

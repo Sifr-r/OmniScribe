@@ -1,95 +1,28 @@
 # OmniScribe — Outstanding Work
 
 **Consolidated:** 2026-08-31  
-**Updated:** 2026-09-06 (Phase 6 closed at commit `983930f`; v0.3.0 RFC 002 approved)  
+**Updated:** 2026-09-06 (v0.3.0 shipped at `6f43d30`; finetunement remediation wave — see §7 status map)  
 **Sources:** `docs/audits/2026-08-30-pedantic-review.md`, the deferred Medium/Low backlog of the 2026-08-29 five-domain audit, the 2026-09-04 [Five-Lens Audit](audits/2026-09-04-five-lens-audit.md) and [Remediation Plan](audits/2026-09-04-remediation-plan.md), the 2026-09-06 [v0.3.0 RFC 002](rfcs/2026-09-v0.3.0-scope.md), and Phase C follow-ups.
 
 All completed items (audit-remediation sprints 1–6, Phase C plugin slices 1–3, and Waves 1–14) have been closed and verified. Historical records are preserved in git history (`git log --grep="Wave"`).
 
-## Current focus (2026-09-05)
+## Current focus (2026-09-06)
 
-Driving work in flight, in priority order. Each item links to the
-remediation plan section that defines the scope, acceptance criteria,
-and effort.
-
-- **Phase 0 — Stop the bleeding** ✅ (closed 2026-09-05). Empty
-  `REDIS_PASSWORD` in `.env.example`; `ALLOW_SSRF_LOCAL` defaulted to
-  `false` in both `.env.example` and `compose.yaml`.
-- **Phase 1 — Truth in documentation** ✅ (closed 2026-09-05). Reconciled
-  `SECURITY.md`, this file, `README.md` (moved from `docs/README.md`),
-  `client/README.md`, `Makefile`, `test.yml`, `nightly.yml`,
-  `AGENTS.md`, and `ARCHITECTURE.md` against shipped code.
-- **Phase 2 — First-run affordances** ✅ (closed 2026-09-05). Added
-  `TROUBLESHOOTING.md`, `CONTRIBUTING.md`, issue templates, PR template,
-  SQLite default state backend, and `make doctor` remediation hints.
-- **Phase 3 — Quick-win code cleanups** ✅ (closed 2026-09-05). Addressed
-  high-leverage code debt: OCR service decomposed into focused submodules,
-  `JobStatusResponse.started_at` persisted, `InMemoryJobQueue` exception
-  swallowing fixed, `load_dotenv()` removed from `create_app()`, and
-  `HybridEngine` failure state resynced.
-- **Phase 4 — End-user install path** ✅ (closed 2026-09-05, with bundle
-  deferred to v0.3+). **v0.2.0 ships the source install as the supported
-  end-user path** (12–16 steps, now covered by Phase 2's
-  `TROUBLESHOOTING.md` and `make doctor` hints). The PyInstaller bundle
-  per [RFC 001 Option A](rfcs/2026-09-end-user-install.md) is **deferred to
-  v0.3+** because PyInstaller's static analyzer refuses to bundle `anyio`
-  (14 build attempts documented in
-  [`docs/deployment/windows-bundle.md`](deployment/windows-bundle.md)
-  §"Known build issue"). Bundle infrastructure kept in tree
-  (`omniscribe_server.spec`, `scripts/build_windows.py`,
-  `scripts/run_server.py`, `hooks/hook-anyio.py`); the smoke test gate
-  (`/api/health -> 200`) is unchanged when the build is unblocked. The
-  full v0.2.0 release report is at
-  [docs/RELEASE-NOTES-v0.2.0.md](RELEASE-NOTES-v0.2.0.md).
-- **Phase 5 — Test hardening** ✅ (closed 2026-09-05). Added 5 property-based
-  fuzzing test suites with `hypothesis` (`json_parse`, `prompt_safety`, `page_range`,
-  `whitespace`, `filters`), direct unit & property tests for `core/translate/workflow.py`,
-  and canonical PDF fixture re-homing in `tests/fixtures/pdfs/`.
-- **Phase 6 — Long-tail** ✅ (closed 2026-09-05, updated 2026-09-06). Cleaned deprecated CORS aliases (D10),
-  hoisted `_DEFAULTS` in processor (D12), single-pass raw_decode `extract_json` (D11),
-  hardened token masking (S8), exact-key sensitive logging redaction (S10),
-  resolved Q8 (under-tested modules wave: 178+ tests covering transcription engines, prompted grounded OCR, glossary HTTP fetch/SSRF, library routes, and encoding/XLIFF),
-  resolved Q10 (merged `tests/ops/` into `tests/scripts/`),
-  closed P13 as N/A (policy documented in `docs/SECURITY.md`: sensitive reports request
-  fingerprint out-of-band; no static PGP key published to avoid unmanaged key rot),
-  enabled D9 (mypy strict for `omniscribe.plugins.*` + `omniscribe.harness.*`:
-  14 errors → 0 via 4 return-type annotations and 9 `# type: ignore[no-untyped-call]`
-  for pymupdf), and added the Q9 calibration script determinism test
-  (`test_seed_actually_controls_the_platt_split`, asserting the `--seed` flag
-  actually drives the Platt train/test split RNG and is byte-for-byte deterministic
-  for repeated seeds).
-- **v0.3.0 (Phase 7) — Bundle retry + U12 + long-tail** 🟡
-  (in flight, started 2026-09-06; per
-  [RFC 002](rfcs/2026-09-v0.3.0-scope.md)):
-  - **Sprint 1 — Bundle Option (a) probe** ✅ (closed 2026-09-06).
-    The anyio bundling bug was a local spec misclassification
-    (`"anyio"` in `EXCLUDES` fighting `collect_submodules("anyio")`),
-    not an upstream PyInstaller bug. The minimal reproducer at
-    `repro/minimal_anyio.spec` + `repro/run_minimal.py` +
-    `repro/smoke.py` proves PyInstaller 6.22.2 + anyio 3.7.1
-    bundle correctly in 30 lines of spec. The full bundle
-    (307 MB `omniscribe-server.exe`) now boots, serves
-    `/api/health -> 200`, `/api/jobs -> 200 []`, and
-    `/openapi.json -> 200` (45 KB) on a Windows 11 dev box.
-    See [Sprint 1 findings](rfcs/2026-09-bundle-sprint-1-findings.md)
-    for the full root-cause analysis and fix history.
-  - **Sprint 2 — v0.3.0 release prep** (next): Sprint 1
-    succeeded, so Sprint 2 collapses from "ship Option A or
-    fall back to Option (c)" to "ship Option A as written +
-    prep the v0.3.0 release." Build the bundle on a fresh
-    clone, write the v0.3.0 release notes, update CHANGELOG,
-    cut the tag, attach the binary to the GitHub release.
-  - **Sprint 3 — U12 "try with sample PDF"** (Option b,
-    FastAPI `/api/sample-pdf/{name}` route + Flutter Workstation
-    "Try sample PDF" button). Backend ~2 hours; Flutter ~2 hours.
-  - **Sprint 4 — Buffer / spillover**: pick up Redis state
-    backend (only if Profile 4 in flight), Q11 chaos test
-    first slice, or additional mypy strict areas, per user
-    direction.
+- **v0.3.0 shipped** (2026-09-06, `6f43d30`): the 307 MB single-binary
+  Windows bundle boots and serves `/api/health -> 200`; the release is
+  tagged and the changelog updated. RFC 002 Sprints 1–2 are complete.
+- **Next up (per RFC 002):** Sprint 3 — U12 "try with sample PDF"
+  (FastAPI `/api/sample-pdf/{name}` + Flutter Workstation button).
+- **Finetunement remediation wave (2026-09-06):** four-domain polish
+  audit (core / harness+plugins / Flutter client / repo hygiene) executed
+  in one pass — SQLite `started_at` persistence, upload-cap fallback,
+  SSE sequence cursors, lazy repair-page decode, plugin `PluginError` /
+  `TrimmedModel` dedup, dead config knobs, Flutter UX fixes, and the
+  §7 status-map prune below.
 
 ---
 
-## 1. Pedantic Review — Open Medium-Priority Findings
+## 1. Pedantic Review — Medium-Priority Findings (all resolved)
 
 *All items in this section have been resolved:*
 - **2.6** `plugins/ocr/service.py` — Prune is the single source of truth for bounding per-job maps (closed in Wave 9).
@@ -211,105 +144,61 @@ shipped. Each entry points at the unblocker.
 
 ## 7. Low-Priority Naming, API & Style Smells
 
-### §4 Naming & API Smells
-- **4.1** `cors_origins_raw: str | None` + property — prefer typed list field.
-- **4.2** `_disable_negative_rate_limit` name is misleading; rename/document.
-- **4.3** `_inherit_llm_model_for_grounded` compares magic model string; use sentinel.
-- **4.4** Retry loop's `last_exc` invariant is implicit, not asserted.
-- **4.5** `TrOCREngine` TYPE_CHECKING-only but wired in production; document requirement.
-- **4.7** `WhitespaceRecallOptions.from_env` vs `TextLayerRecallOptions.from_env`; shared base.
-- **4.8** `_RepairEngineHost` Protocol documents a contract the file then breaks.
-- **4.9** `input_path: str = ""` default is dead code.
-- **4.10** `state_backend.py:200-206` circular-import workaround is fragile; split types module.
-- **4.11** Four names for two concepts across `jobs.py`/`state_backend.py` (`artifact_id` vs `result_artifact_id`).
-- **4.12** `_PYTHON_BUG_EXCEPTION_TYPES` treats `ValueError` as non-retryable; conflates bug vs garbage.
-- **4.13** `CircuitOpenError.retry_after` never surfaced as a `Retry-After` header.
-- **4.14** `load_dotenv()` at module level in `processor.py` and `server.py`; move to entry point.
-- **4.15** `cli/migrate_lexicon.py` ships despite CLI deprecation note; check `[project.scripts]`.
-- **4.16** `_MODELS_WITHOUT_SYSTEM_ROLE` substring matching catches fine-tunes; document intent.
-- **4.17** Inner `import base64` in TrOCR arbitration belongs at top.
-- **4.18** SSE loop's clear-on-wake `asyncio.Event` flaps — dropped/interleaved frames; use a deque.
-- **4.19** `max_buffered_jobs` caps three structures with two eviction functions; fold.
-- **4.20** `update_config` mutates shared `RuntimeSettings` mid-flight; document "applies to subsequent requests".
-- **4.21** `_DENSE_MODE_ALIASES` on/off→always/never mapping is hidden; document in contract.
-- **4.23** `_QUEUE_STATUS_TO_HTTP` should live next to the schema.
-- **4.25** `PRAGMA journal_mode=WAL` set but never verified.
-- **4.26** Embedder docstrings reference a 470-LOC file that no longer exists; trim.
-- **4.27** `env_int` logs a warning on bad input; other helpers don't; align.
-- **4.28** `env_list_csv` vs `env_str` empty-value semantics differ.
-- **4.29** `extract_json` walks every `{`/`[` — O(n²) on big responses; use single `raw_decode`.
-- **4.30** `whitespace.py` constants block carries 15 lines of audit history; move to docs.
-- **4.31** Loader `row = replace(row, ...)` rebind shadows traceback context.
-- **4.32** Env-override typos surface as opaque Pydantic ValidationErrors; coerce via schema earlier.
-- **4.34** Text_layer `close()` not re-entrant (fitz is idempotent so safe).
-- **4.36** `_overlaps_existing` is O(n²) per page on pathological box counts.
-- **4.37** HybridEngine re-injects deps into long-lived stages every `execute()`; constructor args decorative.
-- **4.38** `_reset_run_state` resets only two of the stage states; document or full-reset.
-- **4.39** `_decoded_cache` integer keys could collide across runs; use `(run_id, page)` keys.
-- **4.40** `trust_images_dict` aliases `images_dict`; a future mutation leaks across.
-- **4.41** `_DEFAULTS` dict rebuilt per attribute access; hoist.
-- **4.42** Exponential backoff cumulative sleep budget undocumented.
-- **4.43** Context-length error message is LM Studio-specific; generalize or branch.
-- **4.45** `Context.__init__` pre-allocates nine collections (negligible cost, signal only).
+*Status verified against source on 2026-09-06 by the finetunement audit
+(two agents re-read every item's target file). Most entries were closed by
+the Phase 6 long-tail batches and Waves 8-14 but were never pruned from
+this list. What follows is what is actually still open.*
 
-### §6 Style Nits
-- **6.3** `artifact_cleanup_interval_s` vs `cleanup_interval_seconds` naming/units drift.
-- **6.4** HybridEngine's 9-kwarg `__init__` is a permanent API surface.
-- **6.6** `_KERNEL_W_RANGE` tuples; named MIN/MAX constants would read better.
-- **6.7** Whitespace candidates carry an unused score element; misleading annotation.
-- **6.8** Triple-`or` candidate filter; three named predicates would scan better.
-- **6.9** `_resolve_unicode_chain` is 70 lines; split.
-- **6.13** `hybrid_repair.py` `concurrency` param is a documented no-op.
-- **6.14** Default-arg closure binding; prefer `functools.partial`.
-- **6.15** SQLite path-traversal check rejects deliberate sibling-dir layouts.
-- **6.16** `range(self.max_retries + 1)` cryptic; make 1-based.
-- **6.17** Post-loop error translation duplicates `is_transient_error` logic.
-- **6.18** `_parse_env_line` is 50 lines of bespoke parsing; document or use stdlib.
-- **6.19** `update_dotenv` round-trip normalizes CRLF to LF.
-- **6.20** `update_dotenv` unconditionally sets every key into `os.environ`.
-- **6.26** Memory backend caps blobs at 256 MB; sqlite has no cap; clarify intent.
-- **6.30** `new_doc.save` exposes no `garbage`/compression kwargs.
-- **6.31** Embedder `page_nums` branching has a dead conditional; unify.
-- **6.33** `_OcrPayload` IR lives in the HTTP layer; pipeline can't enqueue without it.
-- **6.34** Grounded engine duplicates hybrid's execution path; lockstep-change risk.
-- **6.35** `AsyncSubmitResponse.status` is `str`, should use the job-status Literal.
-- **6.38** `_split_processors` only handles comma-joined form fields; repeated keys drop.
-- **6.39** `preprocessing_enabled` property couples HTTP naming to behavior; move to bridge.
-- **6.40** SQLite `_job_from_row` uses positional access; use `sqlite3.Row`.
-- **6.42** `cursor.rowcount if cursor.rowcount >= 0 else 0` repeated 4×; extract.
-- **6.43** `candidates_dropped` counts per candidate, log reads per page; document.
-- **6.45** `trust_images_dict` param on `_finalize` is dead; delete.
-- **6.46** `select_dense_pages` union `str | DenseMode` is historical; narrow.
-- **6.47** `_apply_adaptive_threshold` via `to_thread` — function not in file; locate/document.
-- **6.48** Tesseract dual-engine contract undocumented.
-- **6.49** `self_correction` second VLM call path review notes.
-- **6.50** F1.9 comment block is 23 lines; trim to a one-liner + pointer.
-- **6.51** `import statistics` mid-module.
-- **6.52** Every whitespace constant carries a multi-line audit comment; move history to docs.
-- **6.53** Substring matching over a frozenset; list + early exit.
-- **6.55** Two `PROMPT_VERSION` constants share a value by coincidence; hazard.
-- **6.56** Chat client re-encodes JPEG to PNG (+30% payload); use `multi_format_client`.
-- **6.57** Backoff formula note (informational).
-- **6.63/6.64/6.65/6.66** Hybrid engine re-injection wrappers do nothing; call stages directly.
-- **6.68** `_build_document_result` helper visibility note.
-- **6.69** `completed_box` mutable-list pattern; `nonlocal` would be cleaner.
-- **6.70** Repair loop vs OCR loop not coordinated; possible double re-OCR.
-- **6.71** Frozen dataclasses containing unhashable fields break the hashable promise.
-- **6.74** `start`/`shutdown` idempotency (verified OK; informational).
-- **6.75** Queue worker swallows runner exceptions; document trade-off.
-- **6.76** `_mark_cancelled` discard semantics (OK; informational).
-- **6.77** Cancelling an already-terminal job suppresses `JobCancelled`; UI may spin.
-- **6.78** Progress `frame_cap` is soft when done-callbacks never fire.
-- **6.79** `broadcast` returns submissions, not successes; document.
-- **6.81** Extensionless upload filenames fall back to `.pdf`; misleading.
-- **6.82** Defensive `assert self._progress is not None` after outer check.
-- **6.83** Sync path gets no cancel check (`job_id=""` short-circuit).
-- **6.84/6.85** `started_at` always None; populate or document.
-- **6.86** Masked `api_key == "******"` skip contract is subtle; document.
-- **6.87** `update_config` writes even unchanged values; use `model_copy(update=...)`.
-- **6.88** `OCRRequest` is 18 fields / 4 validators; consider nested config.
-- **6.89** `_coerce_bool` field list duplicates declarations.
-- **6.91** Recall `from_env` enable-default semantics (OK; informational).
-- **6.93** Text_layer `close` is sync, forcing `to_thread`; document.
-- **6.94** Text-layer line grouping order note (final re-sort makes it OK).
-- **6.95–6.101** Loader parse/merge/validate behaviors (verified OK; informational).\n
+### Still open — naming & API smells
+
+- **4.1** `cors_origins_raw` property is referenced nowhere in src (the deprecated input field was removed in D10; the read-only property is test-pinned). Delete in a future breaking pass.
+- **4.7** `WhitespaceRecallOptions` / `TextLayerRecallOptions.from_env` twins — extract a shared base (`core/recall/whitespace.py:100`, `text_layer.py:63`).
+- **4.9** `input_path: str = ""` dead default in `_detect_layout` (`hybrid.py:347`); sole caller always passes it.
+- **4.11** Four names for two concepts: `result_artifact_id` (`state_backend_types.py:61`) vs `artifact_id` (`jobs.py:66`) vs `text_artifact_id` / `translated_artifact_id` (plugin layers).
+- **4.18** SSE loop's clear-on-wake `asyncio.Event` can flap (lost wake, not lost data — the seq-stamped deque is authoritative since 2026-09-06).
+- **4.19** `max_buffered_jobs` caps three structures with two eviction loops (`ocr/service.py` prune paths); fold.
+- **4.20** `update_config` mutates shared `RuntimeSettings` mid-flight; document "applies to subsequent requests".
+- **4.23** `_QUEUE_STATUS_TO_HTTP` should live next to the response schema.
+- **4.27** `env_int` logs a warning on bad input; `env_bool` / `env_list_csv` silently default (`utils/env.py`).
+- **4.28** `env_list_csv` vs `env_str` empty-value semantics differ (`""` → `[]` vs `None`).
+- **4.31** Loader `row = replace(row, ...)` rebind shadows traceback context (`harness/loader.py:145,199`).
+- **4.36** Per-candidate scan over existing boxes is O(n·m) on pathological box counts — inherent to the filter; the 2026-09-06 fused `geometry.is_duplicate` halved the constant.
+- **4.42** Exponential backoff cumulative sleep budget undocumented (`core/ocr/chat_client.py`).
+- **4.43** Context-length error message is LM Studio-specific on a generic client.
+### Still open — style nits
+
+- **6.4** `HybridEngine.__init__` is now a 10-kwarg permanent API surface.
+- **6.6** `_KERNEL_W_RANGE` / `_KERNEL_H_RANGE` tuples; named MIN/MAX constants would read better.
+- **6.8** Triple-`or` candidate filter (`whitespace.py`); three named predicates would scan better.
+- **6.14** Default-arg closure binding — fixed in `hybrid_repair.py` (2026-09-06, lazy `get_page_image`); `grounded.py` arbitration still uses the pattern.
+- **6.16** 0-based `range(max_retries + 1)` reads cryptic (`chat_client.py`, `grounded/prompted.py`).
+- **6.17** Post-loop error translation duplicates `is_transient_error` context-length terms (`resilience.py` vs `chat_client.py`).
+- **6.26** Memory backend caps blobs at 256 MB; sqlite backend is uncapped — clarify intent.
+- **6.38** `_split_processors` only handles comma-joined form fields; repeated keys drop (`ocr/schemas.py`).
+- **6.39** `preprocessing_enabled` property couples HTTP naming to behavior (`ocr/schemas.py`).
+- **6.46** `_select_dense_pages` stage keeps a `str | DenseMode` union and coercion branch; the engine already enforces `DenseMode`.
+- **6.50** 24-line rationale comment blocks in `processor.py` (F1.9); trim to pointers.
+- **6.53** Substring scan over a frozenset buys nothing (`core/ocr/prompts.py:85`).
+- **6.55** Three `PROMPT_VERSION` constants share `"2026-08-15.v1"` by coincidence (`prompts.py`, `grounded/prompted.py`, `translate/nodes.py`) — version-bump hazard.
+- **6.69** `completed_box` list-counter in `hybrid_repair.py` vs `nonlocal` in `grounded.py` — two patterns for one concern.
+- **6.78** Progress `frame_cap` is soft when done-callbacks never fire (`progress.py`).
+- **6.79** `broadcast` returns submission count, not delivery successes; docstring says "fan-out count" (`progress.py`).
+- **6.81** Extensionless upload filenames fall back to `.pdf` (`content_sniff.py`).
+- **6.86** Masked `api_key == "******"` skip contract is subtle; document it.
+- **6.88** `OCRRequest` is 19 fields / 4 validators; consider a nested config object.
+- **6.89** `_coerce_bool` field list duplicates the model's field declarations.
+- **6.63-6.66** Hybrid re-injection wrappers are pass-throughs **kept deliberately**: tests drive the engine through these seams (~45 call sites), so inlining is churn without behavior change. Revisit only with a test-migration pass.
+
+### Resolved (verified 2026-09-06, pruned from the old list)
+
+4.2, 4.3, 4.4, 4.5, 4.8, 4.10, 4.12, 4.13, 4.14, 4.16, 4.17, 4.21, 4.25, 4.26,
+4.29, 4.30, 4.32, 4.37, 4.38, 4.39, 4.40, 4.41, 6.3 (dead field deleted),
+6.7, 6.9, 6.13, 6.30, 6.31, 6.34, 6.35, 6.40, 6.42, 6.45, 6.47, 6.48, 6.49
+(accept-always documented), 6.51, 6.52, 6.56, 6.68, 6.70, 6.74, 6.75, 6.76,
+6.77, 6.82, 6.83, 6.87.
+
+### Not applicable
+
+- **4.15** `omniscribe-migrate-lexicon` ships deliberately (AGENTS.md documents the exception).
+- **6.71** No frozen dataclass carries unhashable fields; `GroundedBlock` is deliberately unfrozen.
+- **6.94** The final re-sort makes text-layer grouping order harmless.

@@ -61,7 +61,10 @@ def detect_encoding(data: bytes) -> tuple[str, str]:
                 except (LookupError, UnicodeDecodeError):
                     pass
                 else:
-                    return candidate_norm, f"Detected source encoding as {candidate_norm}."
+                    return (
+                        candidate_norm,
+                        f"Detected source encoding as {candidate_norm}.",
+                    )
 
     try:
         data.decode("windows-1252")

@@ -29,9 +29,7 @@ def _make_xliff_12(units: list[tuple[str | None, str | None]]) -> bytes:
         '<?xml version="1.0" encoding="utf-8"?>\n'
         '<xliff version="1.2" xmlns="urn:oasis:names:tc:xliff:document:1.2">\n'
         '    <file original="test.txt" source-language="en" target-language="fr" datatype="plaintext">\n'
-        "        <body>\n"
-        + "\n".join(body_parts)
-        + "\n        </body>\n"
+        "        <body>\n" + "\n".join(body_parts) + "\n        </body>\n"
         "    </file>\n"
         "</xliff>"
     )
@@ -42,7 +40,7 @@ def _make_xliff_20(units: list[tuple[str | None, str | None]]) -> bytes:
     """Build a minimal XLIFF 2.0 byte document from (source, target) tuples."""
     unit_parts: list[str] = []
     for idx, (src, tgt) in enumerate(units, start=1):
-        u_parts = [f'        <unit id="u_{idx}">', '            <segment>']
+        u_parts = [f'        <unit id="u_{idx}">', "            <segment>"]
         if src is not None:
             u_parts.append(f"                <source>{src}</source>")
         if tgt is not None:
@@ -53,9 +51,7 @@ def _make_xliff_20(units: list[tuple[str | None, str | None]]) -> bytes:
     xml_text = (
         '<?xml version="1.0" encoding="utf-8"?>\n'
         '<xliff version="2.0" xmlns="urn:oasis:names:tc:xliff:document:2.0" srcLang="en" trgLang="fr">\n'
-        '    <file id="f1">\n'
-        + "\n".join(unit_parts)
-        + "\n    </file>\n"
+        '    <file id="f1">\n' + "\n".join(unit_parts) + "\n    </file>\n"
         "</xliff>"
     )
     return xml_text.encode("utf-8")
@@ -202,7 +198,11 @@ class TestFallbackEncoding:
 
     def test_chardet_low_confidence_falls_back_to_windows_1252(self) -> None:
         raw = b"Article \x96 Section"  # 0x96 is en-dash in Windows-1252
-        mock_chardet = type("ChardetMock", (), {"detect": lambda data: {"encoding": "ASCII", "confidence": 0.2}})
+        mock_chardet = type(
+            "ChardetMock",
+            (),
+            {"detect": lambda data: {"encoding": "ASCII", "confidence": 0.2}},
+        )
         with patch.dict("sys.modules", {"chardet": mock_chardet}):
             enc, _ = detect_encoding(raw)
             assert enc == "windows-1252"
@@ -438,19 +438,25 @@ class TestCorruptedXMLAndSecurity:
             b'<!DOCTYPE xliff [<!ENTITY xxe SYSTEM "file:///c:/windows/win.ini">]>\n'
             b"<xliff><trans-unit><source>&xxe;</source><target>Exploit</target></trans-unit></xliff>"
         )
-        with pytest.raises(ValueError, match="DTD and external entities are not allowed in glossary XML"):
+        with pytest.raises(
+            ValueError,
+            match="DTD and external entities are not allowed in glossary XML",
+        ):
             parse_xliff(raw)
 
     def test_forbidden_entity_expansion_bomb_raises_value_error(self) -> None:
         raw = (
             b'<?xml version="1.0"?>\n'
-            b'<!DOCTYPE lolz [\n'
+            b"<!DOCTYPE lolz [\n"
             b'<!ENTITY lol "lol">\n'
             b'<!ENTITY lol2 "&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;">\n'
             b"]>\n"
             b"<xliff><trans-unit><source>&lol2;</source><target>Exploit</target></trans-unit></xliff>"
         )
-        with pytest.raises(ValueError, match="DTD and external entities are not allowed in glossary XML"):
+        with pytest.raises(
+            ValueError,
+            match="DTD and external entities are not allowed in glossary XML",
+        ):
             parse_xliff(raw)
 
     def test_forbidden_bare_doctype_raises_value_error(self) -> None:
@@ -459,7 +465,10 @@ class TestCorruptedXMLAndSecurity:
             b"<!DOCTYPE xliff>\n"
             b"<xliff><trans-unit><source>A</source><target>B</target></trans-unit></xliff>"
         )
-        with pytest.raises(ValueError, match="DTD and external entities are not allowed in glossary XML"):
+        with pytest.raises(
+            ValueError,
+            match="DTD and external entities are not allowed in glossary XML",
+        ):
             parse_xliff(raw)
 
 

@@ -12,15 +12,10 @@ abstract final class ApiConstants {
 
   // Health Endpoints
   static const String apiHealth = '/api/health';
-  static const String ready = '/ready';
-  static const String readyz = '/readyz';
 
   // Config Endpoints
   static const String config = '/api/config';
-  static const String configOcr = '/api/config/ocr';
-  static const String configTranslation = '/api/config/translation';
   static const String configTranscription = '/api/config/transcription';
-  static const String models = '/api/models';
 
   // OCR Endpoints
   static const String processSync = '/api/process';
@@ -40,8 +35,6 @@ abstract final class ApiConstants {
   static String cancelProgress(String channelId) =>
       '/api/progress/cancel/$channelId';
   static String wsProgress(String channelId) => '/ws/$channelId';
-  static String wsProgressAlias(String channelId) =>
-      '/api/progress/ws/$channelId';
 
   // Provider Endpoints
   static const String providers = '/api/providers';
@@ -54,7 +47,6 @@ abstract final class ApiConstants {
 
   // Artifact & Text Endpoints
   static String textArtifact(String artifactId) => '/api/text/$artifactId';
-  static String exportArtifact(String artifactId) => '/api/export/$artifactId';
 
   // Feature Endpoints - Translation
   static const String translate = '/api/translate';

@@ -50,6 +50,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     input_path TEXT,
     created_at REAL NOT NULL,
     updated_at REAL NOT NULL,
+    started_at REAL,
     error TEXT
 );
 CREATE TABLE IF NOT EXISTS progress_channels (
@@ -81,11 +82,14 @@ def _job_from_row(row: Any) -> JobRecord:
         request_meta=req_meta,
         result_artifact_id=row["result_artifact_id"],
         result_artifact_token=row["result_artifact_token"],
-        # ``input_path`` was added in a later schema bump; tolerate
-        # older callers / synthetic rows that don't include it.
-        input_path=row["input_path"] if "input_path" in row else None,  # noqa: SIM401
+        # Tolerate rows (synthetic dicts, legacy tables) that lack the
+        # later-added columns. Membership must go through ``row.keys()``:
+        # ``sqlite3.Row`` implements ``in`` over its *values*, not column
+        # names, so ``"col" in row`` is always False for real rows.
+        input_path=row["input_path"] if "input_path" in row.keys() else None,  # noqa: SIM118
         created_at=row["created_at"],
         updated_at=row["updated_at"],
+        started_at=row["started_at"] if "started_at" in row.keys() else None,  # noqa: SIM118
         error=row["error"],
     )
 
@@ -142,6 +146,12 @@ class SQLiteStateBackend:
         if res and str(res[0]).lower() != "wal":
             _LOGGER.warning("SQLite journal_mode is '%s', expected 'wal'", res[0])
         conn.executescript(_SCHEMA)
+        # ``started_at`` was added after the first schema shipped; legacy
+        # databases created by ``CREATE TABLE IF NOT EXISTS`` above keep
+        # their original columns, so migrate them in place.
+        job_columns = {row[1] for row in conn.execute("PRAGMA table_info(jobs)")}
+        if "started_at" not in job_columns:
+            conn.execute("ALTER TABLE jobs ADD COLUMN started_at REAL")
         conn.commit()
         self._conn = conn
 
@@ -270,8 +280,9 @@ class SQLiteStateBackend:
                 conn.execute(
                     "INSERT OR REPLACE INTO jobs "
                     "(job_id, status, request_meta, result_artifact_id, "
-                    "result_artifact_token, input_path, created_at, updated_at, error) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "result_artifact_token, input_path, created_at, updated_at, "
+                    "started_at, error) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (
                         record.job_id,
                         record.status,
@@ -281,6 +292,7 @@ class SQLiteStateBackend:
                         record.input_path,
                         record.created_at,
                         record.updated_at,
+                        record.started_at,
                         record.error,
                     ),
                 )
@@ -296,7 +308,8 @@ class SQLiteStateBackend:
                     self._require_conn()
                     .execute(
                         "SELECT job_id, status, request_meta, result_artifact_id, "
-                        "result_artifact_token, input_path, created_at, updated_at, error "
+                        "result_artifact_token, input_path, created_at, updated_at, "
+                        "started_at, error "
                         "FROM jobs WHERE job_id = ?",
                         (job_id,),
                     )
@@ -314,7 +327,8 @@ class SQLiteStateBackend:
                     self._require_conn()
                     .execute(
                         "SELECT job_id, status, request_meta, result_artifact_id, "
-                        "result_artifact_token, input_path, created_at, updated_at, error "
+                        "result_artifact_token, input_path, created_at, updated_at, "
+                        "started_at, error "
                         "FROM jobs ORDER BY created_at DESC, job_id DESC "
                         "LIMIT ? OFFSET ?",
                         (limit, offset),

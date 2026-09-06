@@ -27,14 +27,13 @@ from omniscribe.core.document import BBox
 from omniscribe.core.recall import (
     MAX_RECALL_BOXES_PER_PAGE,
     STRADDLE_MIN_OVERLAP,
+    geometry,
 )
 from omniscribe.utils.env import DISABLE_STRINGS, env_str
 
 logger = logging.getLogger(__name__)
 
 _ENV_TEXT_LAYER_RECALL = "OMNISCRIBE_TEXT_LAYER_RECALL"
-# Same falsy-spelling set as the whitespace booster (eng S2 / audit 4.6).
-_DISABLE_VALUES = DISABLE_STRINGS
 
 # Pages with fewer extracted words than this are treated as having no
 # usable text layer (scans, image-only pages, corrupt overlays) and are
@@ -210,8 +209,13 @@ class PdfTextLayerRecall:
         kept = [
             box
             for box in candidates
-            if not _overlaps_existing(box, existing_boxes)
-            and not _straddles_existing(box, existing_boxes)
+            if not geometry.is_duplicate(
+                box,
+                existing_boxes,
+                max_containment=_MAX_CONTAINMENT,
+                max_iou=_MAX_IOU,
+                straddle_min_overlap=_STRADDLE_MIN_OVERLAP,
+            )
         ]
         if len(kept) > _MAX_TEXT_LAYER_BOXES_PER_PAGE:
             kept = kept[:_MAX_TEXT_LAYER_BOXES_PER_PAGE]
@@ -222,44 +226,19 @@ class PdfTextLayerRecall:
 
 
 def _overlaps_existing(candidate: BBox, existing_boxes: list[BBox]) -> bool:
-    """True when the candidate is already explained by a merged box.
-
-    M-1 audit fix: short-circuit as soon as a single existing box
-    meets the containment / IoU threshold. The full loop still runs
-    in the common case where no existing box overlaps; the change
-    is a microoptimisation for the corner case where the FIRST box
-    is the only one that explains the candidate. The previous code
-    always walked the full list, which is fine for small pages but
-    wasteful at the 100+-existing-boxes scale.
-    """
-    cx0, cy0, cx1, cy1 = candidate
-    c_area = max(1e-9, (cx1 - cx0) * (cy1 - cy0))
-    for bx0, by0, bx1, by1 in existing_boxes:
-        ix0, iy0 = max(cx0, bx0), max(cy0, by0)
-        ix1, iy1 = min(cx1, bx1), min(cy1, by1)
-        if ix1 <= ix0 or iy1 <= iy0:
-            continue
-        inter = (ix1 - ix0) * (iy1 - iy0)
-        if inter / c_area >= _MAX_CONTAINMENT:
-            return True
-        b_area = max(1e-9, (bx1 - bx0) * (by1 - by0))
-        if inter / (c_area + b_area - inter) >= _MAX_IOU:
-            return True
-    return False
+    """True when the candidate is already explained by a merged box."""
+    return geometry.overlaps(
+        candidate,
+        existing_boxes,
+        max_containment=_MAX_CONTAINMENT,
+        max_iou=_MAX_IOU,
+    )
 
 
 def _straddles_existing(candidate: BBox, existing_boxes: list[BBox]) -> bool:
     """True when the candidate spans >= 2 merged boxes (gutter/stacked lines)."""
-    cx0, cy0, cx1, cy1 = candidate
-    c_area = max(1e-9, (cx1 - cx0) * (cy1 - cy0))
-    overlapped = 0
-    for bx0, by0, bx1, by1 in existing_boxes:
-        ix0, iy0 = max(cx0, bx0), max(cy0, by0)
-        ix1, iy1 = min(cx1, bx1), min(cy1, by1)
-        if ix1 <= ix0 or iy1 <= iy0:
-            continue
-        if (ix1 - ix0) * (iy1 - iy0) / c_area >= _STRADDLE_MIN_OVERLAP:
-            overlapped += 1
-            if overlapped >= 2:
-                return True
-    return False
+    return geometry.straddles(
+        candidate,
+        existing_boxes,
+        straddle_min_overlap=_STRADDLE_MIN_OVERLAP,
+    )

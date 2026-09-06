@@ -11,6 +11,7 @@ import 'package:omniscribe_client/presentation/common/app_card.dart';
 import 'package:omniscribe_client/presentation/common/app_input.dart';
 import 'package:omniscribe_client/presentation/common/app_modal.dart';
 import 'package:omniscribe_client/presentation/common/app_select.dart';
+import 'package:omniscribe_client/presentation/common/error_banner.dart';
 import 'package:omniscribe_client/presentation/common/section_header.dart';
 
 class GlossaryScreen extends ConsumerStatefulWidget {
@@ -21,6 +22,8 @@ class GlossaryScreen extends ConsumerStatefulWidget {
 }
 
 class _GlossaryScreenState extends ConsumerState<GlossaryScreen> {
+  final _importFormKey = GlobalKey<_GlossaryImportFormState>();
+
   @override
   void initState() {
     super.initState();
@@ -32,11 +35,6 @@ class _GlossaryScreenState extends ConsumerState<GlossaryScreen> {
   }
 
   void _showImportModal() {
-    final nameController = TextEditingController();
-    final textController = TextEditingController();
-    final urlController = TextEditingController();
-    String formatValue = 'json_pairs';
-
     AppModal.show<void>(
       context: context,
       title: 'Import Terminology Glossary',
@@ -51,95 +49,10 @@ class _GlossaryScreenState extends ConsumerState<GlossaryScreen> {
         AppButton(
           text: 'Import Glossary',
           variant: AppButtonVariant.primary,
-          onPressed: () async {
-            final notifier = ref.read(glossaryProvider.notifier);
-            final fmt = GlossaryFormat.fromString(formatValue);
-            final urlText = urlController.text.trim();
-            final nameText = nameController.text.trim();
-            final contentText = textController.text.trim();
-
-            if (urlText.isNotEmpty) {
-              await notifier.importGlossaryUrl(
-                url: urlText,
-                format: fmt,
-                name: nameText.isNotEmpty ? nameText : null,
-              );
-            } else {
-              await notifier.importGlossaryJson(
-                format: fmt,
-                name: nameText.isNotEmpty ? nameText : null,
-                text: contentText.isNotEmpty ? contentText : null,
-              );
-            }
-
-            if (mounted) {
-              Navigator.of(context).pop();
-            }
-          },
+          onPressed: () => unawaited(_importFormKey.currentState?.submit()),
         ),
       ],
-      content: StatefulBuilder(
-        builder: (modalContext, setModalState) {
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              AppInput(
-                controller: nameController,
-                label: 'Glossary Name',
-                placeholder: 'e.g. Financial Terms EN-ES',
-              ),
-              const SizedBox(height: 12),
-              AppSelect<String>(
-                label: 'Format',
-                value: formatValue,
-                items: const [
-                  AppSelectItem(
-                    value: 'json_pairs',
-                    label: 'JSON Pairs / Paired Text',
-                  ),
-                  AppSelectItem(
-                    value: 'csv',
-                    label: 'CSV (Comma Separated)',
-                  ),
-                  AppSelectItem(
-                    value: 'tsv',
-                    label: 'TSV (Tab Separated)',
-                  ),
-                  AppSelectItem(
-                    value: 'tbx',
-                    label: 'TBX Glossary File',
-                  ),
-                  AppSelectItem(
-                    value: 'xliff',
-                    label: 'XLIFF Translation File',
-                  ),
-                ],
-                onChanged: (val) {
-                  if (val != null) {
-                    setModalState(() => formatValue = val);
-                  }
-                },
-              ),
-              const SizedBox(height: 12),
-              AppInput(
-                controller: textController,
-                label: 'Inline Lexicon Content',
-                placeholder: 'source = target\nplaintiff = demandeur',
-                maxLines: 4,
-                monospace: true,
-              ),
-              const SizedBox(height: 12),
-              AppInput(
-                controller: urlController,
-                label: 'Or Import From URL',
-                placeholder: 'https://example.com/lexicon.json',
-                monospace: true,
-              ),
-            ],
-          );
-        },
-      ),
+      content: _GlossaryImportForm(key: _importFormKey),
     );
   }
 
@@ -626,6 +539,164 @@ class _GlossaryScreenState extends ConsumerState<GlossaryScreen> {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// Import form owned by a [ConsumerStatefulWidget] so the text controllers
+/// are disposed when the modal closes, and import failures surface inline
+/// instead of being swallowed.
+class _GlossaryImportForm extends ConsumerStatefulWidget {
+  const _GlossaryImportForm({super.key});
+
+  @override
+  ConsumerState<_GlossaryImportForm> createState() =>
+      _GlossaryImportFormState();
+}
+
+class _GlossaryImportFormState extends ConsumerState<_GlossaryImportForm> {
+  final _nameController = TextEditingController();
+  final _textController = TextEditingController();
+  final _urlController = TextEditingController();
+  String _formatValue = 'json_pairs';
+  bool _importing = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _textController.dispose();
+    _urlController.dispose();
+    super.dispose();
+  }
+
+  Future<void> submit() async {
+    final urlText = _urlController.text.trim();
+    final nameText = _nameController.text.trim();
+    final contentText = _textController.text.trim();
+
+    if (urlText.isEmpty && contentText.isEmpty) {
+      setState(() {
+        _error = 'Provide inline lexicon content or an import URL.';
+      });
+      return;
+    }
+
+    setState(() {
+      _importing = true;
+      _error = null;
+    });
+
+    final notifier = ref.read(glossaryProvider.notifier);
+    final fmt = GlossaryFormat.fromString(_formatValue);
+    try {
+      if (urlText.isNotEmpty) {
+        await notifier.importGlossaryUrl(
+          url: urlText,
+          format: fmt,
+          name: nameText.isNotEmpty ? nameText : null,
+        );
+      } else {
+        await notifier.importGlossaryJson(
+          format: fmt,
+          name: nameText.isNotEmpty ? nameText : null,
+          text: contentText,
+        );
+        // importGlossaryJson records failures on the glossary state instead
+        // of throwing; surface them and keep the modal open.
+        final glossaryError = ref.read(glossaryProvider).error;
+        if (glossaryError != null) {
+          if (mounted) {
+            setState(() {
+              _importing = false;
+              _error = glossaryError;
+            });
+          }
+          return;
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _importing = false;
+          _error = e.toString();
+        });
+      }
+      return;
+    }
+
+    if (mounted) {
+      Navigator.of(context).pop();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (_error != null) ...[
+          ErrorBanner(message: _error!),
+          const SizedBox(height: 12),
+        ],
+        AppInput(
+          controller: _nameController,
+          label: 'Glossary Name',
+          placeholder: 'e.g. Financial Terms EN-ES',
+        ),
+        const SizedBox(height: 12),
+        AppSelect<String>(
+          label: 'Format',
+          value: _formatValue,
+          items: const [
+            AppSelectItem(
+              value: 'json_pairs',
+              label: 'JSON Pairs / Paired Text',
+            ),
+            AppSelectItem(
+              value: 'csv',
+              label: 'CSV (Comma Separated)',
+            ),
+            AppSelectItem(
+              value: 'tsv',
+              label: 'TSV (Tab Separated)',
+            ),
+            AppSelectItem(
+              value: 'tbx',
+              label: 'TBX Glossary File',
+            ),
+            AppSelectItem(
+              value: 'xliff',
+              label: 'XLIFF Translation File',
+            ),
+          ],
+          onChanged: (val) {
+            if (val != null) {
+              setState(() => _formatValue = val);
+            }
+          },
+        ),
+        const SizedBox(height: 12),
+        AppInput(
+          controller: _textController,
+          label: 'Inline Lexicon Content',
+          placeholder: 'source = target\nplaintiff = demandeur',
+          maxLines: 4,
+          monospace: true,
+        ),
+        const SizedBox(height: 12),
+        AppInput(
+          controller: _urlController,
+          label: 'Or Import From URL',
+          placeholder: 'https://example.com/lexicon.json',
+          monospace: true,
+        ),
+        if (_importing) ...[
+          const SizedBox(height: 12),
+          const LinearProgressIndicator(minHeight: 2),
+        ],
+      ],
     );
   }
 }

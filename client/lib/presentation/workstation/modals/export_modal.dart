@@ -283,6 +283,7 @@ class _ExportModalState extends ConsumerState<ExportModal> {
                   ),
                 ),
                 IconButton(
+                  tooltip: 'Close',
                   icon: Icon(Icons.close_rounded, size: 20, color: colors.textMuted),
                   onPressed: () => Navigator.of(context).pop(),
                 ),

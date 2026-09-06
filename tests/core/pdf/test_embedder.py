@@ -77,6 +77,32 @@ def test_embed_structured_text_empty_page_nums_passes_garbage_and_deflate(
     assert save_calls[0].get("deflate") is True
 
 
+def test_embed_from_image_input_passes_garbage_and_deflate(tmp_path: Path) -> None:
+    """Section 6.30: the image-input sandwich path must compact like the
+    PDF branch (garbage=3, deflate=True)."""
+    from PIL import Image
+
+    image_path = tmp_path / "input.png"
+    Image.new("RGB", (64, 32), color=(255, 255, 255)).save(image_path)
+    output_pdf = tmp_path / "output_image.pdf"
+    pages_data = {0: [((0.1, 0.1, 0.9, 0.2), "Hello World")]}
+
+    original_save = fitz.Document.save
+    save_calls: list[dict[str, object]] = []
+
+    def tracking_save(self: fitz.Document, filename: str, **kwargs: object) -> None:
+        save_calls.append(kwargs)
+        original_save(self, filename, **kwargs)
+
+    with patch.object(fitz.Document, "save", side_effect=tracking_save, autospec=True):
+        embedder_helpers._embed_from_image_input(image_path, output_pdf, pages_data)
+
+    assert len(save_calls) == 1
+    assert save_calls[0].get("garbage") == 3
+    assert save_calls[0].get("deflate") is True
+    assert output_pdf.exists()
+
+
 def test_embed_structured_text_unified_page_nums_filter(
     sample_pdf: Path, tmp_path: Path
 ) -> None:

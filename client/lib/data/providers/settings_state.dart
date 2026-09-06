@@ -8,8 +8,6 @@ class SettingsState {
     required this.runtimeConfig,
     required this.activeProviderId,
     required this.ocrModels,
-    required this.translationModels,
-    required this.transcriptionModels,
     required this.serverBaseUrl,
     required this.useAsync,
     required this.error,
@@ -22,8 +20,6 @@ class SettingsState {
         runtimeConfig = null,
         activeProviderId = 'openai',
         ocrModels = const <String>[],
-        translationModels = const <String>[],
-        transcriptionModels = const <String>[],
         serverBaseUrl = 'http://127.0.0.1:8000',
         useAsync = false,
         error = null,
@@ -33,8 +29,6 @@ class SettingsState {
   final RuntimeConfig? runtimeConfig;
   final String activeProviderId;
   final List<String> ocrModels;
-  final List<String> translationModels;
-  final List<String> transcriptionModels;
   final String serverBaseUrl;
   final bool useAsync;
   final String? error;
@@ -45,8 +39,6 @@ class SettingsState {
     RuntimeConfig? runtimeConfig,
     String? activeProviderId,
     List<String>? ocrModels,
-    List<String>? translationModels,
-    List<String>? transcriptionModels,
     String? serverBaseUrl,
     bool? useAsync,
     String? error,
@@ -60,8 +52,6 @@ class SettingsState {
           clearRuntimeConfig ? null : (runtimeConfig ?? this.runtimeConfig),
       activeProviderId: activeProviderId ?? this.activeProviderId,
       ocrModels: ocrModels ?? this.ocrModels,
-      translationModels: translationModels ?? this.translationModels,
-      transcriptionModels: transcriptionModels ?? this.transcriptionModels,
       serverBaseUrl: serverBaseUrl ?? this.serverBaseUrl,
       useAsync: useAsync ?? this.useAsync,
       error: clearError ? null : (error ?? this.error),
@@ -77,8 +67,6 @@ class SettingsState {
         other.runtimeConfig == runtimeConfig &&
         other.activeProviderId == activeProviderId &&
         listEquals(other.ocrModels, ocrModels) &&
-        listEquals(other.translationModels, translationModels) &&
-        listEquals(other.transcriptionModels, transcriptionModels) &&
         other.serverBaseUrl == serverBaseUrl &&
         other.useAsync == useAsync &&
         other.error == error &&
@@ -91,8 +79,6 @@ class SettingsState {
         runtimeConfig,
         activeProviderId,
         Object.hashAll(ocrModels),
-        Object.hashAll(translationModels),
-        Object.hashAll(transcriptionModels),
         serverBaseUrl,
         useAsync,
         error,

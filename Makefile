@@ -48,27 +48,13 @@ lint: ## Run Ruff lint and format checks
 typecheck: ## Run mypy against production code
 	uv run mypy src
 
-# PYSEC-2026-311 / CVE-2026-45829 (CVSS 9.3): pre-auth code injection in the
-# chromadb *server* via `trust_remote_code` on create_collection, plus a
-# client-side variant that executes a poisoned collection's stored embedding
-# function. Affects chromadb 1.0.0-1.5.9; no patched release exists on PyPI
-# yet (upstream chroma-core/chroma#6717 is open with no fix PR), so there is
-# no version to bump to. Risk-accepted because neither vector is reachable:
-#   1. OmniScribe never runs a Chroma HTTP server and no longer reads Chroma
-#      at all - the `chromadb` dependency was removed in the lexicon
-#      migration Phase 5 (see pyproject.toml `[memory]` note); the legacy
-#      translation path used an embedded client on a local path only.
-#   2. The former `get_chroma_collection()` always passed an explicit
-#      `embedding_function=`, so no collection-stored embedding config was
-#      ever instantiated, and no `trust_remote_code` flag is used anywhere.
-# Drop the --ignore-vuln flag once chromadb ships a fixed release (>1.5.9)
-# and the [project.dependencies] / [memory] constraints are bumped to it.
+# PYSEC-2026-311 / CVE-2026-45829 (chromadb server RCE) was previously
+# risk-accepted here with --ignore-vuln; chromadb left the dependency tree
+# in the lexicon migration Phase 5, so the ignore flag is gone (2026-09-06).
+# If pip-audit flags chromadb in your local env, it is a stale local install,
+# not a declared dependency.
 audit: ## Run pip-audit dependency vulnerability scan
-	# PYSEC-2026-311 / CVE-2026-45829 (chromadb server RCE) is risk-accepted.
-	# Review-by: 2026-12-31 — drop the --ignore-vuln flag once
-	# chromadb ships a fixed release (>1.5.9) and the [memory] constraint
-	# is bumped to it. See the comment block above for full context.
-	uv run pip-audit --ignore-vuln PYSEC-2026-311
+	uv run pip-audit
 
 # F5-27 audit fix: `make security` runs the local Semgrep static
 # analysis pass on the same ruleset `security.yml` uses in CI. The

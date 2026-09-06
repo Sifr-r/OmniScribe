@@ -5,6 +5,8 @@ export 'app_toggle.dart';
 export 'app_badge.dart';
 export 'app_card.dart';
 export 'app_modal.dart';
+export 'error_banner.dart';
+export 'feature_screen_scaffold.dart';
 export 'section_header.dart';
 export 'toast_service.dart';
 export 'toast_overlay.dart';

@@ -24,6 +24,7 @@ from omniscribe.core.transcription import (
     validate_audio_input,
 )
 from omniscribe.plugins.artifacts import ArtifactStore
+from omniscribe.plugins.errors import PluginError
 
 # Audit 9.13: only the actually-used names are imported; the previous
 # wholesale ``noqa: F401`` was hiding dead names. ``TRANSCRIPTION_FALLBACK_MODELS``,
@@ -51,14 +52,8 @@ DEFAULT_TRANSCRIPTION_MODEL = "whisper-1"
 DEFAULT_TRANSCRIPTION_ENGINE = "api"
 
 
-class TranscribeError(Exception):
-    """User-facing transcribe error carrying the envelope wire fields."""
-
-    def __init__(self, status_code: int, error: str, detail: str) -> None:
-        super().__init__(detail)
-        self.status_code = status_code
-        self.error = error
-        self.detail = detail
+class TranscribeError(PluginError):
+    """User-facing transcribe error (envelope wire fields on ``PluginError``)."""
 
 
 def _resolve_optional_str(

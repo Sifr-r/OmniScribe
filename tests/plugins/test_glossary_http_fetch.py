@@ -141,6 +141,7 @@ async def test_fetch_ssrf_blocked_private_ips(
 
 async def test_fetch_ssrf_resolved_ip_none(monkeypatch: pytest.MonkeyPatch) -> None:
     """Verify URLs where DNS returns no resolved IP are rejected with 403 ssrf_blocked."""
+
     async def fake_ssrf(target_url: str | None) -> SSRFCheckResult:
         return SSRFCheckResult(allowed=True, resolved_ip=None, reason=None)
 
@@ -163,6 +164,7 @@ async def test_fetch_content_length_exceeds_max_bytes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Verify response with Content-Length exceeding limit is rejected with 400 bad_request."""
+
     async def fake_ssrf(target_url: str | None) -> SSRFCheckResult:
         return SSRFCheckResult(allowed=True, resolved_ip="93.184.216.34")
 
@@ -193,6 +195,7 @@ async def test_fetch_content_length_exceeds_max_fetch_bytes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Verify default MAX_FETCH_BYTES limit is enforced against Content-Length header."""
+
     async def fake_ssrf(target_url: str | None) -> SSRFCheckResult:
         return SSRFCheckResult(allowed=True, resolved_ip="93.184.216.34")
 
@@ -223,6 +226,7 @@ async def test_fetch_content_length_exceeds_max_fetch_bytes(
 
 async def test_fetch_body_exceeds_max_bytes(monkeypatch: pytest.MonkeyPatch) -> None:
     """Verify response body exceeding limit without Content-Length is rejected with 400 bad_request."""
+
     async def fake_ssrf(target_url: str | None) -> SSRFCheckResult:
         return SSRFCheckResult(allowed=True, resolved_ip="93.184.216.34")
 
@@ -259,6 +263,7 @@ async def test_fetch_redirect_follows_up_to_limit(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Verify clean redirect following up to _MAX_REDIRECTS (5 hops) succeeds."""
+
     async def fake_ssrf(target_url: str | None) -> SSRFCheckResult:
         return SSRFCheckResult(allowed=True, resolved_ip="93.184.216.34")
 
@@ -296,6 +301,7 @@ async def test_fetch_redirect_follows_up_to_limit(
 
 async def test_fetch_redirect_exceeded(monkeypatch: pytest.MonkeyPatch) -> None:
     """Verify exceeding _MAX_REDIRECTS raises 502 ai_error."""
+
     async def fake_ssrf(target_url: str | None) -> SSRFCheckResult:
         return SSRFCheckResult(allowed=True, resolved_ip="93.184.216.34")
 
@@ -328,6 +334,7 @@ async def test_fetch_redirect_missing_location_header(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Verify redirect missing Location header raises 502 ai_error."""
+
     async def fake_ssrf(target_url: str | None) -> SSRFCheckResult:
         return SSRFCheckResult(allowed=True, resolved_ip="93.184.216.34")
 
@@ -359,6 +366,7 @@ async def test_fetch_http_status_errors(
     status_code: int, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Verify HTTP status errors (404, 500, etc.) are translated to 502 ai_error."""
+
     async def fake_ssrf(target_url: str | None) -> SSRFCheckResult:
         return SSRFCheckResult(allowed=True, resolved_ip="93.184.216.34")
 
@@ -386,6 +394,7 @@ async def test_fetch_http_status_errors(
 
 async def test_fetch_timeout_exception(monkeypatch: pytest.MonkeyPatch) -> None:
     """Verify httpx.TimeoutException maps to 504 timeout."""
+
     async def fake_ssrf(target_url: str | None) -> SSRFCheckResult:
         return SSRFCheckResult(allowed=True, resolved_ip="93.184.216.34")
 
@@ -409,6 +418,7 @@ async def test_fetch_timeout_exception(monkeypatch: pytest.MonkeyPatch) -> None:
 
 async def test_fetch_request_error(monkeypatch: pytest.MonkeyPatch) -> None:
     """Verify general httpx.RequestError maps to 502 ai_error."""
+
     async def fake_ssrf(target_url: str | None) -> SSRFCheckResult:
         return SSRFCheckResult(allowed=True, resolved_ip="93.184.216.34")
 
@@ -437,6 +447,7 @@ async def test_fetch_request_error(monkeypatch: pytest.MonkeyPatch) -> None:
 
 async def test_fetch_success_text_content(monkeypatch: pytest.MonkeyPatch) -> None:
     """Verify successful fetch with UTF-8 text glossary content."""
+
     async def fake_ssrf(target_url: str | None) -> SSRFCheckResult:
         return SSRFCheckResult(allowed=True, resolved_ip="93.184.216.34")
 
@@ -464,6 +475,7 @@ async def test_fetch_success_text_content(monkeypatch: pytest.MonkeyPatch) -> No
 
 async def test_fetch_success_binary_content(monkeypatch: pytest.MonkeyPatch) -> None:
     """Verify successful fetch with arbitrary binary content."""
+
     async def fake_ssrf(target_url: str | None) -> SSRFCheckResult:
         return SSRFCheckResult(allowed=True, resolved_ip="93.184.216.34")
 
@@ -493,6 +505,7 @@ async def test_fetch_with_mock_transport_directly(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Verify passing transport explicitly into fetch_glossary_url works completely offline."""
+
     async def fake_ssrf(target_url: str | None) -> SSRFCheckResult:
         return SSRFCheckResult(allowed=True, resolved_ip="93.184.216.34")
 
@@ -516,6 +529,7 @@ async def test_fetch_with_mock_transport_directly(
 
 async def test_fetch_redirect_relative_url(monkeypatch: pytest.MonkeyPatch) -> None:
     """Verify redirect with a relative Location header is resolved correctly."""
+
     async def fake_ssrf(target_url: str | None) -> SSRFCheckResult:
         return SSRFCheckResult(allowed=True, resolved_ip="93.184.216.34")
 

@@ -44,8 +44,7 @@ strictness:
 2. **LAN / trusted-network** — the workstation runs on a private LAN
    behind a firewall. The threat is a curious housemate. Guards:
    bearer auth on every route (except `/health`, `/healthz`, `/ready`,
-   `/readyz`), per-route token scoping, rate limiting, audit-friendly
-   logs. The bearer/rate-limit/upload middlewares ship live in
+   `/readyz`), rate limiting, audit-friendly logs. The bearer/rate-limit/upload middlewares ship live in
    `src/omniscribe/server.py:184-202`; see the [Security Features](#security-features)
    table for the exact env-var contract and the [Deployment Guide](DEPLOYMENT.md)
    for the three-profile walkthrough.
@@ -72,7 +71,7 @@ with the exact env-var values per profile.
 | Layer                  | Guard                              | Default             | Override                                |
 | ---------------------- | ---------------------------------- | ------------------- | --------------------------------------- |
 | HTTP auth              | `OMNISCRIBE_AUTH_TOKEN`            | Unset (loopback bind: enforcement is a no-op; non-loopback bind: server refuses to start) | Set to a 32+ char random secret before any non-loopback bind |
-| Transcription config auth | `OMNISCRIBE_TRANSCRIPTION_AUTH_TOKEN` | Unset | Surfaces as a masked preview in `/api/config/transcription`; enforced by the live bearer middleware on the same routes |
+| Transcription config token | `OMNISCRIBE_TRANSCRIPTION_AUTH_TOKEN` | Unset | Not an auth credential — only the mask source for the `/api/config/transcription` preview. The enforced HTTP auth layer is `OMNISCRIBE_AUTH_TOKEN` |
 | Upload size            | `OMNISCRIBE_MAX_UPLOAD_MB`         | 1 GB (1024 MB) | Raise for batch hosts (enforced at upload parse + by `MaxUploadSizeMiddleware`); was 10 GB until 2026-09-05 |
 | Rate limit             | `OMNISCRIBE_RATE_LIMIT_PER_MIN`    | 60 req/min/IP       | Lower for public deployments (enforced by `RateLimitMiddleware`) |
 | SSRF (URL fetcher)     | `ALLOW_SSRF_LOCAL`                 | `false` (code default) | Shipped `.env.example` mirrors the code default (`false`); set to `true` only when pointing at a local VLM endpoint on loopback (e.g. LM Studio at `127.0.0.1:1234`) |

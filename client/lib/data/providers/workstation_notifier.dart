@@ -218,6 +218,29 @@ class WorkstationNotifier extends Notifier<WorkstationState> {
     }
   }
 
+  /// Merges a rendered page [preview] into [pages] at [pageIndex], growing
+  /// the list with placeholder pages as needed.
+  List<PageResult> _mergePreview(
+    List<PageResult> pages,
+    int pageIndex,
+    PagePreviewResult preview,
+  ) {
+    final updatedPages = List<PageResult>.from(pages);
+    while (updatedPages.length <= pageIndex) {
+      updatedPages.add(PageResult(page: updatedPages.length));
+    }
+    final cur = updatedPages[pageIndex];
+    final imgDimensions = (preview.width == null || preview.height == null)
+        ? parseImageDimensions(preview.bytes)
+        : null;
+    updatedPages[pageIndex] = cur.copyWith(
+      previewBytes: preview.bytes,
+      width: preview.width ?? imgDimensions?.width,
+      height: preview.height ?? imgDimensions?.height,
+    );
+    return updatedPages;
+  }
+
   Future<PagePreviewResult?> _loadDocumentPreview(
     int pageIndex, {
     int? generation,
@@ -263,19 +286,7 @@ class WorkstationNotifier extends Notifier<WorkstationState> {
         _previewDocId = preview.docId;
       }
 
-      final updatedPages = List<PageResult>.from(state.pages);
-      while (updatedPages.length <= pageIndex) {
-        updatedPages.add(PageResult(page: updatedPages.length));
-      }
-      final cur = updatedPages[pageIndex];
-      final imgDimensions = (preview.width == null || preview.height == null)
-          ? parseImageDimensions(preview.bytes)
-          : null;
-      updatedPages[pageIndex] = cur.copyWith(
-        previewBytes: preview.bytes,
-        width: preview.width ?? imgDimensions?.width,
-        height: preview.height ?? imgDimensions?.height,
-      );
+      final updatedPages = _mergePreview(state.pages, pageIndex, preview);
 
       final newCount = math.max(state.pageCount, preview.totalPages);
       while (updatedPages.length < newCount) {
@@ -379,20 +390,7 @@ class WorkstationNotifier extends Notifier<WorkstationState> {
 
         if (preview != null) {
           _previewDocId = preview.docId ?? _previewDocId;
-          final updatedPages = List<PageResult>.from(state.pages);
-          while (updatedPages.length <= idx) {
-            updatedPages.add(PageResult(page: updatedPages.length));
-          }
-          final cur = updatedPages[idx];
-          final imgDimensions =
-              (preview.width == null || preview.height == null)
-                  ? parseImageDimensions(preview.bytes)
-                  : null;
-          updatedPages[idx] = cur.copyWith(
-            previewBytes: preview.bytes,
-            width: preview.width ?? imgDimensions?.width,
-            height: preview.height ?? imgDimensions?.height,
-          );
+          final updatedPages = _mergePreview(state.pages, idx, preview);
           state = state.copyWith(
             pages: updatedPages,
             pageCount: math.max(state.pageCount, updatedPages.length),
@@ -753,24 +751,15 @@ class WorkstationNotifier extends Notifier<WorkstationState> {
       }
 
       // 2. Execute synchronous OCR call
-      final result = receiveTimeout != null
-          ? await _ocrRepo.processOcrSync(
-              fileBytes: fileBytes,
-              filename: filename,
-              settings: settings,
-              progressChannel: session?.channelId,
-              progressToken: session?.sessionToken,
-              onSendProgress: onSendProgress,
-              receiveTimeout: receiveTimeout,
-            )
-          : await _ocrRepo.processOcrSync(
-              fileBytes: fileBytes,
-              filename: filename,
-              settings: settings,
-              progressChannel: session?.channelId,
-              progressToken: session?.sessionToken,
-              onSendProgress: onSendProgress,
-            );
+      final result = await _ocrRepo.processOcrSync(
+        fileBytes: fileBytes,
+        filename: filename,
+        settings: settings,
+        progressChannel: session?.channelId,
+        progressToken: session?.sessionToken,
+        onSendProgress: onSendProgress,
+        receiveTimeout: receiveTimeout,
+      );
 
       state = state.copyWith(
         isProcessing: false,

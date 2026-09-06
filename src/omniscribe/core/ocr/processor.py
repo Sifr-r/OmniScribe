@@ -344,6 +344,11 @@ class OCRProcessor:
         — the model was RL-trained on this exact distribution and a system
         message would shift it. Dual-engine and correction paths wrap a
         system message around their user turns.
+
+        ``self_correction`` runs a second full-budget VLM pass over the same
+        image with the correction prompt and unconditionally replaces the
+        first-pass text (accept-always; unlike TrOCR arbitration there is no
+        confidence comparison). An empty correction pass returns no lines.
         """
         if binarize:
             image_base64 = await asyncio.to_thread(
@@ -469,6 +474,10 @@ class OCRProcessor:
         """OCR a single cropped box region. Returns a single whitespace-joined string.
 
         Empty-string for blank/uncertain crops (filtered hallucination).
+
+        ``self_correction`` runs a second VLM pass with the correction prompt
+        and unconditionally replaces the first-pass text (accept-always); an
+        empty correction pass returns "".
         """
         if binarize:
             image_base64 = await asyncio.to_thread(

@@ -64,7 +64,7 @@ extra alone does **not** install ChromaDB or sentence-transformers,
 so it stays light (no torch / no multi-GB ML stack):
 
 ```bash
-uv sync --extra web --extra preprocessing --extra async-translation --extra memory
+uv sync --extra web --extra preprocessing --extra async-translation --extra lexicon
 ```
 
 > **Upgrading from a pre-LanceDB version?** Migrate the legacy

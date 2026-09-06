@@ -11,6 +11,8 @@ import 'package:omniscribe_client/presentation/common/app_button.dart';
 import 'package:omniscribe_client/presentation/common/app_card.dart';
 import 'package:omniscribe_client/presentation/common/app_select.dart';
 import 'package:omniscribe_client/presentation/common/app_toggle.dart';
+import 'package:omniscribe_client/presentation/common/error_banner.dart';
+import 'package:omniscribe_client/presentation/common/feature_screen_scaffold.dart';
 import 'package:omniscribe_client/presentation/common/section_header.dart';
 
 class TranslationScreen extends ConsumerStatefulWidget {
@@ -22,7 +24,6 @@ class TranslationScreen extends ConsumerStatefulWidget {
 
 class _TranslationScreenState extends ConsumerState<TranslationScreen> {
   late final TextEditingController _sourceTextController;
-  bool _useTree = false;
 
   static const List<String> _languages = [
     'French',
@@ -112,272 +113,234 @@ class _TranslationScreenState extends ConsumerState<TranslationScreen> {
     final notifier = ref.read(translationProvider.notifier);
     final colors = context.colors;
 
-    return Scaffold(
-      backgroundColor: colors.background,
-      body: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Header Bar
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Text(
-                          'Neural Translation Engine',
-                          style: AppTypography.displaySmall(
-                            color: colors.textPrimary,
-                          ),
-                        ),
-                        const SizedBox(width: 10),
-                        const AppBadge(
-                          label: 'LangGraph / NLLB-200',
-                          variant: AppBadgeVariant.brand,
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      'Context-aware dual-engine translation with term preservation & sliding window',
-                      style: AppTypography.bodySmall(
-                        color: colors.textMuted,
-                      ),
-                    ),
-                  ],
+    return FeatureScreenScaffold(
+      title: 'Neural Translation Engine',
+      badge: const AppBadge(
+        label: 'LangGraph / NLLB-200',
+        variant: AppBadgeVariant.brand,
+      ),
+      subtitle:
+          'Context-aware dual-engine translation with term preservation & sliding window',
+      headerAction: SizedBox(
+        width: 200,
+        child: AppSelect<String>(
+          value: state.targetLanguage,
+          items: _languages
+              .map(
+                (lang) => AppSelectItem(
+                  value: lang,
+                  label: lang,
                 ),
-                SizedBox(
-                  width: 200,
-                  child: AppSelect<String>(
-                    value: state.targetLanguage,
-                    items: _languages
-                        .map(
-                          (lang) => AppSelectItem(
-                            value: lang,
-                            label: lang,
-                          ),
-                        )
-                        .toList(),
-                    onChanged: (val) {
-                      if (val != null) {
-                        notifier.setTargetLanguage(val);
-                      }
-                    },
+              )
+              .toList(),
+          onChanged: (val) {
+            if (val != null) {
+              notifier.setTargetLanguage(val);
+            }
+          },
+        ),
+      ),
+      errorBanner: state.error != null
+          ? ErrorBanner(
+              message: state.error!,
+              onDismiss: notifier.clearError,
+            )
+          : null,
+      panes: Column(
+        children: [
+          // Options Bar
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            decoration: BoxDecoration(
+              color: colors.cardRaised,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: colors.border),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: AppToggle(
+                    label: 'NLLB Fast Engine',
+                    subtitle: 'Direct Meta NLLB-200 offline translation',
+                    value: state.useNllb,
+                    onChanged: notifier.setUseNllb,
                   ),
                 ),
               ],
             ),
-            const SizedBox(height: 16),
+          ),
+          const SizedBox(height: 16),
 
-            // Options Bar
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-              decoration: BoxDecoration(
-                color: colors.cardRaised,
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: colors.border),
-              ),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: AppToggle(
-                      label: 'NLLB Fast Engine',
-                      subtitle: 'Direct Meta NLLB-200 offline translation',
-                      value: state.useNllb,
-                      onChanged: notifier.setUseNllb,
-                    ),
-                  ),
-                  const SizedBox(width: 32),
-                  Expanded(
-                    child: AppToggle(
-                      label: 'Tree-Aware Translation',
-                      subtitle:
-                          'Preserve hierarchical layout headers and tables',
-                      value: _useTree,
-                      onChanged: (val) => setState(() => _useTree = val),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 16),
-
-            // Dual Pane: Source vs Translated
-            Expanded(
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  // Left Pane: Source Text
-                  Expanded(
-                    child: AppCard(
-                      padding: AppCardPadding.md,
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          SectionHeader(
-                            title: 'Source Text',
-                            action: _sourceTextController.text.isNotEmpty
-                                ? InkWell(
-                                    onTap: () {
-                                      _sourceTextController.clear();
-                                      notifier.clearSourceText();
-                                      setState(() {});
-                                    },
-                                    child: Text(
-                                      'Clear',
-                                      style: AppTypography.codeSmall(
-                                        color: colors.error,
-                                      ),
+          // Dual Pane: Source vs Translated
+          Expanded(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                // Left Pane: Source Text
+                Expanded(
+                  child: AppCard(
+                    padding: AppCardPadding.md,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        SectionHeader(
+                          title: 'Source Text',
+                          action: _sourceTextController.text.isNotEmpty
+                              ? InkWell(
+                                  onTap: () {
+                                    _sourceTextController.clear();
+                                    notifier.clearSourceText();
+                                    setState(() {});
+                                  },
+                                  child: Text(
+                                    'Clear',
+                                    style: AppTypography.codeSmall(
+                                      color: colors.error,
                                     ),
-                                  )
-                                : null,
-                          ),
-                          const SizedBox(height: 8),
-                          Expanded(
-                            child: TextField(
-                              controller: _sourceTextController,
-                              maxLines: null,
-                              expands: true,
-                              onChanged: notifier.setSourceText,
-                              style: AppTypography.code(
-                                color: colors.textPrimary,
+                                  ),
+                                )
+                              : null,
+                        ),
+                        const SizedBox(height: 8),
+                        Expanded(
+                          child: TextField(
+                            controller: _sourceTextController,
+                            maxLines: null,
+                            expands: true,
+                            onChanged: notifier.setSourceText,
+                            style: AppTypography.code(
+                              color: colors.textPrimary,
+                            ),
+                            decoration: InputDecoration(
+                              hintText:
+                                  'Enter or paste source document text here…',
+                              hintStyle: AppTypography.code(
+                                color: colors.textMuted,
                               ),
-                              decoration: InputDecoration(
-                                hintText:
-                                    'Enter or paste source document text here…',
-                                hintStyle: AppTypography.code(
-                                  color: colors.textMuted,
-                                ),
-                                border: InputBorder.none,
-                              ),
+                              border: InputBorder.none,
                             ),
                           ),
-                          const SizedBox(height: 12),
-                          Row(
-                            children: [
-                              Expanded(
-                                child: AppButton(
-                                  text: state.isTranslating
-                                      ? 'Translating…'
-                                      : 'Translate (Sync)',
-                                  variant: AppButtonVariant.primary,
-                                  loading: state.isTranslating,
-                                  icon: const Icon(Icons.translate, size: 16),
-                                  onPressed: _handleSyncTranslate,
-                                ),
+                        ),
+                        const SizedBox(height: 12),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: AppButton(
+                                text: state.isTranslating
+                                    ? 'Translating…'
+                                    : 'Translate (Sync)',
+                                variant: AppButtonVariant.primary,
+                                loading: state.isTranslating,
+                                icon: const Icon(Icons.translate, size: 16),
+                                onPressed: _handleSyncTranslate,
                               ),
-                              const SizedBox(width: 8),
-                              AppButton(
-                                text: 'Async',
-                                variant: AppButtonVariant.secondary,
-                                disabled: state.isTranslating,
-                                onPressed: _handleAsyncTranslate,
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 16),
-
-                  // Right Pane: Translated Output
-                  Expanded(
-                    child: AppCard(
-                      padding: AppCardPadding.md,
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          SectionHeader(
-                            title:
-                                'Translated Output (${state.targetLanguage})',
-                            action: state.translatedOutput.isNotEmpty
-                                ? AppButton(
-                                    text: 'Copy',
-                                    variant: AppButtonVariant.ghost,
-                                    size: AppButtonSize.sm,
-                                    icon: const Icon(Icons.copy, size: 14),
-                                    onPressed: () =>
-                                        _copyOutput(state.translatedOutput),
-                                  )
-                                : null,
-                          ),
-                          const SizedBox(height: 8),
-                          if (state.asyncStatus != null) ...[
-                            Container(
-                              padding: const EdgeInsets.all(8),
-                              margin: const EdgeInsets.only(bottom: 8),
-                              decoration: BoxDecoration(
-                                color: colors.cardRaised,
-                                borderRadius: BorderRadius.circular(6),
-                                border: Border.all(color: colors.border),
-                              ),
-                              child: Text(
-                                state.asyncStatus!,
-                                style: AppTypography.codeSmall(
-                                  color: colors.textMuted,
-                                ),
-                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            AppButton(
+                              text: 'Async',
+                              variant: AppButtonVariant.secondary,
+                              disabled: state.isTranslating,
+                              onPressed: _handleAsyncTranslate,
                             ),
                           ],
-                          Expanded(
-                            child: Container(
-                              padding: const EdgeInsets.all(12),
-                              decoration: BoxDecoration(
-                                color: colors.cardRaised,
-                                borderRadius: BorderRadius.circular(6),
-                                border: Border.all(color: colors.border),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 16),
+
+                // Right Pane: Translated Output
+                Expanded(
+                  child: AppCard(
+                    padding: AppCardPadding.md,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        SectionHeader(
+                          title: 'Translated Output (${state.targetLanguage})',
+                          action: state.translatedOutput.isNotEmpty
+                              ? AppButton(
+                                  text: 'Copy',
+                                  variant: AppButtonVariant.ghost,
+                                  size: AppButtonSize.sm,
+                                  icon: const Icon(Icons.copy, size: 14),
+                                  onPressed: () =>
+                                      _copyOutput(state.translatedOutput),
+                                )
+                              : null,
+                        ),
+                        const SizedBox(height: 8),
+                        if (state.asyncStatus != null) ...[
+                          Container(
+                            padding: const EdgeInsets.all(8),
+                            margin: const EdgeInsets.only(bottom: 8),
+                            decoration: BoxDecoration(
+                              color: colors.cardRaised,
+                              borderRadius: BorderRadius.circular(6),
+                              border: Border.all(color: colors.border),
+                            ),
+                            child: Text(
+                              state.asyncStatus!,
+                              style: AppTypography.codeSmall(
+                                color: colors.textMuted,
                               ),
-                              child: state.isTranslating &&
-                                      state.translatedOutput.isEmpty
-                                  ? Center(
-                                      child: Column(
-                                        mainAxisSize: MainAxisSize.min,
-                                        children: [
-                                          CircularProgressIndicator(
-                                            valueColor:
-                                                AlwaysStoppedAnimation<Color>(
-                                              colors.brand,
-                                            ),
-                                          ),
-                                          const SizedBox(height: 12),
-                                          Text(
-                                            'Translating document chunks…',
-                                            style: AppTypography.bodySmall(
-                                              color: colors.textMuted,
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    )
-                                  : SingleChildScrollView(
-                                      child: SelectableText(
-                                        state.translatedOutput.isNotEmpty
-                                            ? state.translatedOutput
-                                            : 'Translated text output will appear here once translation is triggered.',
-                                        style: AppTypography.code(
-                                          color: state.translatedOutput.isNotEmpty
-                                              ? colors.textPrimary
-                                              : colors.textMuted,
-                                        ),
-                                      ),
-                                    ),
                             ),
                           ),
                         ],
-                      ),
+                        Expanded(
+                          child: Container(
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: colors.cardRaised,
+                              borderRadius: BorderRadius.circular(6),
+                              border: Border.all(color: colors.border),
+                            ),
+                            child: state.isTranslating &&
+                                    state.translatedOutput.isEmpty
+                                ? Center(
+                                    child: Column(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        CircularProgressIndicator(
+                                          valueColor:
+                                              AlwaysStoppedAnimation<Color>(
+                                            colors.brand,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 12),
+                                        Text(
+                                          'Translating document chunks…',
+                                          style: AppTypography.bodySmall(
+                                            color: colors.textMuted,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  )
+                                : SingleChildScrollView(
+                                    child: SelectableText(
+                                      state.translatedOutput.isNotEmpty
+                                          ? state.translatedOutput
+                                          : 'Translated text output will appear here once translation is triggered.',
+                                      style: AppTypography.code(
+                                        color:
+                                            state.translatedOutput.isNotEmpty
+                                                ? colors.textPrimary
+                                                : colors.textMuted,
+                                      ),
+                                    ),
+                                  ),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
-                ],
-              ),
+                ),
+              ],
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }

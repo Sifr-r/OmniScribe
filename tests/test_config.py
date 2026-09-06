@@ -119,3 +119,13 @@ def test_load_settings_overrides() -> None:
     )
     assert settings.rate_limit_per_min == 15
     assert settings.cors_origins == ["http://localhost:3000"]
+
+
+def test_max_upload_mb_invalid_value_falls_back_to_default() -> None:
+    settings = RuntimeSettings(max_upload_mb="not-a-number")
+    assert settings.max_upload_mb == 1_024
+
+
+def test_max_upload_mb_valid_string_parses() -> None:
+    settings = RuntimeSettings(max_upload_mb="2048")
+    assert settings.max_upload_mb == 2048

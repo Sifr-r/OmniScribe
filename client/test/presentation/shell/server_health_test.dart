@@ -65,17 +65,13 @@ void main() {
       expect(state.error, contains('Connection refused'));
     });
 
-    test('initial state is online with non-null latency', () {
-      // Wave 16: the old "null apiClient" test path is now dead code —
-      // ``apiClientProvider`` is a non-nullable ``Provider<ApiClient>`` and
-      // ``ServerHealthNotifier.build()`` always watches a real client. The
-      // defensive ``if (_apiClient == null) return;`` guard remains in
-      // ``checkHealth()`` for future-proofing, but cannot be exercised via
-      // a public constructor any more. Verify the initial build state here
-      // so the offline/success cases above have a sane baseline.
+    test('initial state is checking before the first health probe', () {
+      // The notifier seeds as "Checking" so the shell badge never displays a
+      // fabricated online/latency state; main.dart fires the first real
+      // probe at app start.
       final state = container.read(serverHealthProvider);
-      expect(state.status, ServerHealth.online);
-      expect(state.latencyMs, isNotNull);
+      expect(state.status, ServerHealth.checking);
+      expect(state.latencyMs, isNull);
       expect(state.endpoint, isNotEmpty);
     });
   });

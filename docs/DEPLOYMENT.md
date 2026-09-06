@@ -136,34 +136,26 @@ echo "$OMNISCRIBE_AUTH_TOKEN" >> ~/.config/omniscribe/token
 The placeholder-check (M10) refuses to start if the value is the
 example `change-me-in-prod` or any other known placeholder.
 
-### Per-service tokens (optional)
+### Token scope (what is actually enforced)
 
-If you want OCR, translation, and transcription to accept different tokens (e.g. a
-read-only OCR key for an internal script):
+There is a **single enforced bearer token**: `OMNISCRIBE_AUTH_TOKEN`.
+The `BearerAuthMiddleware` wired in `server.py` checks it (constant-time
+compare) on every route it guards; per-route token scoping does not
+exist — earlier versions of this section described
+`OMNISCRIBE_OCR_AUTH_TOKEN` / `OMNISCRIBE_TRANSLATION_AUTH_TOKEN`
+variables that were never implemented.
 
-```bash
-export OMNISCRIBE_AUTH_TOKEN=$(python -c 'import secrets; print(secrets.token_urlsafe(32))')
-export OMNISCRIBE_OCR_AUTH_TOKEN=$(python -c 'import secrets; print(secrets.token_urlsafe(32))')
-export OMNISCRIBE_TRANSLATION_AUTH_TOKEN=$(python -c 'import secrets; print(secrets.token_urlsafe(32))')
-export OMNISCRIBE_TRANSCRIPTION_AUTH_TOKEN=$(python -c 'import secrets; print(secrets.token_urlsafe(32))')
-```
-
-Routes under `/api/process*`, `/api/models/ocr*`, `/api/config/ocr*`
-require the OCR token (or fall back to the global token). Routes
-under `/api/translate*`, `/api/extract*`, `/api/export*`,
-`/api/glossary*` require the translation token. Routes under
-`/api/transcribe*`, `/api/models/transcription*`, `/api/config/transcription*`
-require the transcription token. All other routes require the global token.
+One related variable exists: `OMNISCRIBE_TRANSCRIPTION_AUTH_TOKEN` is
+**not** an auth credential — it is only consumed by the transcription
+config store as the mask source for the `/api/config/transcription`
+preview, so a configured token can be displayed as `******` without
+being revealed. Setting it grants no access and exempts nothing.
 
 > **P10 (audit 4.6):** The ASGI Middleware Suite (bearer auth + rate
-> limit + upload size) that enforces these tokens shipped in Waves 11,
-> 13, and 14. The live middleware contract — placeholder-token
-> rejection on non-loopback, per-route scope, constant-time
-> comparison — is documented in
-> [SECURITY.md](SECURITY.md) §"Security Features" and
-> [SECURITY.md](SECURITY.md) §"Per-route token scope". The
-> "deferred-middleware" framing that earlier versions of this doc
-> used is no longer accurate.
+> limit + upload size) shipped in Waves 11, 13, and 14. The live
+> middleware contract — placeholder-token rejection on non-loopback,
+> constant-time comparison — is documented in
+> [SECURITY.md](SECURITY.md) §"Security Features".
 
 ## Third-party VLM (OpenAI / Anthropic / Groq)
 
@@ -175,8 +167,10 @@ To send OCR images to a hosted VLM instead of LM Studio:
 3. Set `OMNISCRIBE_LLM_MODEL` to the model ID you have access to (e.g.
    `gpt-4o-mini`).
 
-The Settings tab also exposes per-service auth tokens so you can
-configure OCR and translation backends independently.
+The Settings tab stores the third-party provider coordinates
+(endpoint, key, model) in the in-memory `/api/config` store; the
+server-side bearer contract is the single `OMNISCRIBE_AUTH_TOKEN`
+described above.
 
 **Privacy warning:** documents and extracted text leave your machine
 when you point at a third-party endpoint. Review the provider's

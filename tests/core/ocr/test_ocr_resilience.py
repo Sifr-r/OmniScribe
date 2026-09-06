@@ -74,7 +74,10 @@ def test_value_error_is_permanent_caller_side_error():
     see the failure, not a silent retry loop.
     """
     assert is_transient_error(ValueError("bad image format")) is False
-    assert is_transient_error(ValueError("page number must be a positive integer")) is False
+    assert (
+        is_transient_error(ValueError("page number must be a positive integer"))
+        is False
+    )
     assert is_transient_error(ValueError("invalid json field")) is False
 
 
@@ -88,13 +91,16 @@ def test_unknown_runtime_error_defaults_to_retryable():
     edge-case wording) as permanent. Retrying once is cheaper than
     degrading a page.
     """
+
     # httpx.ConnectError is a RuntimeError subclass with a
     # non-standard message; the previous default classified it as
     # permanent. The new default retries it.
     class _HttpxConnectError(RuntimeError):
         pass
 
-    assert is_transient_error(_HttpxConnectError("All connection attempts failed")) is True
+    assert (
+        is_transient_error(_HttpxConnectError("All connection attempts failed")) is True
+    )
     assert is_transient_error(RuntimeError("some vendor quirk")) is True
     # The substring check still catches the common transport signals:
     assert is_transient_error(RuntimeError("connection refused")) is True

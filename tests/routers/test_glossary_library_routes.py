@@ -331,8 +331,7 @@ def test_get_library_entries_pagination(api_client: TestClient) -> None:
         json.dumps(
             {
                 "entries": [
-                    {"source": f"term_{i}", "target": f"def_{i}"}
-                    for i in range(10)
+                    {"source": f"term_{i}", "target": f"def_{i}"} for i in range(10)
                 ]
             }
         ),

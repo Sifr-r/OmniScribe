@@ -33,6 +33,7 @@ from omniscribe.core.translate.tree import TranslatorFn, translate_tree
 from omniscribe.core.translate.workflow import get_translation_app
 from omniscribe.plugins.artifacts import ArtifactStore
 from omniscribe.plugins.documents.service import build_tree, load_pages
+from omniscribe.plugins.errors import PluginError
 from omniscribe.plugins.jobs import JobOutcome, TranslationJobRunner
 from omniscribe.plugins.translate.schemas import (
     AsyncTranslationRequest,
@@ -44,14 +45,8 @@ from omniscribe.utils.security import check_ssrf_target_sync
 _LOGGER = logging.getLogger("omniscribe.plugins.translate")
 
 
-class TranslateError(Exception):
-    """User-facing translate error carrying the envelope wire fields."""
-
-    def __init__(self, status_code: int, error: str, detail: str) -> None:
-        super().__init__(detail)
-        self.status_code = status_code
-        self.error = error
-        self.detail = detail
+class TranslateError(PluginError):
+    """User-facing translate error (envelope wire fields on ``PluginError``)."""
 
 
 def build_translation_prompt(text: str, target_language: str) -> str:

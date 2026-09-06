@@ -1,5 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'package:omniscribe_client/core/constants/api_constants.dart';
 import 'package:omniscribe_client/core/network/api_client.dart';
 import 'package:omniscribe_client/core/websocket/ws_client.dart';
 import 'package:omniscribe_client/data/repositories/config_repository.dart';
@@ -15,7 +16,7 @@ import 'package:omniscribe_client/data/repositories/provider_repository.dart';
 /// the removed ``.state =`` setter pattern.
 class ApiBaseUrlNotifier extends Notifier<String> {
   @override
-  String build() => 'http://127.0.0.1:8000';
+  String build() => ApiConstants.defaultBaseUrl;
 
   void set(String value) => state = value;
 }

@@ -2,27 +2,17 @@
 
 Field constraints reproduce the pre-harness contract (commit ``44ef123^``,
 ``api/schemas/requests.py``) so the existing Flutter client keeps working
-without changes. The local ``_TrimmedModel`` mirrors the documents
-plugin's shared base (it is private there, so it is copied, not imported).
+without changes.
 """
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import Field
+
+from omniscribe.plugins._schemas import TrimmedModel
 
 
-class _TrimmedModel(BaseModel):
-    """Shared config: reject unknown fields, trim string values."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    @field_validator("*", mode="before")
-    @classmethod
-    def _strip_strings(cls, value: object) -> object:
-        return value.strip() if isinstance(value, str) else value
-
-
-class TranslationRequest(_TrimmedModel):
+class TranslationRequest(TrimmedModel):
     text: str = ""
     text_artifact_id: str | None = None
     text_artifact_token: str | None = None
@@ -50,6 +40,6 @@ class AsyncTranslationRequest(TranslationRequest):
     channel_id: str | None = None
 
 
-class NllbRequest(_TrimmedModel):
+class NllbRequest(TrimmedModel):
     text: str = ""
     target_language: str = "English"

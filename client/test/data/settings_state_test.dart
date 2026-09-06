@@ -10,8 +10,6 @@ void main() {
       expect(state.error, isNull);
       expect(state.activeProviderId, 'openai');
       expect(state.ocrModels, isEmpty);
-      expect(state.translationModels, isEmpty);
-      expect(state.transcriptionModels, isEmpty);
       expect(state.serverBaseUrl, 'http://127.0.0.1:8000');
       expect(state.useAsync, isFalse);
       expect(state.isDarkMode, isFalse);

@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from typing import Protocol
 
 from PIL import Image
@@ -110,23 +110,30 @@ async def run_repair_phase(
 
     completed_box = [0]
     summaries: list[PageRepairSummary] = []
+    # Memoized lazy decode: a page's image is decoded at most once, and
+    # only when a below-target block on that page actually needs a crop.
+    # Pages without repair targets are never decoded.
+    decoded: dict[int, Image.Image] = {}
+
+    async def decode_page(page_num: int) -> Image.Image:
+        if page_num in decoded:
+            return decoded[page_num]
+        cached = decoded_get(page_num)
+        if cached is None:
+            cached = await asyncio.to_thread(_decode_page_image, images_dict[page_num])
+        decoded[page_num] = cached
+        return cached
+
     for p_num in page_nums:
         aligned = pages_structured.get(p_num)
         if not aligned:
             continue
 
-        cached = decoded_get(p_num)
-        page_image = (
-            cached
-            if cached is not None
-            else await asyncio.to_thread(_decode_page_image, images_dict[p_num])
-        )
-
         summary = await repair_single_page(
             engine=engine,
             p_num=p_num,
             aligned=aligned,
-            page_image=page_image,
+            get_page_image=decode_page,
             loop=loop,
             cb=cb,
             completed_box=completed_box,
@@ -158,7 +165,7 @@ async def repair_single_page(
     engine: _RepairEngineHost,
     p_num: int,
     aligned: list,
-    page_image: Image.Image,
+    get_page_image: Callable[[int], Awaitable[Image.Image]],
     loop: QualityRepairLoop,
     cb: BlockCallbackSet,
     completed_box: list[int],
@@ -172,17 +179,18 @@ async def repair_single_page(
     across the per-page loop (audit catalog: nonlocal ``completed``
     carried the global count for the progress emit; the list
     pattern is the same one the OCR quality orchestrator uses
-    for ``fallback_used_box``).
+    for ``fallback_used_box``). ``get_page_image`` is lazy so pages
+    without below-target blocks never decode their image.
     """
 
     async def re_ocr(
         block_idx: int,
         bbox: tuple[float, float, float, float],
-        *,
-        _img: Image.Image = page_image,
-        _page: int = p_num,
     ) -> str:
-        crop_b64 = await asyncio.to_thread(crop_for_ocr_from_image, _img, list(bbox))
+        page_image = await get_page_image(p_num)
+        crop_b64 = await asyncio.to_thread(
+            crop_for_ocr_from_image, page_image, list(bbox)
+        )
         if crop_b64 is None:
             return ""
         try:
@@ -191,7 +199,7 @@ async def repair_single_page(
             raise
         except Exception as exc:
             if on_warning is not None:
-                await on_warning(_page, exc)
+                await on_warning(p_num, exc)
             raise
         completed_box[0] += 1
         await notify(

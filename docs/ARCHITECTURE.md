@@ -342,6 +342,11 @@ spec's out-of-scope list.
 
 ## Change Blueprint
 
+> Ledger entries are dated history: file paths reference the tree as it
+> was at the entry's date. `src/omniscribe/api/**` paths (and
+> `api/celery_app.py`) predate the 2026-08 harness rebuild — that code
+> now lives under `src/omniscribe/plugins/` and `src/omniscribe/core/`.
+
 ### 2026-09-06: Workstation UI/UX Consolidation & Left Page Strip Rail (Phase 2 Domain 1)
 
 Consolidated redundant document information and controls across the workstation interface:
@@ -757,38 +762,6 @@ Conducted a comprehensive 3-domain audit (Core Pipeline, Backend API/Security, a
 | `src/omniscribe/static/js/workspace_ui.js` | Provide safe DOM helpers for clearing elements and rendering extraction status cards |
 | `tests/utils/test_ssrf.py`, `tests/api/services/test_uploads.py`, `tests/api/routers/test_artifacts.py`, `tests/api/routers/test_process_routes.py` | Cover config validation, SSRF fail-closed behavior, streaming upload validation, opaque text artifacts, stable API errors, and static JS sink removal (formerly the monolithic API-safety suite) |
 | `tests/api/middleware/test_security_qa.py` | Keep extraction JSON parsing deterministic under fail-closed SSRF validation |
-
-### 2026-06-03: Optional async translation boundary
-
-| File | Responsibility |
-| --- | --- |
-| `src/omniscribe/core/translate/config.py` | Own typed translation settings and the deterministic optional-feature error used by core and API boundaries |
-| `src/omniscribe/core/translate/workflow.py` | Keep chunking and evaluation helpers importable without async extras, lazily build the LangGraph workflow, and accept injected translation settings |
-| `src/omniscribe/api/routers/config.py` | Adapt the mutable web runtime config into core-owned translation settings without exposing `_config` to core modules |
-| `src/omniscribe/api/celery_app.py` | (since deleted) Guard Celery imports and provide an import-safe fallback task facade when async extras are not installed |
-| `src/omniscribe/api/tasks.py` | Validate async translation task inputs and pass explicit translation settings into the core workflow |
-| `src/omniscribe/api/routers/ocr.py` | Validate async translation route inputs and return deterministic 503 responses when optional async extras are unavailable |
-| `pyproject.toml` | Move Celery, Redis, LangGraph, ChromaDB, and sentence-transformers into the `async-translation` extra with `translation` as an alias extra |
-| `tests/core/translate/test_translation_boundary.py` | Cover guarded imports without async extras and explicit translation settings injection |
-
-### 2026-06-03: Spellcheck resource package cleanup
-
-| File | Responsibility |
-| --- | --- |
-| `src/omniscribe/resources/dictionaries/ara.json.gz` | Packaged Arabic compiled spellcheck dictionary for installed distributions |
-| `src/omniscribe/resources/dictionaries/eng.json.gz` | Packaged English compiled spellcheck dictionary for installed distributions |
-| `src/omniscribe/core/postprocess.py` | Load packaged dictionaries first while retaining legacy repository-root and user-cache fallbacks |
-| `pyproject.toml` | Exclude bytecode cache artifacts from Hatch package builds |
-| `tests/core/test_dictionary_postprocess.py` | Cover packaged dictionary lookup and legacy repository-root fallback |
-
-### 2026-06-03: Lazy web server imports
-
-| File | Responsibility |
-| --- | --- |
-| `src/omniscribe/__init__.py` | Preserve package-level OCR exports through lazy lookups so `import omniscribe.server` does not load OCR core dependencies first |
-| `src/omniscribe/server.py` | Preserve `omniscribe.server:app` and `omniscribe.server:main` while deferring FastAPI, router, static-file, and uvicorn imports until the web app is created or run |
-| `tests/api/test_server_lazy_imports.py` | Verify base-install-safe `omniscribe.server` imports and deterministic missing-web-extra errors without uninstalling FastAPI |
-| `ARCHITECTURE.md` | Record the optional-web lazy import boundary for the server module |
 
 ### 2026-08-02: Quality Audit & YAGNI Improvements
 

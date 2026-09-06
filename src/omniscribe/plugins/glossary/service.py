@@ -29,6 +29,7 @@ from omniscribe.core.glossary_sources import (
     GlossaryImportLimitError,
     parse,
 )
+from omniscribe.plugins.errors import PluginError
 from omniscribe.plugins.glossary.schemas import (
     GlossaryFormat,
     GlossaryImportSource,
@@ -46,14 +47,8 @@ _LOGGER = logging.getLogger("omniscribe.plugins.glossary")
 SYNC_THRESHOLD = 5_000
 
 
-class GlossaryError(Exception):
-    """User-facing glossary error carrying the envelope wire fields."""
-
-    def __init__(self, status_code: int, error: str, detail: str) -> None:
-        super().__init__(detail)
-        self.status_code = status_code
-        self.error = error
-        self.detail = detail
+class GlossaryError(PluginError):
+    """User-facing glossary error (envelope wire fields on ``PluginError``)."""
 
 
 def _decode_bytes_payload(value: str) -> bytes:
@@ -234,7 +229,9 @@ class GlossaryImportService(Protocol):
     async def run_import_job(self, payload: Any) -> JobOutcome: ...
     def ensure_store_ready(self) -> None: ...
     def list_library(self) -> list[dict[str, Any]]: ...
-    def toggle(self, glossary_id: str, *, enabled: bool | None = None) -> dict[str, Any]: ...
+    def toggle(
+        self, glossary_id: str, *, enabled: bool | None = None
+    ) -> dict[str, Any]: ...
     def reorder(self, ordered_ids: list[str]) -> dict[str, Any]: ...
     def delete(self, glossary_id: str) -> dict[str, Any]: ...
     def library_preview(self) -> dict[str, Any]: ...
@@ -406,7 +403,9 @@ class GlossaryImportServiceImpl:
         self.ensure_store_ready()
         return [self._serialize_item(i) for i in self._library().list_glossaries()]
 
-    def toggle(self, glossary_id: str, *, enabled: bool | None = None) -> dict[str, Any]:
+    def toggle(
+        self, glossary_id: str, *, enabled: bool | None = None
+    ) -> dict[str, Any]:
         self.ensure_store_ready()
         store = self._library()
         if enabled is None:

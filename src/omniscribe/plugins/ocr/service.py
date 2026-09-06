@@ -2,10 +2,10 @@
 
 Audit catalog (Sprint 6 long-file split): separated from
 ``plugins/ocr/plugin.py`` so the plugin file is just the
-Protocol + plugin class + route factory. The 280-LOC
+Protocol + plugin class + route factory. This module holds
 ``OCRServiceImpl`` + its private ``_OcrPayload`` + the SSE
-event-formatting helper + the queue/event-name lookup tables
-live here.
+event-formatting helper + the queue/event-name lookup tables;
+smaller helpers live under :mod:`omniscribe.plugins.ocr.services`.
 """
 
 from __future__ import annotations
@@ -370,7 +370,9 @@ class OCRServiceImpl:
 
         return on_warning
 
-    def _cancel_check(self, job_id: str, channel: str | None) -> Callable[[], bool] | None:
+    def _cancel_check(
+        self, job_id: str, channel: str | None
+    ) -> Callable[[], bool] | None:
         if not job_id and not channel:
             return None
         queue, progress = self._queue, self._progress
@@ -688,8 +690,15 @@ class OCRServiceImpl:
         job_id = getattr(event, "job_id", "")
         if not job_id:
             return
+        buffer = self._event_buffers.setdefault(job_id, deque(maxlen=500))
+        # Per-job monotonic sequence: the SSE consumer's cursor keys off
+        # this, so a maxlen rotation (oldest entries evicted) must never
+        # shift the cursor past unseen events. Deriving from the tail
+        # keeps the counter continuous across rotations without extra
+        # bookkeeping state.
         entry = event_entry(event)
-        self._event_buffers.setdefault(job_id, deque(maxlen=500)).append(entry)
+        entry["seq"] = buffer[-1]["seq"] + 1 if buffer else 1
+        buffer.append(entry)
         if type(event) in _TERMINAL_EVENTS:
             self._done_jobs.add(job_id)
         self._event_notify.setdefault(job_id, asyncio.Event()).set()
@@ -777,9 +786,5 @@ __all__ = [
     "OCRServiceImpl",
     "event_entry",
 ]
-# Phase 3.8 (4.8, 2026-09-05): ``_CONFIG_KEY_SET``, ``_guess_suffix``,
-# and ``_sanitize_job_error`` moved to
-# :mod:`omniscribe.plugins.ocr.services`. Import them from there
-# (or from the top-level :mod:`omniscribe.plugins.ocr.services` for
-# the full re-export). They are no longer in this module's ``__all__``
-# to discourage re-import from ``service`` for new code.
+# Phase 3.8 (4.8, 2026-09-05): config seeding / suffix / error-sanitization
+# helpers moved to :mod:`omniscribe.plugins.ocr.services` — import from there.

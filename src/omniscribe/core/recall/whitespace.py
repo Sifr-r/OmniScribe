@@ -29,14 +29,13 @@ from omniscribe.core.document import BBox
 from omniscribe.core.recall import (
     MAX_RECALL_BOXES_PER_PAGE,
     STRADDLE_MIN_OVERLAP,
+    geometry,
 )
 from omniscribe.utils.env import DISABLE_STRINGS, env_str
 
 logger = logging.getLogger(__name__)
 
 _ENV_RECALL = "OMNISCRIBE_WHITESPACE_RECALL"
-# ``n`` / ``disabled`` accepted alongside the usual falsy spellings (eng S2 / audit 4.6).
-_DISABLE_VALUES = DISABLE_STRINGS
 
 # Horizontal dilation kernel sizing (ratios of page dimensions, clamped).
 # The kernel must bridge inter-character gaps without fusing stacked lines.
@@ -225,8 +224,13 @@ class WhitespaceRecallBooster:
         kept = [
             (box, density)
             for box, density in candidates
-            if not _overlaps_surya(box, surya_boxes)
-            and not _straddles_surya(box, surya_boxes)
+            if not geometry.is_duplicate(
+                box,
+                surya_boxes,
+                max_containment=_MAX_CONTAINMENT,
+                max_iou=_MAX_IOU,
+                straddle_min_overlap=_STRADDLE_MIN_OVERLAP,
+            )
         ]
         if len(kept) > _MAX_RECALL_BOXES_PER_PAGE:
             # Most text-like (highest ink density) candidates win the cap.
@@ -245,20 +249,12 @@ def _clamp(value: int, bounds: tuple[int, int]) -> int:
 
 def _overlaps_surya(candidate: BBox, surya_boxes: list[BBox]) -> bool:
     """True when the candidate is already explained by a Surya box."""
-    cx0, cy0, cx1, cy1 = candidate
-    c_area = max(1e-9, (cx1 - cx0) * (cy1 - cy0))
-    for bx0, by0, bx1, by1 in surya_boxes:
-        ix0, iy0 = max(cx0, bx0), max(cy0, by0)
-        ix1, iy1 = min(cx1, bx1), min(cy1, by1)
-        if ix1 <= ix0 or iy1 <= iy0:
-            continue
-        inter = (ix1 - ix0) * (iy1 - iy0)
-        if inter / c_area >= _MAX_CONTAINMENT:
-            return True
-        b_area = max(1e-9, (bx1 - bx0) * (by1 - by0))
-        if inter / (c_area + b_area - inter) >= _MAX_IOU:
-            return True
-    return False
+    return geometry.overlaps(
+        candidate,
+        surya_boxes,
+        max_containment=_MAX_CONTAINMENT,
+        max_iou=_MAX_IOU,
+    )
 
 
 def _straddles_surya(candidate: BBox, surya_boxes: list[BBox]) -> bool:
@@ -269,16 +265,8 @@ def _straddles_surya(candidate: BBox, surya_boxes: list[BBox]) -> bool:
     analysis pass for marginal gain (revisit if T7 harness data shows
     split candidates recovering real lines).
     """
-    cx0, cy0, cx1, cy1 = candidate
-    c_area = max(1e-9, (cx1 - cx0) * (cy1 - cy0))
-    overlapped = 0
-    for bx0, by0, bx1, by1 in surya_boxes:
-        ix0, iy0 = max(cx0, bx0), max(cy0, by0)
-        ix1, iy1 = min(cx1, bx1), min(cy1, by1)
-        if ix1 <= ix0 or iy1 <= iy0:
-            continue
-        if (ix1 - ix0) * (iy1 - iy0) / c_area >= _STRADDLE_MIN_OVERLAP:
-            overlapped += 1
-            if overlapped >= 2:
-                return True
-    return False
+    return geometry.straddles(
+        candidate,
+        surya_boxes,
+        straddle_min_overlap=_STRADDLE_MIN_OVERLAP,
+    )

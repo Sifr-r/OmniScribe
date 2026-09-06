@@ -413,4 +413,3 @@ async def test_service_enhanced_entries() -> None:
     assert page_2["total"] == 4
     assert len(page_2["entries"]) == 2
     assert page_1["entries"] != page_2["entries"]
-

@@ -134,9 +134,7 @@ def test_cors_wildcard_strips_allow_credentials(
         # The wildcard permits the origin (good) but must NOT echo
         # credentials (the audit's fix).
         assert preflight.headers.get("access-control-allow-origin") == "*"
-        assert (
-            preflight.headers.get("access-control-allow-credentials") is None
-        )
+        assert preflight.headers.get("access-control-allow-credentials") is None
 
 
 def test_cors_explicit_origins_allow_credentials(
@@ -161,9 +159,7 @@ def test_cors_explicit_origins_allow_credentials(
             preflight.headers.get("access-control-allow-origin")
             == "http://app.example.com"
         )
-        assert (
-            preflight.headers.get("access-control-allow-credentials") == "true"
-        )
+        assert preflight.headers.get("access-control-allow-credentials") == "true"
 
 
 # ---------------------------------------------------------------------------
@@ -191,7 +187,9 @@ def test_http_exception_uses_error_envelope(boot_env: None) -> None:
         # ``HTTPStatus`` name).
         assert body["error"] == "not_found"
         # The original ``detail`` is preserved.
-        assert "unknown" in body["detail"].lower() or "not found" in body["detail"].lower()
+        assert (
+            "unknown" in body["detail"].lower() or "not found" in body["detail"].lower()
+        )
 
 
 def test_http_exception_envelope_status_codes(boot_env: None) -> None:

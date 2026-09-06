@@ -46,6 +46,7 @@ def _error_code_for_status(status_code: int) -> str:
     except ValueError:
         return f"http_{status_code}"
 
+
 # Sprint 5 / M-10 audit fix: placeholder auth tokens that the operator
 # might paste from the documentation without replacing. Compared in
 # lowercase so ``Change-Me-In-Prod`` (capitalised by accident) is also

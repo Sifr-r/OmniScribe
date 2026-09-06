@@ -310,7 +310,7 @@ class HybridEngine(EngineBase):
             dpi=dpi,
             progress=progress,
             trust_model_id=trust_model_id,
-            trust_images_dict=images_dict.copy() if images_dict is not None else None,
+            trust_images_dict=images_dict.copy(),
             cancel_check=cancel_check,
         )
 
@@ -447,7 +447,7 @@ class HybridEngine(EngineBase):
         # inside ``_apply_trust`` (see ``base.py``) when needed;
         # ``_ocr_pages`` never uses them.
         return await self.ocr_runner.ocr_pages(
-            images_dict=images_dict.copy() if images_dict is not None else {},
+            images_dict=images_dict.copy(),
             pages_structured=pages_structured,
             page_nums=page_nums,
             per_box_pages=per_box_pages,

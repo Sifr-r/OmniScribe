@@ -11,11 +11,12 @@ gap on packages like scipy / transformers that use deep private
 submodule trees with lazy import patterns.
 
 Usage:
-    uv run python scripts/iterative_bundle.py
+    uv run python scripts/iterative_bundle.py [--port 18770] [--max-iter 30]
 """
 
 from __future__ import annotations
 
+import argparse
 import re
 import subprocess
 import sys
@@ -27,8 +28,6 @@ SPEC = ROOT / "omniscribe_server.spec"
 DIST = ROOT / "dist"
 BIN_NAME = "omniscribe-server.exe" if sys.platform == "win32" else "omniscribe-server"
 BINARY = DIST / BIN_NAME
-PORT = 18770
-MAX_ITER = 30
 
 # Match either: ModuleNotFoundError: No module named 'X'
 # Or:            ImportError: ... X ...
@@ -40,7 +39,7 @@ MISSING_PATTERNS = [
 ]
 
 
-def run_binary() -> tuple[int, str]:
+def run_binary(port: int) -> tuple[int, str]:
     """Run the bundle until it exits (crash) or until 90s elapse.
 
     A clean boot that reaches /api/health ready state will keep running;
@@ -49,7 +48,7 @@ def run_binary() -> tuple[int, str]:
     import torch + transformers, so we want to give it time.
     """
     proc = subprocess.Popen(
-        [str(BINARY), "--port", str(PORT)],
+        [str(BINARY), "--port", str(port)],
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
@@ -98,14 +97,16 @@ def add_hiddenimport(spec_text: str, module: str) -> str:
     new_entry = f'        "{module}",\n'
     return spec_text.replace(
         '+ [\n        "torch._C",',
-        '+ [\n' + new_entry + '        "torch._C",',
+        "+ [\n" + new_entry + '        "torch._C",',
         1,
     )
 
 
 def rebuild() -> bool:
     """Run PyInstaller against the spec. Returns True on success."""
-    print("\n$ uv run --no-sync python -m PyInstaller --noconfirm --clean omniscribe_server.spec")
+    print(
+        "\n$ uv run --no-sync python -m PyInstaller --noconfirm --clean omniscribe_server.spec"
+    )
     result = subprocess.run(
         [
             "uv",
@@ -126,15 +127,33 @@ def rebuild() -> bool:
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(
+        description="Iteratively add missing hiddenimports to the PyInstaller "
+        "spec until the bundled binary boots (PyInstaller lazy-import gap workaround)."
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=18770,
+        help="port the bundled server is probed on (default: 18770)",
+    )
+    parser.add_argument(
+        "--max-iter",
+        type=int,
+        default=30,
+        help="maximum build/fix iterations before giving up (default: 30)",
+    )
+    args = parser.parse_args()
+
     if not BINARY.exists():
         print(f"binary not found at {BINARY} — running first build")
         if not rebuild():
             print("initial build failed")
             return 1
 
-    for iteration in range(1, MAX_ITER + 1):
+    for iteration in range(1, args.max_iter + 1):
         print(f"\n=== iteration {iteration} ===")
-        rc, log = run_binary()
+        rc, log = run_binary(args.port)
         if rc == 0:
             print(f"\nBOOT OK after {iteration - 1} fixes")
             return 0
@@ -156,7 +175,7 @@ def main() -> int:
         if not rebuild():
             print("  rebuild failed")
             return 1
-    print(f"\nreached MAX_ITER={MAX_ITER} without success")
+    print(f"\nreached MAX_ITER={args.max_iter} without success")
     return 1
 
 

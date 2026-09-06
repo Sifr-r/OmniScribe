@@ -8,7 +8,7 @@
 #
 # Deviation from the design spec: `max_upload_mb` is deliberately NOT set on
 # the ocr row. The historical upload cap comes from RuntimeSettings
-# (`OMNISCRIBE_MAX_UPLOAD_MB`, default 10 GB); the plugin falls back to it
+# (`OMNISCRIBE_MAX_UPLOAD_MB`, default 1 GB); the plugin falls back to it
 # when this row omits the field. Add `max_upload_mb: <int>` here (or via
 # `OMNISCRIBE_PLUGIN_OCR__MAX_UPLOAD_MB`) to pin a tighter cap.
 plugins:

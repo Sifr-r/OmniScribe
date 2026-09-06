@@ -44,7 +44,7 @@ merge (per audit C-3):
 
 | Job | Runner | Python | Purpose |
 | --- | --- | --- | --- |
-| `fast (ubuntu, 3.11)` | ubuntu-latest | 3.11 | Fast tier — lint + mypy + fast tests + coverage ≥ 85 % |
+| `fast (ubuntu, 3.11)` | ubuntu-latest | 3.11 | Fast tier — lint + mypy + fast tests + coverage ≥ 80 % |
 | `fast (ubuntu, 3.13)` | ubuntu-latest | 3.13 | Fast tier on Ubuntu (Python 3.13) |
 | `fast (windows, 3.11)` | windows-latest | 3.11 | Windows runner path |
 | `client-tests (flutter)` | ubuntu-latest | n/a | Flutter client static analysis (`--fatal-infos`) and unit/widget test suite |
@@ -57,7 +57,7 @@ the workflow comments; the fast tier is 3.11 + 3.13 to keep the
 PR matrix from quadrupling in size.
 
 A `Codecov` and `Trivy SARIF` upload are informational; the inline
-`--cov-fail-under=85` (Sprint 4 / C-1) is the authoritative coverage
+`--cov-fail-under=80` (Sprint 4 / C-1) is the authoritative coverage
 gate.
 
 ## Core Paths

@@ -6,6 +6,7 @@ import logging
 import secrets
 import sqlite3
 import time
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -184,6 +185,62 @@ async def test_job_roundtrip_and_ordering(backend: SQLiteStateBackend) -> None:
     await backend.delete_job("job-0")
     assert await backend.get_job("job-0") is None
     assert await backend.clear_jobs() == 2
+
+
+async def test_job_started_at_roundtrip(backend: SQLiteStateBackend) -> None:
+    await backend.upsert_job(JobRecord(job_id="job-sa", status="queued"))
+    queued = await backend.get_job("job-sa")
+    assert queued is not None
+    assert queued.started_at is None
+
+    await backend.upsert_job(
+        replace(queued, status="running", started_at=123.45, updated_at=200.0)
+    )
+    running = await backend.get_job("job-sa")
+    assert running is not None
+    assert running.started_at == 123.45
+    assert running.status == "running"
+
+
+async def test_started_at_column_migrates_legacy_db(tmp_path: Path) -> None:
+    legacy = sqlite3.connect(str(tmp_path / "state.db"))
+    legacy.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS jobs (
+            job_id TEXT PRIMARY KEY,
+            status TEXT NOT NULL,
+            request_meta TEXT NOT NULL,
+            result_artifact_id TEXT,
+            result_artifact_token TEXT,
+            input_path TEXT,
+            created_at REAL NOT NULL,
+            updated_at REAL NOT NULL,
+            error TEXT
+        );
+        """
+    )
+    legacy.execute(
+        "INSERT INTO jobs (job_id, status, request_meta, created_at, updated_at) "
+        "VALUES ('legacy-1', 'complete', '{}', 1.0, 2.0)"
+    )
+    legacy.commit()
+    legacy.close()
+
+    impl = SQLiteStateBackend(
+        db_path=tmp_path / "state.db", blob_dir=tmp_path / "blobs"
+    )
+    await impl.open()
+    try:
+        record = await impl.get_job("legacy-1")
+        assert record is not None
+        assert record.started_at is None
+
+        await impl.upsert_job(replace(record, status="running", started_at=99.5))
+        updated = await impl.get_job("legacy-1")
+        assert updated is not None
+        assert updated.started_at == 99.5
+    finally:
+        await impl.aclose()
 
 
 async def test_channel_one_shot_consume(backend: SQLiteStateBackend) -> None:

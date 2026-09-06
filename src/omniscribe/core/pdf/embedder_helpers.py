@@ -496,7 +496,7 @@ def _embed_from_image_input(
 
                 for rect_coords, text in pages_data.get(page_num, []):
                     _draw_invisible_text(new_page, rect_coords, text, width, height)
-        new_doc.save(output_pdf_path)
+        new_doc.save(output_pdf_path, garbage=3, deflate=True)
     finally:
         new_doc.close()
 
