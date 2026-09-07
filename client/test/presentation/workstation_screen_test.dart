@@ -330,5 +330,25 @@ void main() {
       final pageStrip = tester.widget<PageStrip>(pageStripFinder);
       expect(pageStrip.orientation, equals(Axis.horizontal));
     });
+
+    testWidgets(
+        'Workstation displays activeModel in RightControlDock when document is loaded',
+        (WidgetTester tester) async {
+      tester.view.physicalSize = const Size(1920, 1080);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      await tester.pumpWidget(buildWorkstationTest());
+      await tester.pumpAndSettle();
+
+      final container = ProviderScope.containerOf(
+          tester.element(find.byType(WorkstationScreen)));
+      _loadDocumentWithBBox(container.read(workstationProvider.notifier));
+      await tester.pumpAndSettle();
+
+      // RightControlDock shows activeModel in the AI Engine card
+      expect(find.text('allenai/olmocr-2-7b'), findsOneWidget);
+    });
   });
 }

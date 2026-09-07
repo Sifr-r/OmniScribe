@@ -134,4 +134,49 @@ void main() {
       verifyZeroInteractions(apiClient);
     });
   });
+
+  group('OcrRepositoryImpl.cancelProgressChannel', () {
+    late _MockApiClient apiClient;
+    late OcrRepositoryImpl repo;
+
+    setUp(() {
+      apiClient = _MockApiClient();
+      repo = OcrRepositoryImpl(apiClient);
+    });
+
+    test('sends the channel session token as X-Session-Token', () async {
+      when(() => apiClient.post<Map<String, dynamic>>(
+            any(),
+            headers: any(named: 'headers'),
+          )).thenAnswer((_) async => <String, dynamic>{'cancelled': true});
+
+      final cancelled = await repo.cancelProgressChannel(
+        'ch-42',
+        sessionToken: 'sess-abc',
+      );
+
+      expect(cancelled, isTrue);
+
+      final captured = verify(() => apiClient.post<Map<String, dynamic>>(
+            ApiConstants.cancelProgress('ch-42'),
+            headers: captureAny(named: 'headers'),
+          )).captured.single as Map<String, dynamic>;
+      expect(captured['X-Session-Token'], 'sess-abc');
+    });
+
+    test('does not put the session token in the URL', () async {
+      when(() => apiClient.post<Map<String, dynamic>>(
+            any(),
+            headers: any(named: 'headers'),
+          )).thenAnswer((_) async => <String, dynamic>{'cancelled': true});
+
+      await repo.cancelProgressChannel('ch-42', sessionToken: 'sess-abc');
+
+      final path = verify(() => apiClient.post<Map<String, dynamic>>(
+            captureAny(),
+            headers: any(named: 'headers'),
+          )).captured.single as String;
+      expect(path, isNot(contains('sess-abc')));
+    });
+  });
 }

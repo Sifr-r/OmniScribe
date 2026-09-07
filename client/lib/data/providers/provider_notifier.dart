@@ -49,7 +49,11 @@ class ProviderBrowserNotifier extends Notifier<ProviderBrowserState> {
     }
   }
 
-  Future<void> fetchModelsForProvider(String id) async {
+  Future<void> fetchModelsForProvider(
+    String id, {
+    String? apiBase,
+    String? apiKey,
+  }) async {
     if (state.loadingModelIds.contains(id)) return;
 
     state = state.copyWith(
@@ -57,7 +61,11 @@ class ProviderBrowserNotifier extends Notifier<ProviderBrowserState> {
     );
 
     try {
-      final response = await _repo.getProviderModels(id);
+      final response = await _repo.getProviderModels(
+        id,
+        apiBase: apiBase,
+        apiKey: apiKey,
+      );
       final next = Map<String, List<String>>.from(state.modelsMap);
       if (response.models.isNotEmpty) {
         next[id] = response.models;
@@ -93,13 +101,21 @@ class ProviderBrowserNotifier extends Notifier<ProviderBrowserState> {
       newStatus[id] = res.valid
           ? 'Connected successfully (${res.modelCount} models)'
           : (res.error ?? 'Validation failed');
+
+      var nextModelsMap = state.modelsMap;
+      if (res.valid && res.models.isNotEmpty) {
+        nextModelsMap = Map<String, List<String>>.from(state.modelsMap);
+        nextModelsMap[id] = res.models;
+      }
+
       state = state.copyWith(
         validationStatus: newStatus,
+        modelsMap: nextModelsMap,
         isValidating: false,
       );
       if (res.valid) {
         // ignore: unawaited_futures
-        fetchModelsForProvider(id);
+        fetchModelsForProvider(id, apiBase: base, apiKey: key);
       }
       return res;
     } catch (e) {

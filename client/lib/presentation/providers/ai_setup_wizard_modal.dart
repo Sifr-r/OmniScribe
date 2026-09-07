@@ -5,6 +5,7 @@ import 'package:omniscribe_client/core/theme/app_colors.dart';
 import 'package:omniscribe_client/core/theme/app_typography.dart';
 import 'package:omniscribe_client/data/providers/provider_browser_state.dart';
 import 'package:omniscribe_client/data/providers/provider_notifier.dart';
+import 'package:omniscribe_client/data/providers/settings_notifier.dart';
 import 'package:omniscribe_client/presentation/common/app_badge.dart';
 import 'package:omniscribe_client/presentation/common/app_button.dart';
 import 'package:omniscribe_client/presentation/common/app_input.dart';
@@ -199,6 +200,13 @@ class _AISetupWizardModalState extends ConsumerState<AISetupWizardModal> {
         _isTesting = false;
         _testSuccess = res.valid;
         if (res.valid) {
+          if (res.models.isNotEmpty) {
+            if (_offlineModelController.text ==
+                    _selectedOfflineEngine.defaultModel &&
+                !res.models.contains(_offlineModelController.text)) {
+              _offlineModelController.text = res.models.first;
+            }
+          }
           _testMessage =
               'Success! Connected to ${_selectedOfflineEngine.displayName}. Found ${res.modelCount} ready model(s).';
         } else {
@@ -286,6 +294,8 @@ class _AISetupWizardModalState extends ConsumerState<AISetupWizardModal> {
         apiKey,
         model.isNotEmpty ? model : null,
       );
+
+      await ref.read(settingsStateProvider.notifier).load();
 
       if (mounted) {
         widget.onComplete?.call();
@@ -501,6 +511,11 @@ class _AISetupWizardModalState extends ConsumerState<AISetupWizardModal> {
   Widget _buildStepOfflineSetup(
       AppColorScheme colors, ProviderBrowserState browserState) {
     final isOllama = _selectedOfflineEngine == OfflineEngineType.ollama;
+    final providerId = isOllama ? 'ollama' : 'lmstudio';
+    final discoveredModels = browserState.modelsMap[providerId];
+    final offlineModels = (discoveredModels != null && discoveredModels.isNotEmpty)
+        ? discoveredModels
+        : <String>[_selectedOfflineEngine.defaultModel];
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -666,11 +681,55 @@ class _AISetupWizardModalState extends ConsumerState<AISetupWizardModal> {
         ),
         const SizedBox(height: 10),
 
-        AppInput(
-          controller: _offlineModelController,
-          label: 'Model Name / ID',
-          placeholder: _selectedOfflineEngine.defaultModel,
-          monospace: true,
+        // Model Selector
+        Row(
+          children: [
+            Expanded(
+              child: AppInput(
+                controller: _offlineModelController,
+                label: 'Model Name / ID',
+                placeholder: _selectedOfflineEngine.defaultModel,
+                monospace: true,
+              ),
+            ),
+            const SizedBox(width: 8),
+            Padding(
+              padding: const EdgeInsets.only(top: 22),
+              child: PopupMenuButton<String>(
+                tooltip: 'Select discovered model',
+                itemBuilder: (context) => offlineModels
+                    .map((m) => PopupMenuItem(
+                          value: m,
+                          child: Text(m,
+                              style: AppTypography.codeSmall(
+                                  color: colors.textPrimary)),
+                        ))
+                    .toList(),
+                onSelected: (m) =>
+                    setState(() => _offlineModelController.text = m),
+                child: Container(
+                  height: 38,
+                  padding: const EdgeInsets.symmetric(horizontal: 10),
+                  decoration: BoxDecoration(
+                    color: colors.cardRaised,
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(color: colors.border),
+                  ),
+                  child: Row(
+                    children: [
+                      Text(
+                        'Pick',
+                        style: AppTypography.labelMedium(color: colors.brand),
+                      ),
+                      const SizedBox(width: 4),
+                      Icon(Icons.arrow_drop_down,
+                          size: 16, color: colors.brand),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ],
         ),
         const SizedBox(height: 12),
 

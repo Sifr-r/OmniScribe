@@ -189,5 +189,35 @@ void main() {
       expect(find.text('Need an API key?'), findsOneWidget);
       expect(find.text('Open Console'), findsOneWidget);
     });
+
+    testWidgets(
+        'Offline Setup (Step 2A) includes model selection picker and Pick button',
+        (tester) async {
+      await tester.pumpWidget(
+        _wrapWithTheme(
+          Builder(
+            builder: (context) => ElevatedButton(
+              onPressed: () => AISetupWizardModal.show(context),
+              child: const Text('Open Wizard'),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Open Wizard'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Run 100% Offline (Free & Private)'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Model Name / ID'), findsOneWidget);
+      expect(find.text('Pick'), findsOneWidget);
+
+      await tester.ensureVisible(find.text('Pick'));
+      await tester.tap(find.text('Pick'));
+      await tester.pumpAndSettle();
+      expect(find.text('allenai/olmocr-2-7b'), findsWidgets);
+    });
   });
 }

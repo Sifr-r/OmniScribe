@@ -25,7 +25,11 @@ class SettingsNotifier extends Notifier<SettingsState> {
       // the model call so the first load() doesn't use the previous
       // (initial-default) activeProviderId.
       final activeProviderId = config.ocrProvider ?? state.activeProviderId;
-      final ocrModels = await _repo.getModelsForProvider(activeProviderId);
+      // api_base, not the provider id, decides which endpoint is probed:
+      // /api/config never reports a provider, so activeProviderId can be a
+      // stale client-side default.
+      final ocrModels = await _repo.getModelsForProvider(activeProviderId,
+          apiBase: config.apiBase);
 
       state = state.copyWith(
         isLoading: false,
@@ -41,36 +45,10 @@ class SettingsNotifier extends Notifier<SettingsState> {
     }
   }
 
-  Future<void> updateOcr(ProcessSettings next) async {
+  Future<void> updateOcr(ConfigUpdate updates) async {
     state = state.copyWith(isLoading: true, clearError: true);
     try {
-      await _repo.updateConfig(
-        ConfigUpdate(
-          apiBase: next.apiBase,
-          apiKey: next.apiKey.isNotEmpty ? next.apiKey : null,
-          model: next.model,
-          pipelineMode: next.pipelineMode,
-          denseMode: next.denseMode,
-          denseThreshold: next.denseThreshold,
-          dpi: next.dpi,
-          concurrency: next.concurrency,
-          refine: next.refine,
-          maxImageDim: next.maxImageDim,
-          selfCorrection: next.selfCorrection,
-          binarize: next.binarize,
-          dualEngine: next.dualEngine,
-          spellcheck: next.spellcheck,
-          crossPage: next.crossPage,
-          preprocessPages: next.preprocessPages,
-          orientationDetection: next.orientationDetection,
-          deskew: next.deskew,
-          denoise: next.denoise,
-          normalizeContrast: next.normalizeContrast,
-          cropCleanup: next.cropCleanup,
-          qualityRouting: next.qualityRouting,
-          documentProcessors: next.documentProcessors,
-        ),
-      );
+      await _repo.updateConfig(updates);
       await load();
     } catch (e) {
       state = state.copyWith(isLoading: false, error: e.toString());
@@ -83,6 +61,23 @@ class SettingsNotifier extends Notifier<SettingsState> {
     ref.read(apiBaseUrlProvider.notifier).set(url);
     // Trigger a config refresh against the new URL.
     load();
+  }
+
+  /// Applies the bearer the backend expects once `OMNISCRIBE_AUTH_TOKEN` is
+  /// armed. Session-only, like the base URL; an empty [token] unsets it, for
+  /// switching back to a tokenless loopback server.
+  Future<void> setServerBearerToken(String? token) async {
+    final trimmed = (token ?? '').trim();
+    final hasToken = trimmed.isNotEmpty;
+    state = state.copyWith(
+      serverBearerToken: hasToken ? trimmed : null,
+      clearServerBearerToken: !hasToken,
+    );
+    ref.read(authTokenProvider.notifier).set(hasToken ? trimmed : null);
+    // authRequiredProvider never clears itself on a later success, so applying
+    // a token has to dismiss it; a still-wrong one re-arms it via load().
+    ref.read(authRequiredProvider.notifier).set(false);
+    await load();
   }
 
   void setActiveProvider(String id) {

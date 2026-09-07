@@ -407,7 +407,8 @@ void main() {
           headers: const {},
         ),
       );
-      when(() => ocrRepo.cancelProgressChannel(any()))
+      when(() => ocrRepo.cancelProgressChannel(any(),
+              sessionToken: any(named: 'sessionToken')))
           .thenAnswer((_) async => true);
 
       tester.view.physicalSize = const Size(1920, 1080);

@@ -28,6 +28,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   String? _saveStatusMessage;
 
   late TextEditingController _serverUrlController;
+  late TextEditingController _bearerTokenController;
+  late TextEditingController _apiBaseController;
+  late TextEditingController _apiKeyController;
+  late TextEditingController _modelController;
   late TextEditingController _dpiController;
   late TextEditingController _concurrencyController;
   late TextEditingController _denseThresholdController;
@@ -47,6 +51,13 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final settings = ref.read(settingsStateProvider);
     final config = settings.runtimeConfig;
     _serverUrlController = TextEditingController(text: settings.serverBaseUrl);
+    _bearerTokenController =
+        TextEditingController(text: settings.serverBearerToken ?? '');
+    _apiBaseController = TextEditingController(text: config?.apiBase ?? '');
+    _apiKeyController = TextEditingController(
+      text: config?.apiKey == '******' ? '' : (config?.apiKey ?? ''),
+    );
+    _modelController = TextEditingController(text: config?.model ?? '');
     _dpiController = TextEditingController(text: '${config?.dpi ?? 200}');
     _concurrencyController =
         TextEditingController(text: '${config?.concurrency ?? 4}');
@@ -61,6 +72,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   @override
   void dispose() {
     _serverUrlController.dispose();
+    _bearerTokenController.dispose();
+    _apiBaseController.dispose();
+    _apiKeyController.dispose();
+    _modelController.dispose();
     _dpiController.dispose();
     _concurrencyController.dispose();
     _denseThresholdController.dispose();
@@ -90,21 +105,27 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         return;
       }
 
-      final ProcessSettings payload =
-          ProcessSettings.defaultSettings().copyWith(
-        apiBase: _serverUrlController.text.trim().isEmpty
-            ? runtimeConfig.apiBase
-            : _serverUrlController.text.trim(),
-        dpi: int.tryParse(_dpiController.text) ?? runtimeConfig.dpi,
-        concurrency: int.tryParse(_concurrencyController.text) ??
-            runtimeConfig.concurrency,
-        denseThreshold: int.tryParse(_denseThresholdController.text) ??
-            runtimeConfig.denseThreshold,
-        maxImageDim: int.tryParse(_maxImageDimController.text) ??
-            runtimeConfig.maxImageDim,
+      // Only the fields this screen edits. ConfigUpdate omits nulls and the
+      // server merges just the keys present, so everything else keeps its
+      // current value. Building this from ProcessSettings.defaultSettings()
+      // used to reset every pipeline flag shown elsewhere.
+      final ConfigUpdate update = ConfigUpdate(
+        apiBase: _apiBaseController.text.trim().isNotEmpty
+            ? _apiBaseController.text.trim()
+            : runtimeConfig.apiBase,
+        apiKey: _apiKeyController.text.trim().isNotEmpty
+            ? _apiKeyController.text.trim()
+            : null,
+        model: _modelController.text.trim().isNotEmpty
+            ? _modelController.text.trim()
+            : runtimeConfig.model,
+        dpi: int.tryParse(_dpiController.text),
+        concurrency: int.tryParse(_concurrencyController.text),
+        denseThreshold: int.tryParse(_denseThresholdController.text),
+        maxImageDim: int.tryParse(_maxImageDimController.text),
       );
 
-      await notifier.updateOcr(payload);
+      await notifier.updateOcr(update);
 
       if (mounted) {
         setState(() {
@@ -127,6 +148,24 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final settings = ref.watch(settingsStateProvider);
     final providerState = ref.watch(providerBrowserProvider);
     final colors = context.colors;
+
+    // Keep controllers in sync when runtimeConfig updates reactively
+    ref.listen<String?>(
+      settingsStateProvider.select((s) => s.runtimeConfig?.model),
+      (previous, next) {
+        if (next != null && next.isNotEmpty && previous != next) {
+          _modelController.text = next;
+        }
+      },
+    );
+    ref.listen<String?>(
+      settingsStateProvider.select((s) => s.runtimeConfig?.apiBase),
+      (previous, next) {
+        if (next != null && next.isNotEmpty && previous != next) {
+          _apiBaseController.text = next;
+        }
+      },
+    );
 
     return Scaffold(
       backgroundColor: colors.background,
@@ -316,6 +355,37 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   ),
                 ],
               ),
+              const SizedBox(height: 12),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Expanded(
+                    child: AppInput(
+                      key: const ValueKey('settings-bearer-token'),
+                      controller: _bearerTokenController,
+                      label: 'Bearer Token',
+                      placeholder: 'OMNISCRIBE_AUTH_TOKEN',
+                      helperText:
+                          'Leave empty when the backend has no OMNISCRIBE_AUTH_TOKEN',
+                      obscureText: true,
+                      showClearButton: true,
+                      monospace: true,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  AppButton(
+                    text: 'Apply token',
+                    variant: AppButtonVariant.secondary,
+                    icon: const Icon(Icons.key, size: 14),
+                    onPressed: () {
+                      ref
+                          .read(settingsStateProvider.notifier)
+                          .setServerBearerToken(
+                              _bearerTokenController.text.trim());
+                    },
+                  ),
+                ],
+              ),
             ],
           ),
         ),
@@ -360,7 +430,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                                   ).copyWith(fontWeight: FontWeight.w600),
                                 ),
                                 Text(
-                                  'Endpoint: ${config?.apiBase ?? "—"} | Model: ${config?.model ?? "—"}',
+                                  'Endpoint: ${config?.apiBase ?? "—"}',
                                   style: AppTypography.codeSmall(
                                     color: colors.textMuted,
                                   ),
@@ -383,6 +453,72 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                       ),
                     ),
                   ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              AppInput(
+                key: const ValueKey('settings-api-base'),
+                controller: _apiBaseController,
+                label: 'API Base URL',
+                placeholder: 'e.g. http://localhost:1234/v1',
+                monospace: true,
+              ),
+              const SizedBox(height: 16),
+              AppInput(
+                key: const ValueKey('settings-api-key'),
+                controller: _apiKeyController,
+                label: 'API Key (optional for local)',
+                placeholder: 'Enter API key if required',
+                obscureText: true,
+                monospace: true,
+              ),
+              const SizedBox(height: 16),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Expanded(
+                    child: AppInput(
+                      key: const ValueKey('settings-model-id'),
+                      controller: _modelController,
+                      label: 'Model ID',
+                      placeholder: 'e.g. deepseek-ocr-2',
+                      helperText: settings.ocrModels.isEmpty
+                          ? 'Browse providers to discover available models'
+                          : '${settings.ocrModels.length} model(s) discovered '
+                              'for ${settings.activeProviderId}',
+                      monospace: true,
+                    ),
+                  ),
+                  if (settings.ocrModels.isNotEmpty) ...[
+                    const SizedBox(width: 12),
+                    PopupMenuButton<String>(
+                      tooltip: 'Pick a discovered model',
+                      padding: EdgeInsets.zero,
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(4, 0, 4, 22),
+                        child: Text(
+                          'Select model (${settings.ocrModels.length})',
+                          style: AppTypography.bodySmall(
+                            color: colors.brand,
+                          ).copyWith(fontWeight: FontWeight.w500),
+                        ),
+                      ),
+                      itemBuilder: (context) => settings.ocrModels
+                          .map(
+                            (m) => PopupMenuItem<String>(
+                              value: m,
+                              child: Text(
+                                m,
+                                style: AppTypography.codeSmall(
+                                  color: colors.textPrimary,
+                                ),
+                              ),
+                            ),
+                          )
+                          .toList(),
+                      onSelected: (model) => _modelController.text = model,
+                    ),
+                  ],
                 ],
               ),
               const SizedBox(height: 16),
@@ -559,7 +695,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               ),
               SizedBox(height: 12),
               AppBadge(
-                label: 'Auth middleware deferred — settings have no effect today',
+                label:
+                    'Enforced server-side by OMNISCRIBE_AUTH_TOKEN — set the bearer under General & Server',
                 variant: AppBadgeVariant.neutral,
               ),
             ],

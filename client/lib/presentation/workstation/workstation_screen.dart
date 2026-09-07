@@ -6,6 +6,7 @@ import 'package:omniscribe_client/core/theme/app_colors.dart';
 import 'package:omniscribe_client/core/theme/app_typography.dart';
 import 'package:omniscribe_client/data/models/process_settings.dart';
 import 'package:omniscribe_client/data/providers/settings_notifier.dart';
+import 'package:omniscribe_client/data/providers/settings_state.dart';
 import 'package:omniscribe_client/data/providers/workstation_notifier.dart';
 import 'package:omniscribe_client/data/providers/workstation_state.dart';
 import 'package:omniscribe_client/presentation/common/app_badge.dart';
@@ -30,6 +31,18 @@ class WorkstationScreen extends ConsumerStatefulWidget {
 class _WorkstationScreenState extends ConsumerState<WorkstationScreen> {
   ProcessSettings _processSettings = const ProcessSettings();
 
+  @override
+  void initState() {
+    super.initState();
+    final config = ref.read(settingsStateProvider).runtimeConfig;
+    if (config != null && config.model.isNotEmpty) {
+      _processSettings = _processSettings.copyWith(
+        model: config.model,
+        apiBase: config.apiBase,
+      );
+    }
+  }
+
   /// Triggers document processing (Sync / Async OCR with Live streaming)
   Future<void> _handleProcessDocument(ProcessSettings settings) async {
     final wsState = ref.read(workstationProvider);
@@ -37,8 +50,18 @@ class _WorkstationScreenState extends ConsumerState<WorkstationScreen> {
 
     final notifier = ref.read(workstationProvider.notifier);
     final globalSettings = ref.read(settingsStateProvider);
+    final effectiveModel = (globalSettings.runtimeConfig?.model.isNotEmpty ?? false)
+        ? globalSettings.runtimeConfig!.model
+        : settings.model;
+    final effectiveApiBase = (globalSettings.runtimeConfig?.apiBase.isNotEmpty ?? false)
+        ? globalSettings.runtimeConfig!.apiBase
+        : settings.apiBase;
     final effectiveUseAsync = settings.useAsync || globalSettings.useAsync;
-    final effectiveSettings = settings.copyWith(useAsync: effectiveUseAsync);
+    final effectiveSettings = settings.copyWith(
+      model: effectiveModel,
+      apiBase: effectiveApiBase,
+      useAsync: effectiveUseAsync,
+    );
 
     try {
       if (effectiveUseAsync) {
@@ -64,6 +87,21 @@ class _WorkstationScreenState extends ConsumerState<WorkstationScreen> {
 
   @override
   Widget build(BuildContext context) {
+    ref.listen<SettingsState>(settingsStateProvider, (prev, next) {
+      final config = next.runtimeConfig;
+      if (config != null && config.model.isNotEmpty) {
+        if (_processSettings.model != config.model ||
+            _processSettings.apiBase != config.apiBase) {
+          setState(() {
+            _processSettings = _processSettings.copyWith(
+              model: config.model,
+              apiBase: config.apiBase,
+            );
+          });
+        }
+      }
+    });
+
     final colors = context.colors;
     final wsState = ref.watch(workstationProvider);
     final notifier = ref.read(workstationProvider.notifier);

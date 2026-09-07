@@ -62,8 +62,10 @@ abstract class OcrRepository {
   /// Request a fresh WebSocket progress channel session handle.
   Future<ProgressSessionHandle> openProgressSession({String? clientId});
 
-  /// Cancel an active progress channel.
-  Future<bool> cancelProgressChannel(String channelId);
+  /// Cancel an active progress channel. The server rejects a tokenless cancel
+  /// with 401, so [sessionToken] must be the handle from [openProgressSession].
+  Future<bool> cancelProgressChannel(String channelId,
+      {required String sessionToken});
 
   /// Fetch text artifact content by ID with artifact bearer token.
   Future<String> getTextArtifact(String artifactId, String token);
@@ -250,9 +252,11 @@ class OcrRepositoryImpl implements OcrRepository {
   }
 
   @override
-  Future<bool> cancelProgressChannel(String channelId) async {
+  Future<bool> cancelProgressChannel(String channelId,
+      {required String sessionToken}) async {
     final json = await _apiClient.post<Map<String, dynamic>>(
       ApiConstants.cancelProgress(channelId),
+      headers: <String, dynamic>{'X-Session-Token': sessionToken},
     );
     return json['cancelled'] as bool? ?? false;
   }

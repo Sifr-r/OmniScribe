@@ -9,6 +9,7 @@ class SettingsState {
     required this.activeProviderId,
     required this.ocrModels,
     required this.serverBaseUrl,
+    required this.serverBearerToken,
     required this.useAsync,
     required this.error,
     required this.isDarkMode,
@@ -21,6 +22,7 @@ class SettingsState {
         activeProviderId = 'openai',
         ocrModels = const <String>[],
         serverBaseUrl = 'http://127.0.0.1:8000',
+        serverBearerToken = null,
         useAsync = false,
         error = null,
         isDarkMode = false;
@@ -30,6 +32,10 @@ class SettingsState {
   final String activeProviderId;
   final List<String> ocrModels;
   final String serverBaseUrl;
+
+  /// Bearer sent to the OmniScribe backend when it arms `OMNISCRIBE_AUTH_TOKEN`.
+  /// Session-only, like [serverBaseUrl], and unrelated to a provider API key.
+  final String? serverBearerToken;
   final bool useAsync;
   final String? error;
   final bool isDarkMode;
@@ -40,11 +46,13 @@ class SettingsState {
     String? activeProviderId,
     List<String>? ocrModels,
     String? serverBaseUrl,
+    String? serverBearerToken,
     bool? useAsync,
     String? error,
     bool? isDarkMode,
     bool clearError = false,
     bool clearRuntimeConfig = false,
+    bool clearServerBearerToken = false,
   }) {
     return SettingsState(
       isLoading: isLoading ?? this.isLoading,
@@ -53,6 +61,9 @@ class SettingsState {
       activeProviderId: activeProviderId ?? this.activeProviderId,
       ocrModels: ocrModels ?? this.ocrModels,
       serverBaseUrl: serverBaseUrl ?? this.serverBaseUrl,
+      serverBearerToken: clearServerBearerToken
+          ? null
+          : (serverBearerToken ?? this.serverBearerToken),
       useAsync: useAsync ?? this.useAsync,
       error: clearError ? null : (error ?? this.error),
       isDarkMode: isDarkMode ?? this.isDarkMode,
@@ -68,6 +79,7 @@ class SettingsState {
         other.activeProviderId == activeProviderId &&
         listEquals(other.ocrModels, ocrModels) &&
         other.serverBaseUrl == serverBaseUrl &&
+        other.serverBearerToken == serverBearerToken &&
         other.useAsync == useAsync &&
         other.error == error &&
         other.isDarkMode == isDarkMode;
@@ -80,6 +92,7 @@ class SettingsState {
         activeProviderId,
         Object.hashAll(ocrModels),
         serverBaseUrl,
+        serverBearerToken,
         useAsync,
         error,
         isDarkMode,

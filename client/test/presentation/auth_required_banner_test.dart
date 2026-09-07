@@ -39,6 +39,10 @@ void main() {
     await tester.pump();
     expect(find.text('Authentication required'), findsOneWidget);
     expect(find.text('Open Settings'), findsOneWidget);
+    expect(
+      find.textContaining('Check the bearer token in Settings'),
+      findsOneWidget,
+    );
   });
 
   testWidgets('dismiss button clears the flag', (tester) async {

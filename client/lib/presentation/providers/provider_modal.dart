@@ -71,14 +71,25 @@ class _ProviderModalState extends ConsumerState<ProviderModal> {
     if (_selectedProvider != null) {
       _initFormForProvider(_selectedProvider!);
     }
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        ref.read(providerBrowserProvider.notifier).fetchProviders();
+      }
+    });
   }
 
   void _initFormForProvider(ProviderPreset provider) {
     _apiBaseController.text = provider.apiBase ?? provider.recommendedBaseUrl;
     _apiKeyController.text = '';
+    final cachedModels =
+        ref.read(providerBrowserProvider).modelsMap[provider.id];
+    final models = (cachedModels != null && cachedModels.isNotEmpty)
+        ? cachedModels
+        : provider.models;
     _modelController.text = provider.defaultModel.isNotEmpty
         ? provider.defaultModel
-        : (provider.models.isNotEmpty ? provider.models.first : '');
+        : (models.isNotEmpty ? models.first : '');
     _testMessage = null;
     _testSuccess = false;
   }
@@ -118,6 +129,27 @@ class _ProviderModalState extends ConsumerState<ProviderModal> {
         _testMessage = res.valid
             ? 'Endpoint reachable! Found ${res.modelCount} models.'
             : (res.error ?? 'Validation failed');
+
+        if (res.valid) {
+          final state = ref.read(providerBrowserProvider);
+          final discoveredModels = res.models.isNotEmpty
+              ? res.models
+              : (state.modelsMap[_selectedProvider!.id] ??
+                  _selectedProvider!.models);
+
+          final current = _modelController.text.trim();
+          if (current.isEmpty ||
+              (discoveredModels.isNotEmpty &&
+                  !discoveredModels.contains(current))) {
+            if (res.models.isNotEmpty) {
+              _modelController.text = res.models.first;
+            } else if (_selectedProvider!.defaultModel.isNotEmpty) {
+              _modelController.text = _selectedProvider!.defaultModel;
+            } else if (discoveredModels.isNotEmpty) {
+              _modelController.text = discoveredModels.first;
+            }
+          }
+        }
       });
     }
   }
@@ -130,16 +162,16 @@ class _ProviderModalState extends ConsumerState<ProviderModal> {
 
     try {
       final notifier = ref.read(providerBrowserProvider.notifier);
+      final modelText = _modelController.text.trim();
       await notifier.setActiveProvider(
         _selectedProvider!.id,
         _apiBaseController.text.trim(),
         _apiKeyController.text.trim().isNotEmpty
             ? _apiKeyController.text.trim()
             : null,
-        _modelController.text.trim().isNotEmpty
-            ? _modelController.text.trim()
-            : null,
+        modelText.isNotEmpty ? modelText : null,
       );
+      await ref.read(settingsStateProvider.notifier).load();
 
       if (mounted) {
         widget.onApplied?.call();
@@ -195,12 +227,45 @@ class _ProviderModalState extends ConsumerState<ProviderModal> {
               ),
             ),
           ),
+        ] else if (state.error != null && state.providers.isEmpty) ...[
+          Center(
+            child: Padding(
+              padding: const EdgeInsets.all(32),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    'Could not load the provider catalog.',
+                    style: AppTypography.bodySmall(
+                      color: colors.textPrimary,
+                    ).copyWith(fontWeight: FontWeight.w600),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    state.error!,
+                    textAlign: TextAlign.center,
+                    style: AppTypography.codeSmall(color: colors.textMuted),
+                  ),
+                  const SizedBox(height: 16),
+                  AppButton(
+                    text: 'Retry',
+                    variant: AppButtonVariant.secondary,
+                    onPressed: () => ref
+                        .read(providerBrowserProvider.notifier)
+                        .fetchProviders(),
+                  ),
+                ],
+              ),
+            ),
+          ),
         ] else if (state.filteredProviders.isEmpty) ...[
           Center(
             child: Padding(
               padding: const EdgeInsets.all(32),
               child: Text(
-                'No providers found matching "${_searchController.text}".',
+                _searchController.text.trim().isEmpty
+                    ? 'No providers available.'
+                    : 'No providers found matching "${_searchController.text}".',
                 style: AppTypography.bodySmall(color: colors.textMuted),
               ),
             ),
@@ -304,7 +369,10 @@ class _ProviderModalState extends ConsumerState<ProviderModal> {
   Widget _buildConnectForm(
       AppColorScheme colors, ProviderBrowserState state) {
     final p = _selectedProvider!;
-    final availableModels = state.modelsMap[p.id] ?? p.models;
+    final cachedModels = state.modelsMap[p.id];
+    final availableModels = (cachedModels != null && cachedModels.isNotEmpty)
+        ? cachedModels
+        : p.models;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,

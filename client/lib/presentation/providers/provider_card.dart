@@ -88,63 +88,67 @@ class _ProviderCardState extends State<ProviderCard> {
               ),
               const SizedBox(width: 10),
               Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Row(
-                      children: [
-                        Flexible(
-                          child: Text(
-                            widget.provider.name,
-                            style: AppTypography.bodyMedium(
-                              color: colors.textPrimary,
-                            ).copyWith(fontWeight: FontWeight.w600),
-                            overflow: TextOverflow.ellipsis,
+                child: InkWell(
+                  onTap: widget.onConnect,
+                  borderRadius: BorderRadius.circular(4),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Row(
+                        children: [
+                          Flexible(
+                            child: Text(
+                              widget.provider.name,
+                              style: AppTypography.bodyMedium(
+                                color: colors.textPrimary,
+                              ).copyWith(fontWeight: FontWeight.w600),
+                              overflow: TextOverflow.ellipsis,
+                            ),
                           ),
-                        ),
-                        if (widget.isActive) ...[
-                          const SizedBox(width: 6),
-                          const AppBadge(
-                            label: 'Active',
-                            variant: AppBadgeVariant.brand,
-                          ),
+                          if (widget.isActive) ...[
+                            const SizedBox(width: 6),
+                            const AppBadge(
+                              label: 'Active',
+                              variant: AppBadgeVariant.brand,
+                            ),
+                          ],
+                          if (widget.provider.isRecommended ?? false) ...[
+                            const SizedBox(width: 6),
+                            const AppBadge(
+                              label: 'Recommended',
+                              variant: AppBadgeVariant.info,
+                            ),
+                          ],
+                          if (!widget.provider.requiresKey) ...[
+                            const SizedBox(width: 6),
+                            const AppBadge(
+                              label: 'Local',
+                              variant: AppBadgeVariant.success,
+                            ),
+                          ],
+                          if (widget.provider.isCustom ?? false) ...[
+                            const SizedBox(width: 6),
+                            const AppBadge(
+                              label: 'Custom',
+                              variant: AppBadgeVariant.warning,
+                            ),
+                          ],
                         ],
-                        if (widget.provider.isRecommended ?? false) ...[
-                          const SizedBox(width: 6),
-                          const AppBadge(
-                            label: 'Recommended',
-                            variant: AppBadgeVariant.info,
-                          ),
-                        ],
-                        if (!widget.provider.requiresKey) ...[
-                          const SizedBox(width: 6),
-                          const AppBadge(
-                            label: 'Local',
-                            variant: AppBadgeVariant.success,
-                          ),
-                        ],
-                        if (widget.provider.isCustom ?? false) ...[
-                          const SizedBox(width: 6),
-                          const AppBadge(
-                            label: 'Custom',
-                            variant: AppBadgeVariant.warning,
-                          ),
-                        ],
-                      ],
-                    ),
-                    if (widget.provider.description.isNotEmpty) ...[
-                      const SizedBox(height: 2),
-                      Text(
-                        widget.provider.description,
-                        style: AppTypography.bodySmall(
-                          color: colors.textMuted,
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
                       ),
+                      if (widget.provider.description.isNotEmpty) ...[
+                        const SizedBox(height: 2),
+                        Text(
+                          widget.provider.description,
+                          style: AppTypography.bodySmall(
+                            color: colors.textMuted,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
                     ],
-                  ],
+                  ),
                 ),
               ),
               const SizedBox(width: 8),
@@ -156,6 +160,8 @@ class _ProviderCardState extends State<ProviderCard> {
                         widget.isLoadingModels ? null : widget.onRefreshModels,
                     variant: AppButtonVariant.ghost,
                     size: AppButtonSize.sm,
+                    loading: widget.isLoadingModels,
+                    tooltip: 'Refresh models',
                     icon: const Icon(Icons.refresh, size: 14),
                   ),
                   const SizedBox(width: 4),
@@ -187,9 +193,15 @@ class _ProviderCardState extends State<ProviderCard> {
               children: [
                 InkWell(
                   onTap: () {
+                    final willExpand = !_isExpanded;
                     setState(() {
-                      _isExpanded = !_isExpanded;
+                      _isExpanded = willExpand;
                     });
+                    if (willExpand &&
+                        widget.models.isEmpty &&
+                        !widget.isLoadingModels) {
+                      widget.onRefreshModels();
+                    }
                   },
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -241,11 +253,37 @@ class _ProviderCardState extends State<ProviderCard> {
                     ],
                   ),
                 ),
-                if (_isExpanded && effectiveModels.isNotEmpty) ...[
+                if (_isExpanded) ...[
                   const SizedBox(height: 8),
                   Divider(color: colors.border, height: 1),
                   const SizedBox(height: 6),
-                  ConstrainedBox(
+                  if (effectiveModels.isEmpty)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 6),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              'No models discovered yet.',
+                              style: AppTypography.codeSmall(
+                                color: colors.textMuted,
+                              ),
+                            ),
+                          ),
+                          AppButton(
+                            text: 'Fetch',
+                            size: AppButtonSize.sm,
+                            variant: AppButtonVariant.ghost,
+                            loading: widget.isLoadingModels,
+                            onPressed: widget.isLoadingModels
+                                ? null
+                                : widget.onRefreshModels,
+                          ),
+                        ],
+                      ),
+                    )
+                  else
+                    ConstrainedBox(
                     constraints: const BoxConstraints(maxHeight: 140),
                     child: ListView.separated(
                       shrinkWrap: true,

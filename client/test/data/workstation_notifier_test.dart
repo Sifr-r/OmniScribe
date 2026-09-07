@@ -45,7 +45,8 @@ void main() {
         )).thenAnswer((_) async {});
     when(() => wsClient.cancelChannel()).thenReturn(null);
     when(() => wsClient.disconnect()).thenAnswer((_) async {});
-    when(() => ocrRepo.cancelProgressChannel(any()))
+    when(() => ocrRepo.cancelProgressChannel(any(),
+            sessionToken: any(named: 'sessionToken')))
         .thenAnswer((_) async => true);
   });
 
@@ -646,7 +647,8 @@ void main() {
 
       notifier.loadDocument(Uint8List.fromList([1, 2]), 'doc.pdf');
 
-      when(() => ocrRepo.cancelProgressChannel('ch-1'))
+      when(() => ocrRepo.cancelProgressChannel('ch-1',
+              sessionToken: any(named: 'sessionToken')))
           .thenAnswer((_) async => true);
       when(() => ocrRepo.cancelJob('job-1')).thenAnswer((_) async => true);
 
@@ -705,7 +707,8 @@ void main() {
       await notifier.processOcrSync();
 
       verify(() => wsClient.disconnect()).called(1);
-      verify(() => ocrRepo.cancelProgressChannel('ch-sync-cleanup')).called(1);
+      verify(() => ocrRepo.cancelProgressChannel('ch-sync-cleanup',
+          sessionToken: 'tok-sync-cleanup')).called(1);
     });
 
     test('processOcrAsync failure closes WS and cancels channel', () async {
@@ -736,7 +739,8 @@ void main() {
       );
 
       verify(() => wsClient.disconnect()).called(1);
-      verify(() => ocrRepo.cancelProgressChannel('ch-async-fail')).called(1);
+      verify(() => ocrRepo.cancelProgressChannel('ch-async-fail',
+          sessionToken: 'tok-async-fail')).called(1);
     });
 
     test('processOcrAsync success sets isProcessing true and stage Queued',
@@ -803,7 +807,9 @@ void main() {
       await notifier.processOcrAsync();
 
       verifyNever(() => wsClient.disconnect());
-      verifyNever(() => ocrRepo.cancelProgressChannel('ch-async-success-cleanup'));
+      verifyNever(() => ocrRepo.cancelProgressChannel(
+          'ch-async-success-cleanup',
+          sessionToken: any(named: 'sessionToken')));
     });
 
     test('dispose triggers full cleanup', () async {
@@ -821,7 +827,8 @@ void main() {
       await Future<void>.delayed(Duration.zero);
 
       verify(() => wsClient.disconnect()).called(1);
-      verify(() => ocrRepo.cancelProgressChannel('ch-dispose')).called(1);
+      verify(() => ocrRepo.cancelProgressChannel('ch-dispose',
+          sessionToken: any(named: 'sessionToken'))).called(1);
     });
 
     test(

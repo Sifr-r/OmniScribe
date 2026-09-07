@@ -160,6 +160,9 @@ void main() {
                 response: Response(
                   requestOptions: options,
                   statusCode: 401,
+                  headers: Headers.fromMap(const <String, List<String>>{
+                    'www-authenticate': <String>['Bearer realm="omniscribe"'],
+                  }),
                   data: {'error': 'unauthorized', 'detail': 'Invalid API Key'},
                 ),
               ),
@@ -175,7 +178,7 @@ void main() {
         // Expected.
       }
       expect(unauthInvocations, equals(1),
-          reason: 'onUnauthorized must fire on 401');
+          reason: 'onUnauthorized must fire on a bearer-challenged 401');
     });
 
     test('onUnauthorized callback does NOT fire on non-401 errors', () async {

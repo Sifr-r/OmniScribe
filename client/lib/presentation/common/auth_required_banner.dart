@@ -7,10 +7,11 @@ import 'package:omniscribe_client/data/providers/repository_providers.dart';
 import 'package:omniscribe_client/presentation/common/app_button.dart';
 import 'package:omniscribe_client/presentation/shell/shell_state.dart';
 
-/// Dismissible banner shown when the API client has observed a 401 response
-/// since the last dismiss. Matches the Svelte `AuthRequiredBanner.svelte`
-/// reference; the current server does not enforce auth (deferred per harness
-/// rebuild spec), so this banner is a no-op until the auth middleware ships.
+/// Dismissible banner shown when the backend refused this client's bearer
+/// credential — a 401 answering with ``WWW-Authenticate: Bearer``, which only
+/// ``BearerAuthMiddleware`` sends. The token is entered in Settings under
+/// "OmniScribe Backend Connection" and lives for the session; flipping the flag
+/// does not auto-clear, and a 401 guarding some other credential never gets here.
 class AuthRequiredBanner extends ConsumerWidget {
   const AuthRequiredBanner({super.key});
 
@@ -72,7 +73,7 @@ class AuthRequiredBanner extends ConsumerWidget {
                             ),
                             const SizedBox(height: 2),
                             Text(
-                              '\u2014 the API rejected the request with a 401. Set a bearer token in Settings to continue.',
+                              '\u2014 the API rejected the request with a 401. Check the bearer token in Settings to continue.',
                               style: TextStyle(color: colors.textMuted),
                             ),
                           ],

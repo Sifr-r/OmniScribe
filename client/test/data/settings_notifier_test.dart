@@ -47,7 +47,8 @@ void main() {
         'ocr_provider': 'openai',
       });
       when(() => repo.getConfig()).thenAnswer((_) async => config);
-      when(() => repo.getModelsForProvider('openai'))
+      when(() => repo.getModelsForProvider('openai',
+              apiBase: 'http://example.test/v1'))
           .thenAnswer((_) async => ['allenai/olmocr-2-7b', 'qwen2-vl']);
 
       final container = makeContainer();
@@ -75,7 +76,8 @@ void main() {
         'ocr_provider': 'openai',
       });
       when(() => repo.getConfig()).thenAnswer((_) async => config);
-      when(() => repo.getModelsForProvider('openai'))
+      when(() => repo.getModelsForProvider('openai',
+              apiBase: 'http://example.test/v1'))
           .thenAnswer((_) async => ['gpt-4o']);
 
       final container = makeContainer();
@@ -87,7 +89,37 @@ void main() {
       final state = container.read(settingsStateProvider);
       expect(state.activeProviderId, 'openai');
       expect(state.ocrModels, ['gpt-4o']);
-      verify(() => repo.getModelsForProvider('openai')).called(1);
+      verify(() => repo.getModelsForProvider('openai',
+          apiBase: 'http://example.test/v1')).called(1);
+    });
+
+    test(
+        'queries models against the configured api_base when the server '
+        'names no provider', () async {
+      // /api/config has no provider key, so activeProviderId keeps its
+      // client-side default. Querying that template's public URL would make
+      // the picker offer cloud models for a local LM Studio endpoint.
+      final config = RuntimeConfig.fromJson(<String, dynamic>{
+        'api_base': 'http://localhost:1234/v1',
+        'api_key': 'lm-studio',
+        'model': 'deepseek-ocr-2',
+      });
+      when(() => repo.getConfig()).thenAnswer((_) async => config);
+      when(() =>
+              repo.getModelsForProvider(any(), apiBase: any(named: 'apiBase')))
+          .thenAnswer((_) async => ['deepseek-ocr-2', 'qwen3.6-35b']);
+
+      final container = makeContainer();
+      addTearDown(container.dispose);
+
+      await container.read(settingsStateProvider.notifier).load();
+
+      verify(() => repo.getModelsForProvider('openai',
+          apiBase: 'http://localhost:1234/v1')).called(1);
+      expect(
+        container.read(settingsStateProvider).ocrModels,
+        ['deepseek-ocr-2', 'qwen3.6-35b'],
+      );
     });
 
     test('on failure populates error and clears isLoading', () async {
@@ -126,7 +158,8 @@ void main() {
         return configCallCount == 1 ? initial : updated;
       });
       when(() => repo.updateConfig(any())).thenAnswer((_) async => updated);
-      when(() => repo.getModelsForProvider('openai'))
+      when(() =>
+              repo.getModelsForProvider(any(), apiBase: any(named: 'apiBase')))
           .thenAnswer((_) async => ['allenai/olmocr-2-7b']);
 
       final container = makeContainer();
@@ -134,9 +167,7 @@ void main() {
       final notifier = container.read(settingsStateProvider.notifier);
 
       await notifier.load();
-      await notifier.updateOcr(
-        ProcessSettings.defaultSettings().copyWith(model: 'qwen2-vl'),
-      );
+      await notifier.updateOcr(const ConfigUpdate(model: 'qwen2-vl'));
 
       final captured = verify(() => repo.updateConfig(captureAny()))
           .captured
@@ -185,6 +216,54 @@ void main() {
       notifier.setUseAsync(true);
       expect(container.read(settingsStateProvider).useAsync, isTrue);
       verifyNever(() => repo.updateConfig(any()));
+    });
+  });
+
+  group('SettingsNotifier.setServerBearerToken', () {
+    void stubConfigFetch() {
+      when(() => repo.getConfig()).thenAnswer((_) async =>
+          RuntimeConfig.fromJson(<String, dynamic>{
+            'api_base': 'http://example.test/v1',
+            'api_key': '',
+            'model': 'm',
+            'ocr_provider': 'openai',
+          }));
+      when(() => repo.getModelsForProvider(any(),
+              apiBase: any(named: 'apiBase')))
+          .thenAnswer((_) async => <String>['m']);
+    }
+
+    test('sets the transport token, mirrors it in state, clears the banner',
+        () async {
+      stubConfigFetch();
+      final container = makeContainer();
+      addTearDown(container.dispose);
+      container.read(authRequiredProvider.notifier).set(true);
+
+      await container
+          .read(settingsStateProvider.notifier)
+          .setServerBearerToken('server-secret');
+
+      expect(container.read(authTokenProvider), 'server-secret');
+      expect(
+        container.read(settingsStateProvider).serverBearerToken,
+        'server-secret',
+      );
+      expect(container.read(authRequiredProvider), isFalse);
+    });
+
+    test('an empty token unsets both the transport token and the state copy',
+        () async {
+      stubConfigFetch();
+      final container = makeContainer();
+      addTearDown(container.dispose);
+      final notifier = container.read(settingsStateProvider.notifier);
+
+      await notifier.setServerBearerToken('server-secret');
+      await notifier.setServerBearerToken('');
+
+      expect(container.read(authTokenProvider), isNull);
+      expect(container.read(settingsStateProvider).serverBearerToken, isNull);
     });
   });
 }

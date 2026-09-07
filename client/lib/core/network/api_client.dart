@@ -54,7 +54,8 @@ class ApiClient {
   final String? Function()? _authTokenProvider;
   String? _staticAuthToken;
 
-  /// Invoked synchronously whenever an outgoing request observes an HTTP 401.
+  /// Invoked synchronously when the server refuses this client's bearer
+  /// credential — a 401 answering with ``WWW-Authenticate: Bearer``.
   /// Used by `repository_providers.dart` to flip `authRequiredProvider` so the
   /// UI can surface an `AuthRequiredBanner`. The exception is still translated
   /// and re-thrown — this hook is purely for flagging the UI.
@@ -105,12 +106,37 @@ class ApiClient {
     _staticAuthToken = token;
   }
 
+  /// Flags the UI only for a real bearer-auth refusal, which
+  /// ``BearerAuthMiddleware`` marks with ``WWW-Authenticate: Bearer``. A 401
+  /// from a route guarding another credential — the per-channel progress
+  /// session token, an artifact token — is not a missing bearer token, and the
+  /// banner's advice would send the user to Settings for nothing.
+  void _flagUnauthorizedOnBearerChallenge(DioException e) {
+    if (e.response?.statusCode != 401) return;
+    final challenges = e.response?.headers['www-authenticate'];
+    if (challenges == null) return;
+    if (challenges.any(
+      (c) => c.trim().toLowerCase().startsWith('bearer'),
+    )) {
+      onUnauthorized?.call();
+    }
+  }
+
+  /// Dio keeps the casing callers supply, so presence cannot be tested with a
+  /// literal key.
+  static bool _hasAuthorization(Map<String, dynamic> headers) =>
+      headers.keys.any((k) => k.toLowerCase() == 'authorization');
+
   void _initInterceptors() {
     _dio.interceptors.add(
       InterceptorsWrapper(
         onRequest: (options, handler) {
           final token = _staticAuthToken ?? _authTokenProvider?.call();
-          if (token != null && token.isNotEmpty) {
+          // A per-request bearer (an artifact or result token) wins over the
+          // server-wide one; overwriting it would 403 those downloads.
+          if (token != null &&
+              token.isNotEmpty &&
+              !_hasAuthorization(options.headers)) {
             options.headers['Authorization'] = 'Bearer $token';
           }
           return handler.next(options);
@@ -136,7 +162,7 @@ class ApiClient {
       );
       return response.data as T;
     } on DioException catch (e) {
-      if (e.response?.statusCode == 401) onUnauthorized?.call();
+      _flagUnauthorizedOnBearerChallenge(e);
       throw _translateDioError(e);
     } catch (e) {
       if (e is ApiException) rethrow;
@@ -165,7 +191,7 @@ class ApiClient {
         headers: _extractHeaders(response.headers),
       );
     } on DioException catch (e) {
-      if (e.response?.statusCode == 401) onUnauthorized?.call();
+      _flagUnauthorizedOnBearerChallenge(e);
       throw _translateDioError(e);
     } catch (e) {
       if (e is ApiException) rethrow;
@@ -194,7 +220,7 @@ class ApiClient {
       );
       return response.data as T;
     } on DioException catch (e) {
-      if (e.response?.statusCode == 401) onUnauthorized?.call();
+      _flagUnauthorizedOnBearerChallenge(e);
       throw _translateDioError(e);
     } catch (e) {
       if (e is ApiException) rethrow;
@@ -225,7 +251,7 @@ class ApiClient {
         headers: _extractHeaders(response.headers),
       );
     } on DioException catch (e) {
-      if (e.response?.statusCode == 401) onUnauthorized?.call();
+      _flagUnauthorizedOnBearerChallenge(e);
       throw _translateDioError(e);
     } catch (e) {
       if (e is ApiException) rethrow;
@@ -254,7 +280,7 @@ class ApiClient {
       );
       return response.data as T;
     } on DioException catch (e) {
-      if (e.response?.statusCode == 401) onUnauthorized?.call();
+      _flagUnauthorizedOnBearerChallenge(e);
       throw _translateDioError(e);
     } catch (e) {
       if (e is ApiException) rethrow;
@@ -281,7 +307,7 @@ class ApiClient {
       );
       return response.data as T;
     } on DioException catch (e) {
-      if (e.response?.statusCode == 401) onUnauthorized?.call();
+      _flagUnauthorizedOnBearerChallenge(e);
       throw _translateDioError(e);
     } catch (e) {
       if (e is ApiException) rethrow;
@@ -314,7 +340,7 @@ class ApiClient {
       }
       return Uint8List.fromList(rawData);
     } on DioException catch (e) {
-      if (e.response?.statusCode == 401) onUnauthorized?.call();
+      _flagUnauthorizedOnBearerChallenge(e);
       throw _translateDioError(e);
     } catch (e) {
       if (e is ApiException) rethrow;
@@ -348,7 +374,7 @@ class ApiClient {
         headers: _extractHeaders(response.headers),
       );
     } on DioException catch (e) {
-      if (e.response?.statusCode == 401) onUnauthorized?.call();
+      _flagUnauthorizedOnBearerChallenge(e);
       throw _translateDioError(e);
     } catch (e) {
       if (e is ApiException) rethrow;
@@ -384,7 +410,7 @@ class ApiClient {
         headers: _extractHeaders(response.headers),
       );
     } on DioException catch (e) {
-      if (e.response?.statusCode == 401) onUnauthorized?.call();
+      _flagUnauthorizedOnBearerChallenge(e);
       throw _translateDioError(e);
     } catch (e) {
       if (e is ApiException) rethrow;
@@ -431,7 +457,7 @@ class ApiClient {
         headers: _extractHeaders(response.headers),
       );
     } on DioException catch (e) {
-      if (e.response?.statusCode == 401) onUnauthorized?.call();
+      _flagUnauthorizedOnBearerChallenge(e);
       throw _translateDioError(e);
     } catch (e) {
       if (e is ApiException) rethrow;

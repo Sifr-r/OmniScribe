@@ -122,7 +122,11 @@ void main() {
     test(
         'populates modelsMap and removes the id from loadingModelIds on success',
         () async {
-      when(() => repo.getProviderModels(any())).thenAnswer(
+      when(() => repo.getProviderModels(
+            any(),
+            apiBase: any(named: 'apiBase'),
+            apiKey: any(named: 'apiKey'),
+          )).thenAnswer(
         (_) async => const ProviderModelsResponse(models: ['m1', 'm2']),
       );
 
@@ -130,18 +134,31 @@ void main() {
       addTearDown(container.dispose);
       final notifier = container.read(providerBrowserProvider.notifier);
 
-      await notifier.fetchModelsForProvider('openai');
+      await notifier.fetchModelsForProvider(
+        'openai',
+        apiBase: 'https://api.openai.com/v1',
+        apiKey: 'key-123',
+      );
 
       final state = container.read(providerBrowserProvider);
       expect(state.modelsMap['openai'], ['m1', 'm2']);
       expect(state.loadingModelIds.contains('openai'), isFalse);
+      verify(() => repo.getProviderModels(
+            'openai',
+            apiBase: 'https://api.openai.com/v1',
+            apiKey: 'key-123',
+          )).called(1);
     });
 
     test(
         'is a no-op when the id is already in loadingModelIds (deduplicates concurrent calls)',
         () async {
       var callCount = 0;
-      when(() => repo.getProviderModels(any())).thenAnswer((_) async {
+      when(() => repo.getProviderModels(
+            any(),
+            apiBase: any(named: 'apiBase'),
+            apiKey: any(named: 'apiKey'),
+          )).thenAnswer((_) async {
         callCount += 1;
         // Hold the future open so we can observe the in-flight flag.
         await Future<void>.delayed(const Duration(milliseconds: 20));
@@ -168,7 +185,11 @@ void main() {
 
     test('removes the id from loadingModelIds even when the repo throws',
         () async {
-      when(() => repo.getProviderModels(any())).thenThrow(Exception('boom'));
+      when(() => repo.getProviderModels(
+            any(),
+            apiBase: any(named: 'apiBase'),
+            apiKey: any(named: 'apiKey'),
+          )).thenThrow(Exception('boom'));
 
       final container = makeContainer();
       addTearDown(container.dispose);
@@ -182,13 +203,95 @@ void main() {
     });
   });
 
+  group('ValidateProviderResponse', () {
+    test('parses models from JSON and falls back to empty list', () {
+      final resWithModels = ValidateProviderResponse.fromJson({
+        'valid': true,
+        'model_count': 2,
+        'models': ['gpt-4o', 'gpt-4o-mini'],
+      });
+      expect(resWithModels.valid, isTrue);
+      expect(resWithModels.modelCount, 2);
+      expect(resWithModels.models, ['gpt-4o', 'gpt-4o-mini']);
+
+      final resEmpty = ValidateProviderResponse.fromJson({
+        'valid': false,
+        'error': 'connection failed',
+      });
+      expect(resEmpty.valid, isFalse);
+      expect(resEmpty.models, isEmpty);
+      expect(resEmpty.modelCount, 0);
+      expect(resEmpty.error, 'connection failed');
+    });
+
+    test('serializes models to JSON', () {
+      const res = ValidateProviderResponse(
+        valid: true,
+        modelCount: 1,
+        models: ['llama-3.3-70b'],
+      );
+      final json = res.toJson();
+      expect(json['valid'], isTrue);
+      expect(json['model_count'], 1);
+      expect(json['models'], ['llama-3.3-70b']);
+    });
+  });
+
   group('ProviderBrowserNotifier.validateProvider', () {
+    test(
+        'on success immediately populates modelsMap with res.models and triggers credentials sync',
+        () async {
+      when(() => repo.validateProvider(any())).thenAnswer(
+        (_) async => const ValidateProviderResponse(
+          valid: true,
+          modelCount: 2,
+          models: ['model-alpha', 'model-beta'],
+        ),
+      );
+      when(() => repo.getProviderModels(
+            any(),
+            apiBase: any(named: 'apiBase'),
+            apiKey: any(named: 'apiKey'),
+          )).thenAnswer(
+        (_) async =>
+            const ProviderModelsResponse(models: ['model-alpha', 'model-beta']),
+      );
+
+      final container = makeContainer();
+      addTearDown(container.dispose);
+      final notifier = container.read(providerBrowserProvider.notifier);
+
+      final res = await notifier.validateProvider(
+        'lmstudio',
+        'http://localhost:1234/v1',
+        'test-key',
+      );
+
+      expect(res.valid, isTrue);
+      expect(res.models, ['model-alpha', 'model-beta']);
+      final state = container.read(providerBrowserProvider);
+      expect(state.validationStatus['lmstudio'], contains('2 models'));
+      // modelsMap must be populated immediately without waiting for fetchModelsForProvider:
+      expect(state.modelsMap['lmstudio'], ['model-alpha', 'model-beta']);
+      expect(state.isValidating, isFalse);
+
+      verify(() => repo.getProviderModels(
+            'lmstudio',
+            apiBase: 'http://localhost:1234/v1',
+            apiKey: 'test-key',
+          )).called(1);
+    });
+
     test('on success populates validationStatus and triggers model refetch',
         () async {
       when(() => repo.validateProvider(any())).thenAnswer(
         (_) async => const ValidateProviderResponse(valid: true, modelCount: 3),
       );
-      when(() => repo.getProviderModels(any())).thenAnswer(
+      when(() => repo.getProviderModels(
+            any(),
+            apiBase: any(named: 'apiBase'),
+            apiKey: any(named: 'apiKey'),
+          )).thenAnswer(
         (_) async => const ProviderModelsResponse(models: ['m1']),
       );
 

@@ -71,11 +71,14 @@ flutter run --dart-define=OMNISCRIBE_API_BASE=http://192.168.1.42:8000
   print a "Uvicorn running on" line.
 - **"OCR returns nothing"** — the backend is up but your VLM endpoint
   isn't reachable. See [the main README's "Before you start" section](../README.md#before-you-start).
-- **"Bearer token rejected"** — your `OMNISCRIBE_AUTH_TOKEN` is unset
-  or set to a placeholder value. The default loopback profile does not
-  require a token; the error means you've moved off loopback without
-  setting a real 32+ char secret. See
-  [`../docs/SECURITY.md`](../docs/SECURITY.md).
+- **"Authentication required" banner** — the backend armed
+  `OMNISCRIBE_AUTH_TOKEN` and the client isn't sending it, or is sending
+  the wrong one. Enter it under **Settings → General & Server → OmniScribe
+  Backend Connection → Bearer Token** and press "Apply token". It is held
+  for the session only, so re-enter it after a restart. The default
+  loopback profile needs no token at all — if you've moved off loopback
+  without setting a real 32+ char secret, the server refuses to start.
+  See [`../docs/SECURITY.md`](../docs/SECURITY.md).
 - **Anything else** — run `make doctor` from the repo root. It checks
   Python, `uv`, Redis reachability, and VLM reachability in one pass.
   The full cross-platform troubleshooting guide is being added under

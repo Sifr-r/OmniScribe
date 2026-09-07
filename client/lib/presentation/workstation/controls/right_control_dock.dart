@@ -61,9 +61,9 @@ class _RightControlDockState extends ConsumerState<RightControlDock> {
     final hasDoc = wsState.hasDocument;
 
     final activeProviderId = settingsState.activeProviderId;
-    final activeModel = s.model.isNotEmpty
-        ? s.model
-        : (settingsState.runtimeConfig?.model ?? 'allenai/olmocr-2-7b');
+    final activeModel = (settingsState.runtimeConfig?.model.isNotEmpty ?? false)
+        ? settingsState.runtimeConfig!.model
+        : (s.model.isNotEmpty ? s.model : 'allenai/olmocr-2-7b');
 
     final isConfigured = s.apiBase.isNotEmpty && activeModel.isNotEmpty;
 
@@ -163,7 +163,12 @@ class _RightControlDockState extends ConsumerState<RightControlDock> {
                         size: AppButtonSize.sm,
                         icon: const Icon(Icons.tune_rounded, size: 12),
                         onPressed: () {
-                          AISetupWizardModal.show(context);
+                          AISetupWizardModal.show(
+                            context,
+                            onComplete: () {
+                              ref.read(settingsStateProvider.notifier).load();
+                            },
+                          );
                         },
                       ),
                     ],

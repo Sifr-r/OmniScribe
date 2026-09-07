@@ -39,6 +39,11 @@ class WorkstationNotifier extends Notifier<WorkstationState> {
   /// private field at every write site and read it from there in [_cleanup].
   String? _lastChannelId;
 
+  /// The session token paired with [_lastChannelId]. The server rejects a
+  /// channel cancel that does not carry it, so it is mirrored at every write
+  /// site for the same reason [_lastChannelId] is.
+  String? _lastSessionToken;
+
   /// Cached server-side document ID for efficient page preview rendering.
   String? _previewDocId;
 
@@ -89,12 +94,14 @@ class WorkstationNotifier extends Notifier<WorkstationState> {
         // Swallow disconnect errors during cleanup; we still want to try cancel.
       }
       try {
-        await _ocrRepo.cancelProgressChannel(channelId);
+        await _ocrRepo.cancelProgressChannel(channelId,
+            sessionToken: _lastSessionToken ?? '');
       } catch (_) {
         // Best-effort: server may already be done.
       }
     }
     _lastChannelId = null;
+    _lastSessionToken = null;
   }
 
   // ---------------------------------------------------------------------------
@@ -733,6 +740,7 @@ class WorkstationNotifier extends Notifier<WorkstationState> {
       clearError: true,
     );
     _lastChannelId = null;
+    _lastSessionToken = null;
 
     ProgressSessionHandle? session;
     try {
@@ -740,6 +748,7 @@ class WorkstationNotifier extends Notifier<WorkstationState> {
       try {
         session = await _ocrRepo.openProgressSession();
         _lastChannelId = session.channelId;
+        _lastSessionToken = session.sessionToken;
         state = state.copyWith(channelId: session.channelId);
 
         await _wsClient.connect(
@@ -823,11 +832,13 @@ class WorkstationNotifier extends Notifier<WorkstationState> {
       clearError: true,
     );
     _lastChannelId = null;
+    _lastSessionToken = null;
 
     try {
       // 1. Open progress session
       final session = await _ocrRepo.openProgressSession();
       _lastChannelId = session.channelId;
+      _lastSessionToken = session.sessionToken;
       state = state.copyWith(channelId: session.channelId);
 
       await _wsClient.connect(
@@ -929,7 +940,8 @@ class WorkstationNotifier extends Notifier<WorkstationState> {
 
     if (channelId != null && channelId.isNotEmpty) {
       try {
-        await _ocrRepo.cancelProgressChannel(channelId);
+        await _ocrRepo.cancelProgressChannel(channelId,
+            sessionToken: _lastSessionToken ?? '');
       } catch (_) {}
     }
 

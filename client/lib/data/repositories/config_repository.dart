@@ -12,9 +12,11 @@ abstract class ConfigRepository {
   /// Fetch the supported models exposed by a specific provider.
   ///
   /// Hits `/api/providers/{providerId}/models` and parses the `models` array.
-  /// Returns an empty list when the response shape is unexpected (matches the
-  /// resilient Svelte fallback).
-  Future<List<String>> getModelsForProvider(String providerId);
+  /// When [apiBase] is supplied the server probes that endpoint instead of the
+  /// provider template's default URL. Returns an empty list when the response
+  /// shape is unexpected (matches the resilient Svelte fallback).
+  Future<List<String>> getModelsForProvider(String providerId,
+      {String? apiBase});
 
   /// Fetch list of supported models under the given namespace.
   ///
@@ -47,9 +49,13 @@ class ConfigRepositoryImpl implements ConfigRepository {
   }
 
   @override
-  Future<List<String>> getModelsForProvider(String providerId) async {
+  Future<List<String>> getModelsForProvider(String providerId,
+      {String? apiBase}) async {
     final json = await _apiClient.get<Map<String, dynamic>>(
       '/api/providers/$providerId/models',
+      queryParameters: apiBase == null || apiBase.isEmpty
+          ? null
+          : <String, dynamic>{'api_base': apiBase},
     );
     final list = <String>[];
     if (json['models'] is List) {

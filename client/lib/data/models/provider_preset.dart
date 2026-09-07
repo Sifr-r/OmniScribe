@@ -197,17 +197,26 @@ class ValidateProviderResponse {
   const ValidateProviderResponse({
     required this.valid,
     this.modelCount = 0,
+    this.models = const [],
     this.error,
   });
 
   final bool valid;
   final int modelCount;
+  final List<String> models;
   final String? error;
 
   factory ValidateProviderResponse.fromJson(Map<String, dynamic> json) {
+    final modelList = <String>[];
+    if (json['models'] is List) {
+      for (final m in json['models'] as List) {
+        if (m != null) modelList.add(m.toString());
+      }
+    }
     return ValidateProviderResponse(
       valid: json['valid'] as bool? ?? false,
-      modelCount: (json['model_count'] as num?)?.toInt() ?? 0,
+      modelCount: (json['model_count'] as num?)?.toInt() ?? modelList.length,
+      models: modelList,
       error: json['error']?.toString(),
     );
   }
@@ -215,6 +224,7 @@ class ValidateProviderResponse {
   Map<String, dynamic> toJson() => {
         'valid': valid,
         'model_count': modelCount,
+        'models': models,
         if (error != null) 'error': error,
       };
 }
