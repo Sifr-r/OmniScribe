@@ -83,6 +83,16 @@ abstract final class ApiConstants {
   // Document Preview Endpoint
   static const String documentPreview = '/api/documents/preview';
 
+  // Sample-PDF Endpoint (Sprint 3 / audit U12 / RFC 002 §4 Option b).
+  // Serves one of the canonical fixture PDFs from the server's
+  // ``src/omniscribe/resources/sample_pdfs/`` directory. The
+  // ``name`` must be a member of the server-side allowlist
+  // (``ALLOWED_SAMPLE_PDFS`` in
+  // ``omniscribe.plugins.sample_pdfs``); unknown names return 404.
+  // See ``client/lib/data/repositories/sample_pdf_repository.dart``
+  // for the Flutter-side fetcher.
+  static String samplePdf(String name) => '/api/sample-pdf/$name';
+
   // Response Header Keys (Exposed by FastAPI CORS middleware)
   static const String headerTextArtifactId = 'x-text-artifact-id';
   static const String headerTextArtifactToken = 'x-text-artifact-token';

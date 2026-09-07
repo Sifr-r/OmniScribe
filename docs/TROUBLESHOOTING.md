@@ -330,6 +330,48 @@ for the SQLite layout, WAL mode, and backup strategy.
 
 ---
 
+## "I just installed this — does it work?" (no PDF handy)
+
+The Workstation screen has a **Try sample PDF** button in the
+empty-state header (visible when no document is loaded). Clicking
+it fetches a canonical fixture PDF from the server's
+`/api/sample-pdf/{name}` route and stages it as the active
+document; the existing **Run OCR** button then processes it. This
+is the U12 affordance — a new user has no PDF of their own to
+upload, and the sample removes that friction.
+
+If the button does nothing or shows an error:
+
+1. **The server isn't running yet.** The Flutter client connects
+   to the same backend you started the server on (default
+   `http://127.0.0.1:8000`). Check that the backend boot log
+   shows `Uvicorn running on http://127.0.0.1:8000` or that the
+   binary console window is open.
+2. **The server is on a non-loopback host.** The sample-PDF
+   route is path-prefix-exempt in
+   `middleware/auth.py` (so a Profile 1 loopback Flutter client
+   has no token to send). For Profile 2/3, the route is also
+   open; the fixtures are public-domain test assets.
+3. **The bundle doesn't include the fixtures.** The PyInstaller
+   `DATAS` block copies `src/omniscribe/resources/` wholesale
+   into the bundle, so `src/omniscribe/resources/sample_pdfs/`
+   ships automatically. If you built the bundle from a working
+   tree missing that directory, the route will return 500 with
+   "sample PDF 'X' is in the allowlist but missing on disk" — see
+   the bundle's boot log.
+4. **You get a 404.** The server-side allowlist
+   (`ALLOWED_SAMPLE_PDFS` in
+   `omniscribe/plugins/sample_pdfs.py`) is the only accepted
+   name set; the Flutter UI lists them in
+   `SamplePdfRepository.availableFixtures`. Adding a new fixture
+   requires updating both sides.
+
+The same five canonical fixtures (`digital.pdf`,
+`handwritten.pdf`, `hybrid.pdf`, `dense.pdf`, `notes.pdf`) are
+also used by `tests/fixtures/pdfs/` for the dev / test path.
+
+---
+
 ## Open the browser, see a "5-line placeholder page"
 
 ```

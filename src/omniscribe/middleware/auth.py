@@ -25,10 +25,18 @@ from collections.abc import Awaitable, Callable
 logger = logging.getLogger("omniscribe.middleware.auth")
 
 #: Path prefixes that are exempt from auth (the web UI index, static
-#: assets, the readiness / liveness probes, and CORS preflight).
+#: assets, the readiness / liveness probes, the sample-PDF route, and
+#: CORS preflight).
 EXEMPT_PATH_PREFIXES: tuple[str, ...] = (
     "/static/",
     "/_static/",
+    # Sprint 3 (RFC 002 §4 Option b, audit U12): the sample-PDF route
+    # is always open. The canonical fixtures are public-domain test
+    # assets, and the Profile 1 loopback Flutter client has no token
+    # to send. Path-traversal protection comes from the route's
+    # fixed allowlist (``ALLOWED_SAMPLE_PDFS`` in
+    # ``omniscribe.plugins.sample_pdfs``), not from auth.
+    "/api/sample-pdf/",
 )
 
 #: Exact paths that are exempt (probes, health, the bundled web UI index).

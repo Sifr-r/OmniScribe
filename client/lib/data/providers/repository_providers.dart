@@ -8,6 +8,7 @@ import 'package:omniscribe_client/data/repositories/feature_repository.dart';
 import 'package:omniscribe_client/data/repositories/job_repository.dart';
 import 'package:omniscribe_client/data/repositories/ocr_repository.dart';
 import 'package:omniscribe_client/data/repositories/provider_repository.dart';
+import 'package:omniscribe_client/data/repositories/sample_pdf_repository.dart';
 
 /// Riverpod 3 [Notifier] holding the OmniScribe backend base URL.
 ///
@@ -101,6 +102,15 @@ final wsClientProvider = Provider<WsClient>((ref) {
 final ocrRepositoryProvider = Provider<OcrRepository>((ref) {
   final apiClient = ref.watch(apiClientProvider);
   return OcrRepositoryImpl(apiClient);
+});
+
+/// Sample-PDF Repository provider (Sprint 3 / audit U12).
+/// Fetches canonical fixture PDFs from the server's
+/// ``/api/sample-pdf/{name}`` route so a new user can confirm
+/// the install works without finding their own PDF.
+final samplePdfRepositoryProvider = Provider<SamplePdfRepository>((ref) {
+  final apiClient = ref.watch(apiClientProvider);
+  return SamplePdfRepository(apiClient);
 });
 
 /// Provider Catalog & Discovery Repository provider.

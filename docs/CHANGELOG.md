@@ -12,16 +12,51 @@ _See [v0.3.0](#030--2026-09-06) for the most recent release and
 [docs/RELEASE-NOTES-v0.3.0.md](RELEASE-NOTES-v0.3.0.md) for the
 full v0.3.0 release report._
 
-_Nothing yet. New user-visible changes will land here in the order
-they ship: behavior changes, new features, deprecations, config
-defaults, security posture, removed APIs._
+- **2026-09-06 — U12 in-UI "try with sample PDF" affordance
+  (Sprint 3, RFC 002 §4 Option b).** A new user has no PDF of
+  their own to upload; the Workstation screen's empty-state
+  header now has a **Try sample PDF** button that fetches a
+  canonical fixture from the server's
+  `GET /api/sample-pdf/{name}` route and stages it as the
+  active document. The five fixtures — `digital.pdf`
+  (default), `handwritten.pdf`, `hybrid.pdf`, `dense.pdf`,
+  `notes.pdf` — are bundled into the binary
+  (`src/omniscribe/resources/sample_pdfs/` is copied wholesale
+  by the existing `DATAS` block; the PyInstaller spec picks up
+  the new `omniscribe.plugins.sample_pdfs` plugin via
+  `_CORDIS_PLUGINS`). The route is path-prefix-exempt in
+  `middleware/auth.py` (Profile 1 loopback has no token). Path
+  traversal is a structural impossibility — user input is
+  never joined with a filesystem path; an unknown name
+  returns 404. See the new `## "I just installed this — does
+  it work?" (no PDF handy)` entry in
+  [`docs/TROUBLESHOOTING.md`](TROUBLESHOOTING.md) and
+  [`docs/rfcs/2026-09-v0.3.0-scope.md`](rfcs/2026-09-v0.3.0-scope.md)
+  §4 for the product call.
 
 ### Maintenance
 
-_Nothing yet. New maintenance work will land here in the order it
-ships: dependency upgrades, test refactors, internal cleanups, lint /
-typing cleanups, OpenAPI snapshot regenerations, and other changes
-with no user-visible behavior delta._
+- **2026-09-06 — Sprint 3 bundle smoke gate extended.** The
+  `scripts/smoke_existing.py` boot-test now hits both
+  `/api/health` and `/api/sample-pdf/digital.pdf` (the
+  default fixture); both must return 200 before a release tag
+  ships. The gate catches regressions in the Cordis plugin
+  loader, the resources bundling, or the sample-PDF
+  allowlist.
+- **2026-09-06 — 15 new Python tests**
+  (`tests/plugins/test_sample_pdfs_plugin.py`) and **5 new
+  Flutter tests** (`test/data/sample_pdf_repository_test.dart`)
+  + **4 new WorkstationNotifier tests**
+  (`tryWithSamplePdf` group in
+  `test/data/workstation_notifier_test.dart`). The Python
+  tests cover: allowlist <-> fixture-set lockstep (test side
+  and resource side), byte-for-byte return of every fixture
+  (parametrized), 404 on unknown name, 4xx on path-traversal
+  attempts, auth-bypass verification, and plugin singleton
+  shape. The Flutter tests cover: allowlist lockstep, default
+  fixture, route call, 404 propagation, document staging on
+  success, error state on failure, and the in-flight-OCR
+  guard.
 
 ## [0.3.0] — 2026-09-06
 

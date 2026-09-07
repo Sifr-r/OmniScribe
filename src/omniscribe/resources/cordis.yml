@@ -74,3 +74,14 @@ plugins:
       quality_loop_enabled: ${OMNISCRIBE_QUALITY_LOOP:-true}
       quality_target: ${OMNISCRIBE_QUALITY_TARGET:-0.85}
       quality_max_retries: ${OMNISCRIBE_QUALITY_MAX_RETRIES:-2}
+
+  - id: sample_pdfs
+    # Sprint 3 (RFC 002 §4 Option b, audit U12): serves the canonical
+    # fixture PDFs at ``/api/sample-pdf/{name}`` so a new user can
+    # confirm the install works without finding their own PDF. Always
+    # open (path-prefix exempt in ``middleware/auth.py``); the
+    # fixtures are public-domain test assets and the Profile 1
+    # loopback Flutter client has no token to send. See
+    # ``src/omniscribe/plugins/sample_pdfs.py`` for the allowlist and
+    # ``docs/rfcs/2026-09-v0.3.0-scope.md`` §4 for the product call.
+    use: omniscribe.plugins.sample_pdfs:plugin

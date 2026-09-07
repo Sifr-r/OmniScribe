@@ -107,6 +107,11 @@ _CORDIS_PLUGINS = [
     "omniscribe.plugins.transcribe",
     "omniscribe.plugins.glossary",
     "omniscribe.plugins.ocr",
+    # Sprint 3 (RFC 002 §4 Option b, audit U12). Listed explicitly so
+    # the bundle fails loud at build time if a future maintainer
+    # removes the ``sample_pdfs`` row from ``cordis.yml`` without
+    # removing the spec entry (or vice versa).
+    "omniscribe.plugins.sample_pdfs",
 ]
 
 # Heavy ML deps and stdlib extras that PyInstaller's static analysis

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -435,6 +436,34 @@ class _WorkstationScreenState extends ConsumerState<WorkstationScreen> {
                 ),
                 const SizedBox(width: 8),
               ] else ...[
+                // Sprint 3 (RFC 002 §4 Option b, audit U12): the
+                // "Try sample PDF" affordance. A new user has no
+                // PDF of their own to upload; this button fetches
+                // a canonical fixture from
+                // ``/api/sample-pdf/{defaultFixture}`` and stages
+                // it as the active document. The button is only
+                // visible in the empty-state (no document loaded)
+                // because once the user has their own document,
+                // they don't need the sample.
+                AppButton(
+                  text: 'Try sample PDF',
+                  variant: AppButtonVariant.secondary,
+                  size: AppButtonSize.sm,
+                  icon: const Icon(Icons.description_outlined, size: 14),
+                  onPressed: () {
+                    // Fire-and-forget: the notifier pushes the
+                    // result into the workstation state, which
+                    // the screen already renders. The button
+                    // gets disabled implicitly while the
+                    // ``isProcessing`` flag is set.
+                    unawaited(
+                      ref
+                          .read(workstationProvider.notifier)
+                          .tryWithSamplePdf(),
+                    );
+                  },
+                ),
+                const SizedBox(width: 8),
                 const AppBadge(
                   label: 'DOCUVERSE 2.0',
                   variant: AppBadgeVariant.brand,

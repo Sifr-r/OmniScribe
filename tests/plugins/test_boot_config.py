@@ -1,4 +1,11 @@
-"""Boot tree: the shipped cordis.yml mounts all thirteen plugins and services."""
+"""Boot tree: the shipped cordis.yml mounts all fourteen plugins and services.
+
+Sprint 3 (RFC 002 §4 Option b, audit U12) added the 14th row,
+``sample_pdfs``, which serves canonical fixture PDFs at
+``/api/sample-pdf/{name}``. Adding a row here requires the
+``thirteen -> fourteen`` rename below plus the new entry in the
+literal list in :func:`test_shipped_cordis_yml_declares_fourteen_rows_in_boot_order`.
+"""
 
 from __future__ import annotations
 
@@ -42,7 +49,7 @@ def clean_cordis_env(monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv(name, raising=False)
 
 
-def test_shipped_cordis_yml_declares_thirteen_rows_in_boot_order() -> None:
+def test_shipped_cordis_yml_declares_fourteen_rows_in_boot_order() -> None:
     rows = parse_rows(SHIPPED_CORDIS_YML.read_text(encoding="utf-8"))
     assert [row.id for row in rows] == [
         "runtime",
@@ -58,6 +65,7 @@ def test_shipped_cordis_yml_declares_thirteen_rows_in_boot_order() -> None:
         "transcribe",
         "glossary",
         "ocr",
+        "sample_pdfs",
     ]
 
 
@@ -79,8 +87,8 @@ async def test_shipped_cordis_yml_mounts_full_service_tree(
         ):
             assert ctx.has(protocol), f"{protocol.__name__} not registered"
         # health, providers, progress, documents, translate, transcribe,
-        # glossary, and ocr each mount one router.
-        assert len(ctx.routes()) == 8
+        # glossary, ocr, and sample_pdfs each mount one router.
+        assert len(ctx.routes()) == 9
     finally:
         await ctx.dispose()
 

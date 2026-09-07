@@ -14,6 +14,7 @@ import 'package:omniscribe_client/data/providers/repository_providers.dart';
 import 'package:omniscribe_client/data/providers/workstation_state.dart';
 import 'package:omniscribe_client/data/repositories/job_repository.dart';
 import 'package:omniscribe_client/data/repositories/ocr_repository.dart';
+import 'package:omniscribe_client/data/repositories/sample_pdf_repository.dart';
 
 /// Global provider for the OmniScribe Document Workstation.
 final workstationProvider =
@@ -27,6 +28,7 @@ class WorkstationNotifier extends Notifier<WorkstationState> {
   late OcrRepository _ocrRepo;
   late JobRepository _jobRepo;
   late WsClient _wsClient;
+  late SamplePdfRepository _samplePdfRepo;
   StreamSubscription<WsEnvelope>? _wsSubscription;
 
   /// Cached copy of [WorkstationState.channelId] for teardown.
@@ -59,6 +61,7 @@ class WorkstationNotifier extends Notifier<WorkstationState> {
     _ocrRepo = ref.watch(ocrRepositoryProvider);
     _jobRepo = ref.watch(jobRepositoryProvider);
     _wsClient = ref.watch(wsClientProvider);
+    _samplePdfRepo = ref.watch(samplePdfRepositoryProvider);
 
     ref.onDispose(_cleanup);
 
@@ -968,6 +971,67 @@ class WorkstationNotifier extends Notifier<WorkstationState> {
       await processOcrSync(settings: ProcessSettings.defaultSettings());
     } catch (_) {
       // Error state is already recorded in workstation state by processOcrSync
+    }
+  }
+
+  /// Sprint 3 (RFC 002 §4 Option b, audit U12): fetch a canonical
+  /// fixture PDF from the server and submit it as an async OCR job.
+  ///
+  /// The sample-PDF affordance is the "I just installed this — does
+  /// it work?" path. The user doesn't have a PDF of their own to
+  /// upload; instead, the Workstation screen exposes a "Try sample
+  /// PDF" button that calls this method, which:
+  ///
+  /// 1. Downloads ``/api/sample-pdf/{name}`` (path-prefix-exempt
+  ///    on the server; no auth needed for Profile 1 loopback).
+  /// 2. Stages the bytes as the active document in the
+  ///    workstation state — exactly the same path a user-uploaded
+  ///    PDF takes — so the existing async / sync OCR flow handles
+  ///    the rest (open progress session, connect WebSocket,
+  ///    submit job, stream results).
+  ///
+  /// Errors are surfaced via the workstation state ``error`` field
+  /// so the Workstation's existing error banner surfaces them. The
+  /// most common failure mode is a server-side 404 (unknown name)
+  /// or a transient network error; both produce a user-visible
+  /// message and leave the Workstation's prior state intact.
+  Future<void> tryWithSamplePdf({
+    String name = SamplePdfRepository.defaultFixture,
+  }) async {
+    if (state.isProcessing) {
+      return; // Don't interrupt an in-flight job.
+    }
+    state = state.copyWith(
+      isProcessing: true,
+      stage: 'Downloading',
+      statusMessage: 'Fetching sample PDF "$name" from server...',
+      clearError: true,
+    );
+    try {
+      final bytes = await _samplePdfRepo.fetchSamplePdf(name);
+      // Stage the sample as the active document so the rest of
+      // the pipeline (processOcrAsync) sees a normal "user just
+      // dropped a file" precondition. This is the same state
+      // shape ``loadFromPath`` / ``loadFromBytes`` produce.
+      state = state.copyWith(
+        loadedBytes: bytes,
+        filename: name,
+        clearFilePath: true,
+        // Reset any prior page count so the viewport rehydrates
+        // from the new (sample) source. The async OCR run will
+        // populate this once the server-side preview returns.
+        pageCount: 0,
+        isProcessing: false,
+        stage: 'Ready',
+        statusMessage: 'Sample PDF loaded — click "Run OCR" to process',
+      );
+    } catch (e) {
+      state = state.copyWith(
+        isProcessing: false,
+        stage: 'Error',
+        statusMessage: 'Sample PDF fetch failed: $e',
+        error: e.toString(),
+      );
     }
   }
 }

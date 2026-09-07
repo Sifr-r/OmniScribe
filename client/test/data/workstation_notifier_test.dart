@@ -13,14 +13,18 @@ import 'package:omniscribe_client/data/models/ws_frames.dart';
 import 'package:omniscribe_client/data/providers/repository_providers.dart';
 import 'package:omniscribe_client/data/providers/workstation_notifier.dart';
 import 'package:omniscribe_client/data/repositories/ocr_repository.dart';
+import 'package:omniscribe_client/data/repositories/sample_pdf_repository.dart';
 
 class _MockOcrRepository extends Mock implements OcrRepository {}
 
 class _MockWsClient extends Mock implements WsClient {}
 
+class _MockSamplePdfRepository extends Mock implements SamplePdfRepository {}
+
 void main() {
   late _MockOcrRepository ocrRepo;
   late _MockWsClient wsClient;
+  late _MockSamplePdfRepository samplePdfRepo;
   late StreamController<WsEnvelope> wsStreamController;
 
   setUpAll(() {
@@ -31,6 +35,7 @@ void main() {
   setUp(() {
     ocrRepo = _MockOcrRepository();
     wsClient = _MockWsClient();
+    samplePdfRepo = _MockSamplePdfRepository();
     wsStreamController = StreamController<WsEnvelope>.broadcast();
 
     when(() => wsClient.stream).thenAnswer((_) => wsStreamController.stream);
@@ -53,6 +58,7 @@ void main() {
       overrides: [
         ocrRepositoryProvider.overrideWithValue(ocrRepo),
         wsClientProvider.overrideWithValue(wsClient),
+        samplePdfRepositoryProvider.overrideWithValue(samplePdfRepo),
       ],
     );
   }
@@ -1096,6 +1102,92 @@ void main() {
         verifyNever(() => ocrRepo.getJobStatus(any()));
         verifyNever(() => ocrRepo.downloadResult(any()));
       });
+    });
+  });
+
+  group('Sprint 3 (RFC 002 §4 Option b, audit U12) — tryWithSamplePdf', () {
+    test('fetches the default sample PDF and stages it as the document',
+        () async {
+      final fakePdf = Uint8List.fromList([0x25, 0x50, 0x44, 0x46, 0x2D]);
+      when(() => samplePdfRepo.fetchSamplePdf('digital.pdf'))
+          .thenAnswer((_) async => fakePdf);
+
+      final container = makeContainer();
+      addTearDown(container.dispose);
+      final notifier = container.read(workstationProvider.notifier);
+
+      // Pre-condition: no document loaded.
+      expect(container.read(workstationProvider).hasDocument, isFalse);
+
+      await notifier.tryWithSamplePdf();
+
+      final after = container.read(workstationProvider);
+      expect(after.hasDocument, isTrue);
+      expect(after.loadedBytes, fakePdf);
+      expect(after.filename, 'digital.pdf');
+      // The "Try sample PDF" download itself doesn't run OCR — it
+      // just stages the document so the existing Run OCR button
+      // (or Ctrl+Enter) processes it.
+      expect(after.isProcessing, isFalse);
+      expect(after.stage, 'Ready');
+      expect(after.error, isNull);
+    });
+
+    test('fetches an explicit fixture name (not the default)', () async {
+      final fakePdf = Uint8List.fromList([0x25, 0x50, 0x44, 0x46, 0x2D]);
+      when(() => samplePdfRepo.fetchSamplePdf('handwritten.pdf'))
+          .thenAnswer((_) async => fakePdf);
+
+      final container = makeContainer();
+      addTearDown(container.dispose);
+      final notifier = container.read(workstationProvider.notifier);
+
+      await notifier.tryWithSamplePdf(name: 'handwritten.pdf');
+
+      final after = container.read(workstationProvider);
+      expect(after.filename, 'handwritten.pdf');
+      verify(() => samplePdfRepo.fetchSamplePdf('handwritten.pdf'))
+          .called(1);
+      // The default-fixture call was NOT made.
+      verifyNever(() => samplePdfRepo.fetchSamplePdf('digital.pdf'));
+    });
+
+    test('a fetch failure is surfaced as a state error', () async {
+      when(() => samplePdfRepo.fetchSamplePdf(any()))
+          .thenThrow(StateError('server returned 404 for digital.pdf'));
+
+      final container = makeContainer();
+      addTearDown(container.dispose);
+      final notifier = container.read(workstationProvider.notifier);
+
+      await notifier.tryWithSamplePdf();
+
+      final after = container.read(workstationProvider);
+      expect(after.isProcessing, isFalse);
+      expect(after.stage, 'Error');
+      expect(after.error, contains('404'));
+      // The previously-loaded document (if any) is left intact.
+      expect(after.hasDocument, isFalse);
+    });
+
+    test('an in-flight OCR job is not interrupted by a sample-PDF click',
+        () async {
+      // Simulate an in-flight job.
+      final container = makeContainer();
+      addTearDown(container.dispose);
+      final notifier = container.read(workstationProvider.notifier);
+      container.read(workstationProvider.notifier).state =
+          container.read(workstationProvider).copyWith(
+                isProcessing: true,
+                stage: 'Conversion',
+                statusMessage: 'mid-OCR run',
+              );
+
+      await notifier.tryWithSamplePdf();
+
+      // The repository was NOT called — the in-flight job takes
+      // priority over the "try with sample" affordance.
+      verifyNever(() => samplePdfRepo.fetchSamplePdf(any()));
     });
   });
 
