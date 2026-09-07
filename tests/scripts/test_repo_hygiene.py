@@ -335,7 +335,12 @@ def test_state_backend_plugin_is_the_single_state_seam():
 
     from omniscribe.plugins.state_backend import _ALLOWED_BACKENDS
 
-    assert sorted(_ALLOWED_BACKENDS) == ["memory", "sqlite"]
+    # Sprint 4 (RFC 003): the redis backend is now an accepted
+    # option for Profile 4 multi-worker LAN deployments. The
+    # allowlist is the lock that prevents an unsanctioned
+    # backend name from silently shipping; adding a new one
+    # requires a deliberate test update here.
+    assert sorted(_ALLOWED_BACKENDS) == ["memory", "redis", "sqlite"]
 
 
 def test_scripts_are_in_ruff_scope():

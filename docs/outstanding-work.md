@@ -168,7 +168,7 @@ shipped. Each entry points at the unblocker.
 > and [SECURITY.md](SECURITY.md) §Security Features for the current
 > contract.
 
-1. **Redis State Backend:** Complete `RedisStateBackend` for distributed deployments (`OMNISCRIBE_STATE_BACKEND=redis` currently crashes at plugin apply).
+1. **Redis State Backend:** Complete `RedisStateBackend` for distributed deployments (`OMNISCRIBE_STATE_BACKEND=redis` currently crashes at plugin apply). ✅ **closed 2026-09-07** (Sprint 4, [RFC 003](rfcs/2026-09-redis-state-backend.md)). The plugin now accepts `redis` as a third option; `OMNISCRIBE_STATE_BACKEND=redis` paired with `REDIS_URL=redis://...` boots a `RedisStateBackend` that pings the server, then serves all 15 `StateBackend` Protocol methods (artifacts with TTL on the metadata + blob keys, jobs with a ZSET index for `list_jobs` pagination, progress channels with atomic `consume_channel` via a Lua script). Multi-worker safe; fakeredis-tested with 16 unit tests; manual end-to-end smoke against a real Redis is a maintainer recipe (see the RFC §10).
 2. **Model Pre-flight Route:** Formal API endpoint for VLM pre-flight verification against silent fallback. `ensure_model_loaded()` exists in `core/ocr/processor.py`; the public route is unbuilt.
 3. **Full Regression Datasets (`slow_dataset`):** `scripts/fetch_datasets.py` execution once upstream licenses clear for OCR-Quality and KIE-HVQA benchmarks.
 

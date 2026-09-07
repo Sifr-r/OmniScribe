@@ -3,12 +3,19 @@
 Three persistence domains live behind one Protocol: artifacts (token-gated
 blobs), jobs (async OCR job records), and progress channels (one-shot WS
 handshake records). Selection is via the plugin row config
-(``OMNISCRIBE_STATE_BACKEND=memory|sqlite``); redis is deferred.
+(``OMNISCRIBE_STATE_BACKEND=memory|sqlite|redis``).
 
 Audit catalog:
 - Domain types, dataclasses, and the Protocol live in ``state_backend_types.py``.
-- Concrete implementations live in ``state_backend_memory.py`` and ``state_backend_sqlite.py``.
+- Concrete implementations live in ``state_backend_memory.py``,
+  ``state_backend_sqlite.py``, and ``state_backend_redis.py``.
 - This module configures the plugin and re-exports the public API for backwards compatibility.
+
+Sprint 4 (RFC 003, 2026-09-07): the redis backend ships for
+Profile 4 multi-worker LAN deployments. The ``OMNISCRIBE_STATE_BACKEND=redis``
+config (paired with ``REDIS_URL=redis://...``) is now a first-class
+option. The implementation lives in ``state_backend_redis.py``;
+this module only handles plugin-side wiring.
 """
 
 from __future__ import annotations
@@ -25,6 +32,10 @@ from omniscribe.harness.plugin import Plugin
 
 from .state_backend_memory import MemoryStateBackend
 from .state_backend_sqlite import SQLiteStateBackend
+# Sprint 4 (RFC 003): RedisStateBackend is a runtime dep
+# (``redis>=8.1.0`` is a base dep, see ``pyproject.toml``), so
+# we import it at module level alongside the other backends.
+from .state_backend_redis import RedisStateBackend
 from .state_backend_types import (
     TERMINAL_JOB_STATUSES,
     ArtifactBlob,
@@ -38,11 +49,11 @@ from .state_backend_types import (
 
 _LOGGER = logging.getLogger("omniscribe.plugins.state")
 
-_ALLOWED_BACKENDS = {"memory", "sqlite"}
+_ALLOWED_BACKENDS = {"memory", "sqlite", "redis"}
 
 
 class StateBackendSchema(BaseModel):
-    backend: Literal["memory", "sqlite"] = "memory"
+    backend: Literal["memory", "sqlite", "redis"] = "memory"
     sqlite_path: str = ""
 
 
@@ -56,8 +67,7 @@ class StateBackendPlugin(Plugin):
         if backend_name not in _ALLOWED_BACKENDS:
             raise ValueError(
                 "state backend must be one of "
-                f"{sorted(_ALLOWED_BACKENDS)} in this build, got {backend_name!r} "
-                "(redis support ships in a follow-up)"
+                f"{sorted(_ALLOWED_BACKENDS)} in this build, got {backend_name!r}"
             )
         settings = load_settings()
         if backend_name == "memory":
@@ -74,7 +84,7 @@ class StateBackendPlugin(Plugin):
                 "gone-after-restart."
             )
             backend: StateBackend = MemoryStateBackend()
-        else:
+        elif backend_name == "sqlite":
             sqlite_path = str(self.config.get("sqlite_path") or "").strip()
             # C-3 audit fix: validate sqlite_path so a misconfigured
             # operator (or a malicious patch file) cannot point the
@@ -107,8 +117,40 @@ class StateBackendPlugin(Plugin):
             await sqlite_backend.open()
             backend = sqlite_backend
             _LOGGER.info("state backend sqlite db=%s", db_path)
+        else:  # redis
+            # Sprint 4 (RFC 003): the redis backend is for Profile 4
+            # multi-worker LAN deployments. The ``REDIS_URL`` is in
+            # ``settings.redis_url`` (default
+            # ``redis://localhost:6379/0``); the operator overrides
+            # it for non-loopback deployments. ``open()`` pings the
+            # server so a misconfigured URL fails loud at boot, not
+            # on the first request.
+            redis_url = settings.redis_url
+            redis_backend = RedisStateBackend(redis_url=redis_url)
+            await redis_backend.open()
+            backend = redis_backend
+            _LOGGER.info("state backend redis url=%s", _redact_redis_url(redis_url))
         ctx.service(StateBackend, backend)
         ctx.effect(backend.aclose)
+
+
+def _redact_redis_url(url: str) -> str:
+    """Strip the password component from a ``redis://user:pass@host:port/db`` URL.
+
+    The password is the only sensitive bit; the host/port/db
+    are useful for log triage. Returns the URL with ``:***@``
+    replacing ``:password@``.
+    """
+    if "@" not in url:
+        return url
+    scheme, _, rest = url.partition("://")
+    if "@" not in rest:
+        return url
+    userinfo, _, hostpart = rest.partition("@")
+    if ":" in userinfo:
+        _, _, _ = userinfo.partition(":")
+        return f"{scheme}://:***@{hostpart}"
+    return url
 
 
 plugin = StateBackendPlugin()
@@ -121,6 +163,7 @@ __all__ = [
     "JobRecord",
     "JobStatus",
     "MemoryStateBackend",
+    "RedisStateBackend",
     "SQLiteStateBackend",
     "StateBackend",
     "StateBackendPlugin",

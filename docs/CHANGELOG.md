@@ -36,6 +36,28 @@ full v0.3.0 release report._
 
 ### Maintenance
 
+- **2026-09-07 — Redis state backend (Sprint 4, RFC 003).**
+  `OMNISCRIBE_STATE_BACKEND=redis` paired with
+  `REDIS_URL=redis://...` now boots a `RedisStateBackend` for
+  Profile 4 multi-worker LAN deployments. The new
+  `src/omniscribe/plugins/state_backend_redis.py` implements
+  all 15 `StateBackend` Protocol methods against
+  `redis.asyncio` (artifacts with TTL on metadata + blob keys,
+  jobs with a ZSET index for `list_jobs` pagination, progress
+  channels with atomic `consume_channel` via a Lua script).
+  Multi-worker safe; the `aclose` effect is wired through the
+  Cordis harness. 16 new pytest tests in
+  `tests/plugins/test_state_backend_redis.py` (fakeredis-backed,
+  covering all 15 methods + the atomicity of
+  `consume_channel`); the existing
+  `test_state_backend_plugin.py::test_redis_backend_rejected_with_clear_message`
+  is replaced by `test_redis_backend_registered` (positive
+  path). The boot log prints `state backend redis url=...`
+  with the password redacted. See
+  [`docs/rfcs/2026-09-redis-state-backend.md`](rfcs/2026-09-redis-state-backend.md)
+  for the data model, method-by-method Redis operations, and
+  the open questions (Profile 4 scale, sqlite-to-redis
+  migration, REDIS_URL auth).
 - **2026-09-06 — Sprint 3 bundle smoke gate extended.** The
   `scripts/smoke_existing.py` boot-test now hits both
   `/api/health` and `/api/sample-pdf/digital.pdf` (the
