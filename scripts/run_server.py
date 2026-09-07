@@ -41,5 +41,21 @@ if __name__ == "__main__":
         description="Run the OmniScribe API server",
         add_help=False,
     )
-    parser.parse_known_args()
+    args, _unknown = parser.parse_known_args()
+    if "--check_imports" in _unknown:
+        # Sprint 4 (option b) diagnostic: confirm the bundle's
+        # bundled module set actually contains surya. The
+        # ``--check_imports`` flag is the same flag PyInstaller
+        # uses for the same purpose, so the operator's
+        # ``omniscribe-server --check_imports`` invocation is
+        # idiomatic.
+        import importlib
+
+        for name in ("surya", "surya.detection", "surya.recognition"):
+            try:
+                m = importlib.import_module(name)
+                print(f"OK  {name}: {getattr(m, '__file__', '<namespace>')}")
+            except Exception as e:
+                print(f"FAIL {name}: {type(e).__name__}: {e}")
+        raise SystemExit(0)
     main()
