@@ -139,6 +139,32 @@ def _markdown(page_text: Mapping[int, list[str]]) -> str:
     return "\n\n".join(chunks).strip() + "\n"
 
 
+def build_markdown_export(tree: DocumentTree) -> str:
+    """Export a DocumentTree to clean GitHub-Flavored Markdown."""
+    from omniscribe.core.writers.markdown import render_markdown
+
+    return render_markdown(tree)
+
+
+def build_chunks_export(
+    tree: DocumentTree,
+    *,
+    max_chars: int = 1200,
+    overlap_chars: int = 120,
+    min_chars: int = 200,
+) -> list[dict[str, Any]]:
+    """Export a DocumentTree into provenance-preserving RAG chunks."""
+    from omniscribe.core.chunking.chunker import chunk_tree
+
+    chunks = chunk_tree(
+        tree,
+        max_chars=max_chars,
+        overlap_chars=overlap_chars,
+        min_chars=min_chars,
+    )
+    return [c.to_dict() for c in chunks]
+
+
 async def run_extraction(
     request: ExtractionRequest, settings: RuntimeSettings
 ) -> dict[str, Any]:

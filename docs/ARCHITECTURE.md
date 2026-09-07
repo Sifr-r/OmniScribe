@@ -14,6 +14,8 @@ PDF/image -> raster pages -> Surya detection (+ optional whitespace + text-layer
                                       \-> dense: per-box VLM OCR -----------------------------------------------------------------------+-> optional refine -> optional quality repair -> optional post-process -> DocumentResult -> optional document processors -> searchable PDF
 
 PDF/image -> grounded bbox-native VLM OCR -> optional quality repair -> optional post-process -> DocumentResult -> optional document processors -> searchable PDF
+
+Digital (.docx/.html/.md) -> Reader Fast Path (core/readers/) -> synthetic DocumentResult (confidence=1.0, trust_flags=("source:digital",)) -> synthetic PDF renderer -> searchable PDF (bypasses Surya and VLM)
 ```
 
 The optional whitespace-recall pass (`core/recall/whitespace.py`, hybrid path only,
@@ -46,12 +48,13 @@ cordis.yml
 ├─ runtime        RuntimeService: RuntimeSettings holder, readiness flag,
 │                 artifact/channel prune cadence (HarnessReady event)
 ├─ logging        structured logging (text|json format, level) — side effect only
-├─ state_backend  StateBackend service: sqlite (default, durable persistence)
-│                 or memory (OMNISCRIBE_STATE_BACKEND); single registration site
+├─ state_backend  StateBackend service: sqlite (default, durable persistence),
+│                 memory (ephemeral), or redis (Profile 4 multi-worker LAN); single registration site
 ├─ artifacts      ArtifactStore: opaque id/token blob store over the backend
-├─ jobs           JobQueue: single-worker async queue + JobQueued/Started/
-│                 Completed/Failed/Cancelled events; resolves the JobRunner
-│                 the ocr plugin registers at claim time
+├─ jobs           JobQueue: single-worker async queue (inprocess mode) or
+│                 distributed Redis queue (redis mode via jobs_redis.py) +
+│                 JobQueued/Started/Completed/Failed/Cancelled events;
+│                 resolves the JobRunner registered for the job type
 ├─ progress       ProgressService: one-shot session tokens, WS attach with
 │                 cross-loop send marshaling; /api/progress/* + /ws/{channel_id}
 ├─ providers      provider catalog + model discovery (/api/providers*)
@@ -59,7 +62,8 @@ cordis.yml
 ├─ documents      extraction + export routes over the token-bound ArtifactStore:
 │                 POST /api/extract (extraction prompts re-homed verbatim,
 │                 PROMPT_VERSION 2026-08-15.v1), /api/export/* builders
-│                 (text/markdown/json/docling/mineru), and the token-bound
+│                 (text/markdown/json/docling/mineru), GET|POST /api/export/markdown,
+│                 GET|POST /api/export/chunks, and the token-bound
 │                 /api/export/{id}, /api/text/{id}, /api/metadata/{id} fetches
 ├─ translate      TranslationService + TranslationJobRunner: POST /api/translate
 │                 (sync single-shot), POST /api/translate/async (tree-aware,
@@ -105,7 +109,7 @@ Protocol (`ctx.inject(JobQueue)`), never by module singleton.
 | `src/omniscribe/__init__.py` | Lazy package-level public exports that avoid loading OCR or web dependencies during unrelated submodule imports |
 | `src/omniscribe/server.py` | Lazy optional-web dependency loading, FastAPI application setup, CLI argument parsing for `--host/--port/--reload`, and `omniscribe-server` script entry point |
 | `src/omniscribe/pipeline.py` | `OCRPipeline` facade — thin orchestration layer that delegates to `HybridEngine` or `GroundedEngine` based on injected components |
-| `src/omniscribe/confidence_eval.py` | Package-root confidence evaluator: GLM-OCR fixture loader, greedy IoU matching, and per-document `ConfidenceReport` for the `scripts/confidence_*.py` tooling |
+| `src/omniscribe/confidence_eval.py` | Package-root confidence evaluator: GLM-OCR fixture loader, greedy IoU matching, per-document `ConfidenceReport`, and end-to-end PDF-to-Markdown scoring metrics (CER, WER, BLEU, chrF, heading hierarchy F1, table similarity) |
 | `src/omniscribe/core/document.py` | Normalized `DocumentResult` IR, pages, blocks, spans, text aggregation, and legacy pages-data adapter |
 | `src/omniscribe/core/processors/__init__.py` | Package-level re-exports for backward-compatible import of `DocumentProcessor`, `DocumentProcessorRegistry`, built-in processors, and helper functions |
 | `src/omniscribe/core/processors/base.py` | Core `DocumentProcessor` protocol, `DocumentProcessorFactory`, `DocumentProcessorRegistry`, processor name lists, shared regexes, helper functions (`_structure_kind`, `_normalize_space`, `_page_region`, `_bbox_area`), `build_document_processors`, and `run_document_processors` |
@@ -115,7 +119,9 @@ Protocol (`ctx.inject(JobQueue)`), never by module singleton.
 | `src/omniscribe/core/processors/section.py` | `SectionAnalysisProcessor` — section heading detection and block grouping across page boundaries |
 | `src/omniscribe/core/processors/layout.py` | `LayoutEnrichmentProcessor` — page region and layout role labeling (headers, footers, page numbers, figures, captions) |
 | `src/omniscribe/core/processors/table.py` | `TableExtractionProcessor` — table grid structure extraction from aligned text blocks |
+| `src/omniscribe/core/processors/table_fallback.py` | `TableFallbackProcessor` — dedicated grid reconstruction, alignment heuristics, and fail-open table repair for low-confidence tables (RFC 004 R5) |
 | `src/omniscribe/core/aligner.py` | Surya detection and DP text-to-box alignment |
+| `src/omniscribe/core/recall/base.py` | `BaseRecallOptions` — shared frozen dataclass with `_from_env` helper for secondary text-recall passes |
 | `src/omniscribe/core/recall/whitespace.py` | Whitespace recall booster — pixel-statistics text-line candidates merged into Surya detection on the hybrid path (`OMNISCRIBE_WHITESPACE_RECALL` kill switch, INFO run summary) |
 | `src/omniscribe/core/recall/text_layer.py` | Text-layer recall source — lines Surya missed recovered from a digital PDF's embedded text layer; second box source merged after the whitespace booster (`OMNISCRIBE_TEXT_LAYER_RECALL` kill switch, INFO run summary, no-op for scans/images); also exposes `token_agreement` + `PdfTextLayerRecall.page_text` used by the repair phase's fluent-hallucination trigger |
 | `src/omniscribe/core/ocr/` | OpenAI/Anthropic/Ollama multi-format VLM client, prompts, response filters, limits, exceptions, retry, and circuit-breaker resilience; `__init__.py` preserves the public import surface |
@@ -123,10 +129,12 @@ Protocol (`ctx.inject(JobQueue)`), never by module singleton.
 | `src/omniscribe/core/transcription/` | Speech-to-text audio transcription engines (local Whisper & OpenAI-compatible API backends); `logprob_to_confidence` keeps per-segment confidence in `[0,1]`, the local engine runs whisper with beam/VAD/temperature-fallback robustness kwargs, and the API engine reuses one HTTP client with exponential backoff + `Retry-After` support |
 | `src/omniscribe/core/lexicon/` | LanceDB-backed canonical glossary / translation lexicon store (Protocol + LanceDB impl + embedding wrapper + helper queries + one-shot migration core). See `docs/lexicon-migration-spec.md`. |
 | `src/omniscribe/core/glossary_sources/` | Terminology import parsers for XLIFF (1.2 / 2.0), TBX, TMX, CSV, TSV, JSON pairs, SQL tables, and Git repositories with encoding auto-detection (BOMs, UTF-8/16/32, Windows-1252, and ISO-8859-1 fallbacks) |
+| `src/omniscribe/core/writers/markdown.py` | `MarkdownWriter` & `MarkdownExporter` — RAG-ready markdown rendering from `DocumentTree` and `DocumentResult` (headings with hierarchy levels, GFM pipe tables, equation blocks/inlines, figure caption/bbox references, page break markers `<!-- PageBreak: <page_idx> -->`, text normalization) |
 | `src/omniscribe/core/writers/tree_json.py` | Hierarchical block-tree export builder |
 | `src/omniscribe/core/writers/exporter_base.py` | Thin `DocumentExportProtocol` + `BaseDocumentExporter` ABC. **Implementations are co-located with the writers they wrap** (DOCX in `core/writers/docx.py`, tree-DOCX in `core/writers/docx_tree.py`, HTML in `core/writers/html.py`) — the module ships only the abstraction, not the exporters. To add a new format, subclass `BaseDocumentExporter` in the same file as the existing writer, then register it on `PDFHandler` (or the relevant writer) |
 | `src/omniscribe/core/writers/docx_tree.py` | Hierarchical block-tree to `.docx` converter |
 | `src/omniscribe/core/writers/html.py` | Semantic HTML document writer from `DocumentResult` |
+| `src/omniscribe/core/chunking/` | RAG-ready semantic chunking sub-package: `taxonomy.py` (`RAGElementCategory` deterministic element mapping), `chunker.py` (`DocumentChunk` dataclass with boundary hierarchy, atomic table preservation, intra-section overlap, and provenance metadata; `SectionAwareChunker`), `__init__.py` |
 | `src/omniscribe/core/block_tree.py` | Hierarchical block-tree data structure and tree nodes; `BlockNode` serializes `trust_score`/`trust_flags` so the block-tree JSON carries trust-layer output |
 | `src/omniscribe/core/pdf/__init__.py` | Package re-exports for `PDFHandler`, `DocumentResultWriter`, `IMAGE_EXTENSIONS`, `_emit_pymupdf_agpl_notice`, and public PDF symbols |
 | `src/omniscribe/core/pdf/rasterizer.py` | PyMuPDF AGPL warning emission, safe DPI calculation, image extension validation, and PDF/image rasterization to JPEG/PNG base64 |
@@ -154,7 +162,7 @@ Protocol (`ctx.inject(JobQueue)`), never by module singleton.
 | `src/omniscribe/harness/` | Cordis-style plugin harness: `context.py` (Protocol-keyed services, LIFO effects, event bus, router queue, duplicate protection, and non-shadowing rollback), `loader.py` (YAML tree + patches + env overrides, fails loud), `plugin.py` (Plugin base), plus `errors.py` (hierarchical domain exceptions: `DuplicateServiceError`, `DuplicatePluginError`, `ContextDisposedError`, `ServiceNotFoundError`, `PluginLoadError`), `events.py`, `effects.py`, `service.py`, `config.py` |
 | `src/omniscribe/plugins/` | The thirteen boot plugins (runtime, logging, state_backend, artifacts, jobs, progress, providers, health, documents, translate, transcribe, glossary, ocr) that register services and mount every `/api` router; see the Plugin Tree section |
 | `src/omniscribe/plugins/state_backend_types.py` | Isolated state backend domain dataclasses (ArtifactBlob, ChannelRecord, JobRecord, ArtifactRecord) and StateBackend protocol |
-| `src/omniscribe/plugins/documents/` | Documents plugin: `schemas.py` (extraction/export request models reproducing the pre-harness contract), `prompts.py` (extraction prompts re-homed verbatim from the pre-harness `api/services/ai.py`; `PROMPT_VERSION 2026-08-15.v1`; invoice/resume/academic/table/table_extraction/custom templates), `service.py` (LLM extraction runner, text/markdown/json/docling-compatible/mineru-compatible export builders, and on-demand block-tree building from the stored text artifact — no tree sidecars), `routes.py` (`POST /api/extract`, `POST /api/export/document`, `GET|POST /api/export/docx`, `POST /api/export/html`, `POST /api/export/docx-tree`, `POST /api/export/blocktree`, token-bound `GET /api/export/{artifact_id}`, `GET /api/text/{artifact_id}`, `GET /api/metadata/{artifact_id}`), and `plugin.py` (mounts the router; no configurable fields) |
+| `src/omniscribe/plugins/documents/` | Documents plugin: `schemas.py` (extraction/export request models reproducing the pre-harness contract, plus `ExportMarkdownRequest`, `ExportChunksRequest`, `DocumentChunkPayload`, `ExportChunksResponse`), `prompts.py` (extraction prompts re-homed verbatim from the pre-harness `api/services/ai.py`; `PROMPT_VERSION 2026-08-15.v1`; invoice/resume/academic/table/table_extraction/custom templates), `service.py` (LLM extraction runner, text/markdown/json/docling-compatible/mineru-compatible export builders, `build_markdown_export`, `build_chunks_export`, and on-demand block-tree building from the stored text artifact — no tree sidecars), `routes.py` (`POST /api/extract`, `POST /api/export/document`, `GET|POST /api/export/docx`, `POST /api/export/html`, `POST /api/export/docx-tree`, `POST /api/export/blocktree`, `GET|POST /api/export/markdown`, `GET|POST /api/export/chunks`, token-bound `GET /api/export/{artifact_id}`, `GET /api/text/{artifact_id}`, `GET /api/metadata/{artifact_id}`), and `plugin.py` (mounts the router; no configurable fields) |
 | `src/omniscribe/plugins/translate/` | Translate plugin: `schemas.py` (translation request models + client response contracts), `service.py` (`TranslationService` — sync single-shot `translate_text` re-home with service-level judge loop and LRU translation cache, JobQueue runner (`TranslationJobRunner` seam) that walks the stored text artifact's tree with `translate_tree`, and client status mapping PENDING/PROGRESS/SUCCESS/FAILURE), `routes.py` (`POST /api/translate`, `POST /api/translate/async`, `GET /api/translate/status/{job_id}`, `GET /api/translate/result/{job_id}` token-redeeming fetch, `POST /api/translate/nllb`), and `plugin.py` (mounts the router; no configurable fields) |
 | `src/omniscribe/plugins/transcribe/` | Transcribe plugin: `schemas.py` (form-field and config request models + client response contracts), `service.py` (`TranscriptionService` — sync multipart transcription through the core transcription engines; transcript and metadata serialized JSON using the text-artifact convention and stored as token-bound artifacts), `config_store.py` (always-writable in-memory transcription config store with masked keys; SSRF-guarded endpoint model discovery falling back to the canned whisper list), `routes.py` (`POST /api/transcribe`, `GET|POST /api/config/transcription`, `GET /api/models/transcription`), and `plugin.py` (mounts the router; no configurable fields) |
 | `src/omniscribe/plugins/glossary/` | Glossary plugin: `schemas.py` (import/library request models covering dual-shape imports and toggle bodies), `service.py` (`GlossaryImportService` — parse → entry-count estimate → sync import or JobQueue dispatch above the 5,000-entry estimate, plus `ensure_store_ready`, library/sources CRUD, toggle flipping, reorder, and query-filtered/paginated entries), `store.py` (lazy `LexiconStore` provider — routes 503 with the `uv sync --extra lexicon` install hint when the `lexicon` extra is missing), `http_fetch.py` (SSRF-guarded, IP-pinned URL fetch with manual redirect following for `/api/glossary/import/url`), `routes.py` (the /api/glossary* routes; dual-shape imports, sources CRUD, toggle, entries search/pagination, preview/merged), and `plugin.py` (mounts the router; registers `GlossaryJobRunner`) |
@@ -206,7 +214,31 @@ Protocol (`ctx.inject(JobQueue)`), never by module singleton.
 | `tests/core/ocr/test_filters_props.py` | Hypothesis property-based tests for OCR output filters and repetition deduplication |
 | `tests/core/translate/test_workflow.py` | Direct unit and property tests for LangGraph translation workflow, chunker, and node transitions |
 | `tests/fixtures/test_pdf_fixtures.py` | Regression tests asserting integrity and accessibility of canonical PDF fixtures |
+| `tests/plugins/test_jobs_chaos.py` | Q11 chaos and fault-injection test suite for JobQueue and worker lifecycle |
+| `tests/plugins/test_ocr_preflight.py` | Unit and route tests for OCR model pre-flight verification endpoint |
+| `src/omniscribe/core/readers/` | Digital-document ingest subsystem (RFC 004 R2 Fast Path) |
+| `src/omniscribe/core/readers/base.py` | Abstract BaseDocumentReader protocol, ReaderError domain exceptions, and synthetic DocumentBlock/DocumentPage builders |
+| `src/omniscribe/core/readers/docx_reader.py` | Word (.docx) document reader preserving headings, tables, lists, and runs into DocumentResult and DocumentTree |
+| `src/omniscribe/core/readers/html_reader.py` | HTML reader parsing headings, paragraphs, lists, tables, and code with selectolax and standard library fallback |
+| `src/omniscribe/core/readers/markdown_reader.py` | Markdown reader parsing headings, paragraphs, tables, lists, blockquotes, and code fences into DocumentResult |
+| `src/omniscribe/core/readers/dispatch.py` | Reader registry and factory mapping file extensions (.docx, .html, .htm, .md, .markdown) |
+| `src/omniscribe/core/readers/pdf_renderer.py` | PyMuPDF synthetic PDF renderer creating searchable PDF output from DocumentResult |
+| `src/omniscribe/plugins/jobs_redis.py` | `RedisJobQueue` distributed job queue implementing `JobQueue` protocol with atomic Lua claims, visibility timeout recovery, worker heartbeats, and Redis Pub/Sub integration (RFC 004 R3) |
+| `src/omniscribe/worker.py` | Standalone `omniscribe-worker` multi-worker process dispatching OCR, Translation, and Glossary jobs from Redis with graceful shutdown and heartbeat monitoring (RFC 004 R3) |
+| `scripts/migrate_sqlite_to_redis.py` | Standalone migration utility transferring jobs, artifacts, and channels from SQLite state database to Redis (RFC 003 / RFC 004) |
+| `tests/core/chunking/test_chunker_props.py` | Hypothesis property-based tests for `SectionAwareChunker` invariants, element boundaries, table preservation, chunk sizing |
+| `tests/core/processors/test_table_fallback.py` | Unit and heuristic tests for `TableFallbackProcessor` grid reconstruction, row/col detection, and fail-open table repair |
+| `tests/core/readers/test_readers.py` | Unit tests for DOCX, HTML, Markdown readers, dispatch registry, and synthetic PDF renderer |
+| `tests/core/writers/test_markdown_writer.py` | Unit tests for `MarkdownWriter` rendering, heading hierarchy, pipe tables, math fences, page-break comments |
+| `tests/plugins/test_digital_ingest_fastpath.py` | End-to-end fast path integration tests asserting zero Surya/VLM calls and DOCX text parity |
+| `tests/plugins/test_jobs_redis.py` | Unit, race condition, visibility recovery, retry exhaustion, heartbeat, pubsub fanout, and runner integration tests for `RedisJobQueue` |
+| `tests/plugins/test_ocr_service_prune.py` | Unit tests for OCR service event buffer eviction, prune loop consolidation, and SSE event backlog bounding |
+| `tests/routers/test_export_markdown_chunks.py` | FastAPI route tests for `/api/export/markdown` and `/api/export/chunks` endpoints |
+| `tests/scripts/test_benchmark_scoring.py` | Unit tests for `scripts/confidence_eval.py --score-markdown` metrics (CER, WER, BLEU, chrF, heading F1, table similarity) |
+| `tests/scripts/test_migrate_sqlite_to_redis.py` | Unit and integration tests for Profile 4 SQLite-to-Redis migration utility |
 | `docs/rfcs/2026-09-end-user-install.md` | RFC 001 evaluating end-user distribution architectures (Option A PyInstaller bundle, Option B Flutter desktop embed, Option C standalone CLI) |
+| `docs/rfcs/2026-09-competitive-gap-remediation.md` | RFC 004 strategic plan closing the competitive gap against Docling/Unstructured (R1–R5 workstreams) |
+| `docs/benchmarks.md` | External comparative benchmark documentation (OmniDocBench, Docling, Marker, Unstructured, Nougat) with evaluation protocol and reproduction commands |
 | `docs/deployment/windows-bundle.md` | Operator and user guide for running the standalone Windows PyInstaller bundle |
 | `docs/TROUBLESHOOTING.md` | Central first-run troubleshooting guide covering top 10 failure modes, cross-linked from `make doctor` and README |
 
@@ -310,6 +342,8 @@ Rebuilt surface (pinned by `tests/openapi.json`):
 | `POST` | `/api/export/html` | `documents` | Semantic HTML built from the stored text artifact's block tree |
 | `POST` | `/api/export/docx-tree` | `documents` | `.docx` built from the stored text artifact's block tree |
 | `POST` | `/api/export/blocktree` | `documents` | Hierarchical block-tree JSON built from the stored text artifact |
+| `GET` / `POST` | `/api/export/markdown` | `documents` | Render clean GFM Markdown from stored text artifact (`?text_artifact_id=&text_artifact_token=`) |
+| `GET` / `POST` | `/api/export/chunks` | `documents` | Provenance-preserving section-aware RAG chunks with bounding boxes and trust score |
 | `GET` | `/api/export/{artifact_id}` | `documents` | Token-bound (Bearer) export artifact download |
 | `GET` | `/api/text/{artifact_id}` | `documents` | Token-bound (Bearer) OCR text artifact fetch |
 | `GET` | `/api/metadata/{artifact_id}` | `documents` | Token-bound (Bearer) document metadata artifact fetch |
@@ -346,6 +380,24 @@ spec's out-of-scope list.
 > was at the entry's date. `src/omniscribe/api/**` paths (and
 > `api/celery_app.py`) predate the 2026-08 harness rebuild — that code
 > now lives under `src/omniscribe/plugins/` and `src/omniscribe/core/`.
+
+### 2026-09-07: Core Workflows & OCR Service Refactor (Smells 4.18, 4.19, 4.20, 6.14, 6.69)
+
+Resolved concurrency and lifecycle code smells across core workflows and the OCR service:
+- **Grounded Workflow Closure & Progress Harmonization (Smells 6.14 & 6.69)**: In `core/workflows/grounded.py` (`_repair_blocks`), eliminated default-argument closure binding (`_page: int = page_idx`) in favor of a clean `_make_re_ocr(p_idx: int) -> ReOcrBlock` factory with direct local closure binding. Harmonized the progress counter pattern to `completed_box = [0]` matching `hybrid_repair.py`.
+- **Authoritative Pruning Consolidation (Smell 4.19)**: Folded two separate eviction loops in `plugins/ocr/service.py` into a single authoritative `prune(max_buffered_jobs)` implementation bounding `_event_buffers`, `_event_notify`, `_done_jobs`, and `_submission_to_job` to `max_buffered_jobs`. Delegated `_prune_events_if_needed()` directly to `self.prune(self._max_buffered_jobs)`.
+- **SSE Event Flapping & Deadlock Guard (Smell 4.18)**: Hardened `wait_for_events(job_id)` in `plugins/ocr/service.py` to return immediately when a job is already in `_done_jobs` (preventing deadlocks) or when events arrived just before waiting (`notify.is_set()`), eliminating missed wake-ups and notification loss across rapid bursts.
+- **Config Mutation Visibility Documentation (Smell 4.20)**: Added explicit docstring and API documentation in `update_config` stating that mutations to `self._settings` take effect immediately for all subsequent pipeline requests, while in-flight requests proceed with settings resolved at pipeline build time.
+- **Testing (`tests/plugins/test_ocr_service_prune.py`)**: Added dedicated unit test suite validating that excess job submissions and events properly bound `_event_buffers`, `_done_jobs`, and `_submission_to_job` to `max_buffered_jobs`, explicit `prune(limit)` calls with custom bounds and zeroing, and deadlock-free event delivery under rapid bursts.
+
+### 2026-09-07: Competitive Gap Remediation (RFC 004 Workstreams R1-R5)
+
+Implemented strategic document ETL and RAG capabilities closing competitive gaps against Unstructured.io, Docling, MinerU, and Marker:
+- **R1 (RAG Output Layer)**: Added `core/writers/markdown.py` (`MarkdownWriter`/`MarkdownExporter`) with heading hierarchy mapping, GFM pipe tables, equation blocks, figure references, and page markers. Added `core/chunking/` with `RAGElementCategory` taxonomy mapping and `SectionAwareChunker` over `DocumentTree` preserving provenance (bboxes, page span, block IDs, min trust score) with bounded character windows and intra-section overlap. Mounted `GET|POST /api/export/markdown` and `GET|POST /api/export/chunks`.
+- **R2 (Digital-Document Ingest Fast Path)**: Introduced `core/readers/` (`DocxReader`, `HtmlReader`, `MarkdownReader`, `dispatch.py`, `pdf_renderer.py`). Extended `content_sniff.py` and OCR upload validation to recognize DOCX, HTML, and Markdown. Ingest completely bypasses Surya and VLM inference, producing genuine synthetic sandwich PDFs and 1.0 confidence digital trust scores in milliseconds.
+- **R3 (Multi-Worker Dispatch on Redis)**: Implemented `RedisJobQueue` in `plugins/jobs_redis.py` with atomic Lua claims, `WATCH/MULTI/EXEC` fallback, visibility timeout recovery, and worker heartbeats (`omniscribe:jobs:heartbeat:*`). Added standalone multi-worker CLI daemon `omniscribe-worker` (`worker.py`), and wired cross-worker progress frame fan-out over Redis Pub/Sub to local WebSocket clients.
+- **R4 (External Benchmark Credibility)**: Extended `scripts/confidence_eval.py` and `confidence_eval.py` with OmniDocBench-aligned scoring metrics (CER, WER, Levenshtein, BLEU, chrF, heading hierarchy F1, and Markdown table structural similarity) via `--score-markdown`. Authored comprehensive benchmark specification in `docs/benchmarks.md`.
+- **R5 (Table-Structure Fallback)**: Implemented `TableFallbackProcessor` in `core/processors/table_fallback.py` providing confidence-gated (`< 0.80`) table grid reconstruction with fail-open safety. Registered in `DocumentProcessorRegistry` as an opt-in built-in processor.
 
 ### 2026-09-06: Workstation UI/UX Consolidation & Left Page Strip Rail (Phase 2 Domain 1)
 
@@ -1195,7 +1247,57 @@ Wave 14 completes the remaining architectural, security, performance, and testin
 | --- | --- |
 | `client/lib/data/repositories/ocr_repository.dart` | Hardened `renderDocumentPagePreview` with two-tier transport: attempts lightweight `doc_id` form payload first without sending file bytes, and automatically catches failures (e.g. server restart / cache eviction) to fall back to `fileBytes` multipart upload and re-acquire session `docId`. |
 | `client/lib/data/providers/workstation_notifier.dart` | Protected `_loadDocumentPreview` race guard by resetting `isPreviewLoading: false` when generation changes, and prevented background preloader from duplicating requests for the active page while ensuring `isPreviewLoading` is cleared if preloader fulfills active page. |
-| `src/omniscribe/server.py` & `src/omniscribe/plugins/ocr/plugin.py` | Stabilized long-running uvicorn server daemon process for PyMuPDF rasterization endpoint on `http://127.0.0.1:8000`. |
+### 2026-09-07: Domain B — Reliability & Packaging Hardening (Handoff §3 & §4)
+
+| File | Responsibility |
+| --- | --- |
+| `omniscribe_server.spec` | Added exclusions for unused `transformers.models.*_ocr*` submodules (`deepseek_ocr2`, `glm_ocr`, `got_ocr2`, `lighton_ocr`, `paddleocr_vl`, `pp_ocrv5_mobile_*`) and unused quantizers (`transformers.quantizers`, `transformers.quantizers.auto`), saving ~40-70 MB from the binary bundle. |
+| `tests/plugins/test_jobs_chaos.py` | Q11 chaos and fault-injection test suite for `JobQueue` and worker execution verifying worker cancellation mid-job, subscriber drop/stale connection resilience, runner crash and sanitized error handling without queue stalls, concurrent queue/cancel races, and replay buffer memory bounds under rapid event bursts. |
+
+### 2026-09-07: Domain A — Model Pre-flight Route (§6 #2)
+
+Formal API endpoint for VLM pre-flight verification against silent fallback:
+
+| File | Responsibility |
+| --- | --- |
+| `src/omniscribe/config.py` | Expose `api_base`, `api_key`, and `model` properties on `RuntimeSettings` aliasing `llm_api_base`, `llm_api_key`, and `llm_model`. |
+| `src/omniscribe/plugins/ocr/plugin.py` | Extend `OCRService` Protocol with `preflight_check(request: PreflightRequest | None = None) -> PreflightResponse`; wire `GET /api/process/preflight` and `POST /api/process/preflight` route handlers returning `PreflightResponse` or 403 `ssrf_blocked`. |
+| `src/omniscribe/plugins/ocr/service.py` | Implement `OCRServiceImpl.preflight_check(request: PreflightRequest | None = None)` resolving target coordinates with fallbacks to `self.settings` / `self._config`, validating SSRF, and probing with an ephemeral `AsyncOpenAI` client closed in `finally`. |
+| `tests/plugins/test_ocr_preflight.py` | Unit and route test suite verifying protocol conformance, loaded status, model missing listing, connection timeouts, SSRF blocking, and POST overrides. |
+| `tests/plugins/test_ocr_schemas.py` | Reconcile preflight check tests to consume `PreflightResponse` models. |
+
+### 2026-09-07: RFC 004 Workstream R1 — RAG-Ready Output Layer (Markdown Writer & Semantic Chunker)
+
+Implements Workstream R1 of RFC 004 to deliver high-fidelity RAG-ready Markdown export and section-aware semantic chunking with strict boundary guarantees and provenance tracking:
+
+| File | Responsibility |
+| --- | --- |
+| `src/omniscribe/core/errors.py` | Added `ChunkingError(OmniScribeError)` domain exception for deterministic chunking and knob validation failures. |
+| `src/omniscribe/core/writers/markdown.py` | `MarkdownWriter` implementing `BaseDocumentExporter` (`export_tree`, `export_document`, `render_markdown`) with heading hierarchy levels (`#` to `######`), GFM pipe tables with escaped cells, figure references (`![caption](ref)`), block/inline equations (`$$...$$` / `$...$`), and page break markers (`<!-- PageBreak: <page_idx> -->`). |
+| `src/omniscribe/core/writers/__init__.py` | Re-exported `MarkdownWriter`, `MarkdownExporter`, and `render_markdown`. |
+| `src/omniscribe/core/chunking/taxonomy.py` | `RAGElementCategory` enum and deterministic `map_element_type` mapping block kinds and layout roles to title, narrative, table, figure, formula, or list_item. |
+| `src/omniscribe/core/chunking/chunker.py` | `DocumentChunk` dataclass and `SectionAwareChunker` with knob validation (`max_chars`, `overlap_chars`, `min_chars`), boundary priority hierarchy (section > paragraph/list > block), atomic table handling with cell-splitting fallback, intra-section overlap preservation, and chunk-level provenance metadata. |
+| `src/omniscribe/core/chunking/__init__.py` | Re-exported `DocumentChunk`, `SectionAwareChunker`, `chunk_tree`, `RAGElementCategory`, and `map_element_type`. |
+| `src/omniscribe/plugins/documents/schemas.py` | Added `ExportMarkdownRequest`, `ExportChunksRequest` (inheriting from `ExportBlockTreeRequest`), `DocumentChunkPayload`, and `ExportChunksResponse`. |
+| `src/omniscribe/plugins/documents/service.py` | Added `build_markdown_export` (delegating to `MarkdownWriter.export_tree`) and `build_chunks_export` (delegating to `SectionAwareChunker.chunk_tree`). |
+| `src/omniscribe/plugins/documents/routes.py` | Added `POST /api/export/markdown`, `GET /api/export/markdown`, `POST /api/export/chunks`, `GET /api/export/chunks` declared ahead of parametrized `/api/export/{artifact_id}`. |
+| `tests/core/writers/test_markdown_writer.py` | Unit and contract tests for heading hierarchy, pipe tables, figures, equations, page break markers, and span normalization. |
+| `tests/core/chunking/test_chunker_props.py` | Hypothesis property tests verifying `max_chars` invariant, intra-section overlap invariant, block boundary integrity, trust score bounds, page span monotonicity, and unit tests for table oversized splits and knob validation. |
+| `tests/routers/test_export_markdown_chunks.py` | Router integration tests for POST/GET markdown/chunks export endpoints, query parameter overrides, knob boundary validation (400), 404 handling, and route precedence verification. |
+
+### 2026-09-07: Profile 4 Redis TLS & SQLite Migration Tool
+
+Implements Profile 4 Redis state backend tooling and documentation clarifications:
+
+| File | Responsibility |
+| --- | --- |
+| `src/omniscribe/config.py` | Add `redis_tls: bool = False` to `RuntimeSettings` with `OMNISCRIBE_REDIS_TLS` (and `REDIS_TLS`) validation alias. |
+| `src/omniscribe/plugins/state_backend_redis.py` | Support TLS connection (`ssl=True`) in `RedisStateBackend` when `redis_url.startswith("rediss://")` or `redis_tls=True`, accept `redis_tls` in `__init__`, and expose `redis_tls` property. |
+| `src/omniscribe/plugins/state_backend_types.py` | Smell 6.26: Document memory and storage caps on `StateBackend` protocol across in-memory (256 MB heap cap), SQLite (filesystem-bound on disk), and Redis (server `maxmemory` / eviction policy). |
+| `src/omniscribe/plugins/state_backend.py` | Wire `redis_tls=settings.redis_tls` when constructing `RedisStateBackend` in `StateBackendPlugin`. |
+| `scripts/migrate_sqlite_to_redis.py` | Standalone CLI and async migration utility to transfer artifacts (with disk blob resolution and remaining TTL), jobs (with index ZSET), and progress channels (with expiration ZSET and consumed status preservation) from SQLite to Redis with batching and dry-run support. |
+| `tests/scripts/test_migrate_sqlite_to_redis.py` | Comprehensive test suite for SQLite-to-Redis migration covering full entity migration, dry-run safety, missing blob handling, non-existent database handling, CLI execution, and `RedisStateBackend` readability. |
+| `tests/plugins/test_state_backend_redis.py` | Tests verifying `redis_tls` flag, `rediss://` scheme automatic SSL activation, unencrypted default, and `RuntimeSettings.redis_tls` parsing. |
 
 ## See Also
 
@@ -1207,6 +1309,6 @@ Wave 14 completes the remaining architectural, security, performance, and testin
 - [AGENTS.md](AGENTS.md) — contributor guide and full env-var reference
 - `audits/` — historical and comprehensive domain audit logs
 
-_Last updated: 2026-09-06_
+_Last updated: 2026-09-07_
 
 

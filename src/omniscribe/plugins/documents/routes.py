@@ -27,6 +27,7 @@ from typing import Any
 from fastapi import APIRouter, Header, Response
 from fastapi.responses import JSONResponse
 
+from omniscribe.core.errors import ChunkingError
 from omniscribe.core.writers.docx import convert_markdown_to_docx
 from omniscribe.core.writers.docx_tree import convert_tree_to_docx
 from omniscribe.core.writers.html import render_html
@@ -36,14 +37,18 @@ from omniscribe.plugins.artifacts import ArtifactStore
 from omniscribe.plugins.documents.schemas import (
     DocumentExportRequest,
     ExportBlockTreeRequest,
+    ExportChunksRequest,
     ExportDocxRequest,
     ExportHtmlRequest,
+    ExportMarkdownRequest,
     ExtractionRequest,
 )
 from omniscribe.plugins.documents.service import (
     EXPORT_MEDIA_TYPES,
     DocumentsError,
+    build_chunks_export,
     build_document_export,
+    build_markdown_export,
     build_tree,
     load_pages,
     run_extraction,
@@ -175,6 +180,107 @@ def build_documents_router(ctx: Context) -> APIRouter:
                 return _envelope(404, "not_found", "metadata artifact not found")
             tree.metadata["processor_report"] = metadata
         return JSONResponse(content=json.loads(export_json(tree)))
+
+    @router.post("/api/export/markdown", response_model=None)
+    async def export_markdown_post(
+        body: ExportMarkdownRequest,
+    ) -> Response | JSONResponse:
+        tree = await _load_tree_or_none(body.text_artifact_id, body.text_artifact_token)
+        if tree is None:
+            return _envelope(404, "not_found", "text artifact not found")
+        if body.metadata_artifact_id and body.metadata_artifact_token:
+            meta_blob = await store.get(
+                body.metadata_artifact_id, body.metadata_artifact_token
+            )
+            metadata = None if meta_blob is None else _parse_json_object(meta_blob.blob)
+            if metadata is None:
+                return _envelope(404, "not_found", "metadata artifact not found")
+            tree.metadata["processor_report"] = metadata
+        content = build_markdown_export(tree)
+        return Response(
+            content=content,
+            media_type="text/markdown; charset=utf-8",
+            headers={"Content-Disposition": 'attachment; filename="document.md"'},
+        )
+
+    @router.get("/api/export/markdown", response_model=None)
+    async def export_markdown_get(
+        text_artifact_id: str,
+        text_artifact_token: str,
+        metadata_artifact_id: str | None = None,
+        metadata_artifact_token: str | None = None,
+    ) -> Response | JSONResponse:
+        tree = await _load_tree_or_none(text_artifact_id, text_artifact_token)
+        if tree is None:
+            return _envelope(404, "not_found", "text artifact not found")
+        if metadata_artifact_id and metadata_artifact_token:
+            meta_blob = await store.get(metadata_artifact_id, metadata_artifact_token)
+            metadata = None if meta_blob is None else _parse_json_object(meta_blob.blob)
+            if metadata is None:
+                return _envelope(404, "not_found", "metadata artifact not found")
+            tree.metadata["processor_report"] = metadata
+        content = build_markdown_export(tree)
+        return Response(
+            content=content,
+            media_type="text/markdown; charset=utf-8",
+            headers={"Content-Disposition": 'attachment; filename="document.md"'},
+        )
+
+    @router.post("/api/export/chunks", response_model=None)
+    async def export_chunks_post(
+        body: ExportChunksRequest,
+    ) -> JSONResponse:
+        tree = await _load_tree_or_none(body.text_artifact_id, body.text_artifact_token)
+        if tree is None:
+            return _envelope(404, "not_found", "text artifact not found")
+        if body.metadata_artifact_id and body.metadata_artifact_token:
+            meta_blob = await store.get(
+                body.metadata_artifact_id, body.metadata_artifact_token
+            )
+            metadata = None if meta_blob is None else _parse_json_object(meta_blob.blob)
+            if metadata is None:
+                return _envelope(404, "not_found", "metadata artifact not found")
+            tree.metadata["processor_report"] = metadata
+        try:
+            chunks = build_chunks_export(
+                tree,
+                max_chars=body.max_chars,
+                overlap_chars=body.overlap_chars,
+                min_chars=body.min_chars,
+            )
+        except ChunkingError as exc:
+            return _envelope(400, "bad_request", str(exc))
+        return JSONResponse(content={"chunks": chunks, "total_chunks": len(chunks)})
+
+    @router.get("/api/export/chunks", response_model=None)
+    async def export_chunks_get(
+        text_artifact_id: str,
+        text_artifact_token: str,
+        metadata_artifact_id: str | None = None,
+        metadata_artifact_token: str | None = None,
+        max_chars: int = 1200,
+        overlap_chars: int = 120,
+        min_chars: int = 200,
+    ) -> JSONResponse:
+        tree = await _load_tree_or_none(text_artifact_id, text_artifact_token)
+        if tree is None:
+            return _envelope(404, "not_found", "text artifact not found")
+        if metadata_artifact_id and metadata_artifact_token:
+            meta_blob = await store.get(metadata_artifact_id, metadata_artifact_token)
+            metadata = None if meta_blob is None else _parse_json_object(meta_blob.blob)
+            if metadata is None:
+                return _envelope(404, "not_found", "metadata artifact not found")
+            tree.metadata["processor_report"] = metadata
+        try:
+            chunks = build_chunks_export(
+                tree,
+                max_chars=max_chars,
+                overlap_chars=overlap_chars,
+                min_chars=min_chars,
+            )
+        except ChunkingError as exc:
+            return _envelope(400, "bad_request", str(exc))
+        return JSONResponse(content={"chunks": chunks, "total_chunks": len(chunks)})
 
     @router.get("/api/export/{artifact_id}", response_model=None)
     async def get_document_export(

@@ -15,7 +15,8 @@ from __future__ import annotations
 
 import asyncio
 import time
-from typing import AsyncIterator
+from collections.abc import AsyncIterator
+from typing import Any
 
 import fakeredis.aioredis
 import pytest
@@ -23,8 +24,6 @@ import pytest
 from omniscribe.plugins import state_backend_redis as sbm
 from omniscribe.plugins.state_backend_redis import RedisStateBackend
 from omniscribe.plugins.state_backend_types import (
-    ArtifactRecord,
-    ChannelRecord,
     JobRecord,
 )
 
@@ -49,8 +48,8 @@ async def redis_state_backend() -> AsyncIterator[RedisStateBackend]:
     import redis.asyncio as redis_async
 
     orig_from_url = redis_async.from_url
-    redis_async.from_url = lambda *a, **kw: fake  # type: ignore[assignment]
-    sbm.RedisStateBackend.__init__.__globals__[  # type: ignore[attr-defined]
+    redis_async.from_url = lambda *a, **kw: fake
+    sbm.RedisStateBackend.__init__.__globals__[
         "redis_async"
     ] = redis_async
     try:
@@ -59,7 +58,7 @@ async def redis_state_backend() -> AsyncIterator[RedisStateBackend]:
         yield backend
     finally:
         await backend.aclose()
-        redis_async.from_url = orig_from_url  # type: ignore[assignment]
+        redis_async.from_url = orig_from_url
 
 
 # -- Artifacts ---------------------------------------------------------------
@@ -295,3 +294,80 @@ async def test_prune_expired_channels(
     assert await redis_state_backend.get_channel("expired") is None
     assert await redis_state_backend.get_channel("expiring") is not None
     assert await redis_state_backend.get_channel("future") is not None
+
+
+# -- TLS & Config -----------------------------------------------------------
+
+
+def test_redis_backend_tls_flag(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Explicit redis_tls=True passes ssl=True to from_url."""
+    captured_kwargs: dict[str, Any] = {}
+
+    import redis.asyncio as redis_async
+
+    def mock_from_url(url: str, **kwargs: Any) -> Any:
+        captured_kwargs.update(kwargs)
+        return fakeredis.aioredis.FakeRedis()
+
+    monkeypatch.setattr(redis_async, "from_url", mock_from_url)
+    sbm.RedisStateBackend.__init__.__globals__["redis_async"] = redis_async
+
+    backend = RedisStateBackend("redis://localhost:6379/0", redis_tls=True)
+    assert backend.redis_tls is True
+    assert captured_kwargs.get("ssl") is True
+
+
+def test_redis_backend_rediss_scheme(monkeypatch: pytest.MonkeyPatch) -> None:
+    """rediss:// scheme automatically enables ssl=True."""
+    captured_kwargs: dict[str, Any] = {}
+
+    import redis.asyncio as redis_async
+
+    def mock_from_url(url: str, **kwargs: Any) -> Any:
+        captured_kwargs.update(kwargs)
+        return fakeredis.aioredis.FakeRedis()
+
+    monkeypatch.setattr(redis_async, "from_url", mock_from_url)
+    sbm.RedisStateBackend.__init__.__globals__["redis_async"] = redis_async
+
+    backend = RedisStateBackend("rediss://localhost:6379/0")
+    assert backend.redis_tls is True
+    assert captured_kwargs.get("ssl") is True
+
+
+def test_redis_backend_no_tls(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Plain redis:// with redis_tls=False does not set ssl in kwargs."""
+    captured_kwargs: dict[str, Any] = {}
+
+    import redis.asyncio as redis_async
+
+    def mock_from_url(url: str, **kwargs: Any) -> Any:
+        captured_kwargs.update(kwargs)
+        return fakeredis.aioredis.FakeRedis()
+
+    monkeypatch.setattr(redis_async, "from_url", mock_from_url)
+    sbm.RedisStateBackend.__init__.__globals__["redis_async"] = redis_async
+
+    backend = RedisStateBackend("redis://localhost:6379/0", redis_tls=False)
+    assert backend.redis_tls is False
+    assert "ssl" not in captured_kwargs
+
+
+def test_runtime_settings_redis_tls(monkeypatch: pytest.MonkeyPatch) -> None:
+    """RuntimeSettings parses redis_tls and OMNISCRIBE_REDIS_TLS env var."""
+    from omniscribe.config import RuntimeSettings
+
+    # Default is False
+    monkeypatch.delenv("OMNISCRIBE_REDIS_TLS", raising=False)
+    monkeypatch.delenv("REDIS_TLS", raising=False)
+    settings = RuntimeSettings()
+    assert settings.redis_tls is False
+
+    # Explicit kwarg
+    settings_true = RuntimeSettings(redis_tls=True)
+    assert settings_true.redis_tls is True
+
+    # Env var alias OMNISCRIBE_REDIS_TLS
+    monkeypatch.setenv("OMNISCRIBE_REDIS_TLS", "true")
+    settings_env = RuntimeSettings()
+    assert settings_env.redis_tls is True

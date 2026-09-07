@@ -165,6 +165,10 @@ class RuntimeSettings(BaseSettings):
     redis_url: str = Field(
         default="redis://localhost:6379/0", validation_alias="REDIS_URL"
     )
+    redis_tls: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("OMNISCRIBE_REDIS_TLS", "REDIS_TLS"),
+    )
 
     # State backend selector (audit A-3, 4.24; Phase 2.3 default flip).
     # ``sqlite`` is the default since 2026-09-05: it persists job records,
@@ -177,6 +181,13 @@ class RuntimeSettings(BaseSettings):
     state_backend: str = Field(
         default="sqlite",
         validation_alias="OMNISCRIBE_STATE_BACKEND",
+    )
+    # Job queue dispatch mode (RFC 004 Workstream R3).
+    # ``inprocess`` (default) drains jobs via single-worker in-memory queue.
+    # ``redis`` delegates queueing and multi-worker dispatch to Redis.
+    jobs_mode: str = Field(
+        default="inprocess",
+        validation_alias="OMNISCRIBE_JOBS_MODE",
     )
     # Cordis-style harness boot config. ``cordis_config_path`` is the base
     # plugin tree (the package ships one under ``resources/cordis.yml``);
@@ -354,6 +365,21 @@ class RuntimeSettings(BaseSettings):
         represented as None in runtime configuration.
         """
         return None if value is not None and value <= 0 else value
+
+    @property
+    def api_base(self) -> str:
+        """Alias for :attr:`llm_api_base`."""
+        return self.llm_api_base
+
+    @property
+    def api_key(self) -> str:
+        """Alias for :attr:`llm_api_key`."""
+        return self.llm_api_key
+
+    @property
+    def model(self) -> str:
+        """Alias for :attr:`llm_model`."""
+        return self.llm_model
 
     @property
     def artifact_directory(self) -> Path:

@@ -35,7 +35,13 @@ DISABLE_STRINGS: Final[frozenset[str]] = frozenset(
 
 
 def env_str(name: str) -> str | None:
-    """Read a trimmed string env var. None if unset or empty after strip."""
+    """Read a trimmed string env var. None if unset or empty after strip.
+
+    Empty-value semantics (smell 4.28):
+        - Unset env var yields ``None``.
+        - Empty string ``""`` (or whitespace-only) yields ``None``.
+    Compare with :func:`env_list_csv`, which yields ``[]`` in both cases.
+    """
     value = os.getenv(name)
     if value is None:
         return None
@@ -70,15 +76,32 @@ def parse_bool(value: Any, default: bool = False) -> bool:
 
 
 def env_bool(name: str, default: bool) -> bool:
-    """Read a boolean env var with canonical truthy/falsy conversion."""
+    """Read a boolean env var with canonical truthy/falsy conversion.
+
+    If the variable is set but its stripped value is neither truthy
+    (:data:`ENABLE_STRINGS`) nor falsy (:data:`DISABLE_STRINGS`), logs a warning
+    and returns ``default`` (matching :func:`env_int`).
+    """
     value = os.getenv(name)
     if value is None:
         return default
-    return parse_bool(value, default=default)
+    val_str = value.strip().lower()
+    if val_str in ENABLE_STRINGS:
+        return True
+    if val_str in DISABLE_STRINGS:
+        return False
+    logger.warning("Ignoring invalid boolean environment value for %s", name)
+    return default
 
 
 def env_list_csv(name: str) -> list[str]:
-    """Read a comma-separated list env var. Trims each item; drops empties."""
+    """Read a comma-separated list env var. Trims each item; drops empties.
+
+    Empty-value semantics (smell 4.28):
+        - Unset env var yields ``[]``.
+        - Empty string ``""`` (or whitespace-only) yields ``[]``.
+    Compare with :func:`env_str`, which yields ``None`` in both cases.
+    """
     raw = os.getenv(name)
     if not raw:
         return []

@@ -90,7 +90,18 @@ class ChannelRecord:
 
 @runtime_checkable
 class StateBackend(Protocol):
-    """Persistence seam for artifacts, jobs, and progress channels."""
+    """Persistence seam for artifacts, jobs, and progress channels.
+
+    Memory and storage caps across backend implementations (Smell 6.26):
+    - **In-memory backend** (:class:`~omniscribe.plugins.state_backend_memory.MemoryStateBackend`):
+      Enforces a 256 MB cap (``_MEMORY_BLOB_CAP_BYTES``) to prevent process OOM on
+      the Python heap in embedded/Profile 1 mode.
+    - **SQLite backend** (:class:`~omniscribe.plugins.state_backend_sqlite.SQLiteStateBackend`):
+      Stores blobs on disk (``<blob_dir>/<id>.bin``), bound only by filesystem storage.
+    - **Redis backend** (:class:`~omniscribe.plugins.state_backend_redis.RedisStateBackend`):
+      Stores blobs as binary string keys, governed by Redis server ``maxmemory`` and
+      eviction policy.
+    """
 
     # Artifacts
     async def put_artifact(

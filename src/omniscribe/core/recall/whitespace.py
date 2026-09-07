@@ -31,7 +31,7 @@ from omniscribe.core.recall import (
     STRADDLE_MIN_OVERLAP,
     geometry,
 )
-from omniscribe.utils.env import DISABLE_STRINGS, env_str
+from omniscribe.core.recall.base import BaseRecallOptions
 
 logger = logging.getLogger(__name__)
 
@@ -41,8 +41,13 @@ _ENV_RECALL = "OMNISCRIBE_WHITESPACE_RECALL"
 # The kernel must bridge inter-character gaps without fusing stacked lines.
 _DILATION_WIDTH_DIVISOR = 48
 _DILATION_HEIGHT_DIVISOR = 150
-_KERNEL_W_RANGE = (7, 35)
-_KERNEL_H_RANGE = (3, 11)
+_KERNEL_W_MIN = 15
+_KERNEL_W_MAX = 60
+_KERNEL_H_MIN = 3
+_KERNEL_H_MAX = 12
+_KERNEL_W_RANGE = (_KERNEL_W_MIN, _KERNEL_W_MAX)
+_KERNEL_H_RANGE = (_KERNEL_H_MIN, _KERNEL_H_MAX)
+
 
 # Conservative candidate filters.
 _MIN_ASPECT_RATIO = 2.0
@@ -97,8 +102,8 @@ _STRADDLE_MIN_OVERLAP = STRADDLE_MIN_OVERLAP
 
 
 @dataclass(frozen=True, slots=True)
-class WhitespaceRecallOptions:
-    enabled: bool = True
+class WhitespaceRecallOptions(BaseRecallOptions):
+    """Configuration options for whitespace-based secondary recall."""
 
     @classmethod
     def from_env(cls) -> WhitespaceRecallOptions:
@@ -111,8 +116,7 @@ class WhitespaceRecallOptions:
         The env read goes through :func:`omniscribe.utils.env.env_str`
         (audit H3) so this module no longer imports ``os``.
         """
-        raw = (env_str(_ENV_RECALL) or "").strip().lower()
-        return cls(enabled=raw not in DISABLE_STRINGS)
+        return cls._from_env(_ENV_RECALL)
 
 
 class WhitespaceRecallBooster:
@@ -168,8 +172,8 @@ class WhitespaceRecallBooster:
             # Inverted/dark page: the whitespace model no longer holds.
             return []
 
-        kw = _clamp(w // _DILATION_WIDTH_DIVISOR, _KERNEL_W_RANGE)
-        kh = _clamp(h // _DILATION_HEIGHT_DIVISOR, _KERNEL_H_RANGE)
+        kw = _clamp(w // _DILATION_WIDTH_DIVISOR, (_KERNEL_W_MIN, _KERNEL_W_MAX))
+        kh = _clamp(h // _DILATION_HEIGHT_DIVISOR, (_KERNEL_H_MIN, _KERNEL_H_MAX))
         kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (kw, kh))
         dilated = cv2.dilate(binary, kernel)
 
@@ -209,9 +213,13 @@ class WhitespaceRecallBooster:
             nx0, ny0 = x / w, y / h
             nx1, ny1 = (x + bw) / w, (y + bh) / h
             nw, nh = nx1 - nx0, ny1 - ny0
-            if nw < _MIN_ASPECT_RATIO * nh:
+            if _is_aspect_ratio_invalid(nw, nh):
                 continue
-            if nh < min_height or nh > max_height or nw * nh > _MAX_AREA_FRACTION:
+            if (
+                _is_too_small(nh, min_height)
+                or _is_too_tall(nh, max_height)
+                or _is_area_too_large(nw, nh)
+            ):
                 continue
             # Ink density on the PRE-dilation mask: dilated blobs are nearly
             # solid, real glyph lines sit ~0.2-0.6, solid rules ~1.0.
@@ -240,6 +248,29 @@ class WhitespaceRecallBooster:
         # was dropped by the filter family (T2 run-summary counter).
         self.candidates_dropped += (count - 1) - len(kept)
         return [box for box, _density in kept]
+
+
+def _is_aspect_ratio_invalid(nw: float, nh: float) -> bool:
+    """True when component is not wide enough relative to its height to be a text line."""
+    return nw < _MIN_ASPECT_RATIO * nh
+
+
+def _is_too_small(nh: float, min_height: float) -> bool:
+    """True when component height is below the minimum height threshold."""
+    return nh < min_height
+
+
+def _is_too_tall(nh: float, max_height: float) -> bool:
+    """True when component height exceeds the maximum height threshold (e.g. merged lines)."""
+    return nh > max_height
+
+
+def _is_area_too_large(nw: float, nh: float) -> bool:
+    """True when component area exceeds the maximum allowed page fraction."""
+    return nw * nh > _MAX_AREA_FRACTION
+
+
+_is_too_short = _is_too_small
 
 
 def _clamp(value: int, bounds: tuple[int, int]) -> int:

@@ -233,16 +233,22 @@ class RedisStateBackend:
     pings the server so a misconfigured URL fails loud at boot.
     """
 
-    def __init__(self, redis_url: str) -> None:
+    def __init__(self, redis_url: str, redis_tls: bool = False) -> None:
         self._redis_url = redis_url
+        self._redis_tls = redis_tls or redis_url.startswith("rediss://")
         # Imported lazily so test environments without the redis
         # package still load. ``redis>=8.1.0`` is a base dep, so
         # this is for the fakeredis test path.
         import redis.asyncio as redis_async
 
-        self._redis: Any = redis_async.from_url(
-            redis_url, encoding="utf-8", decode_responses=False
-        )
+        kwargs: dict[str, Any] = {
+            "encoding": "utf-8",
+            "decode_responses": False,
+        }
+        if self._redis_tls:
+            kwargs["ssl"] = True
+
+        self._redis: Any = redis_async.from_url(redis_url, **kwargs)
         self._consume_channel_script: Any = self._redis.register_script(
             _CONSUME_CHANNEL_LUA
         )
@@ -250,6 +256,10 @@ class RedisStateBackend:
     @property
     def redis_url(self) -> str:
         return self._redis_url
+
+    @property
+    def redis_tls(self) -> bool:
+        return self._redis_tls
 
     async def open(self) -> None:
         """Ping the server to fail loud at boot if Redis is unreachable.

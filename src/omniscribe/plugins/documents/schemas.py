@@ -8,6 +8,7 @@ without changes.
 from __future__ import annotations
 
 from enum import StrEnum
+from typing import Any
 
 from pydantic import Field
 
@@ -62,3 +63,36 @@ class DocumentExportRequest(ExportBlockTreeRequest):
 
 class ExportDocxRequest(_TrimmedModel):
     text: str = ""
+
+
+class ExportMarkdownRequest(ExportBlockTreeRequest):
+    """Request for markdown export from text/metadata artifacts."""
+
+
+class ExportChunksRequest(ExportBlockTreeRequest):
+    """Request for section-aware chunks export with tuning knobs."""
+
+    max_chars: int = Field(default=1200, gt=0, le=100000)
+    overlap_chars: int = Field(default=120, ge=0, le=10000)
+    min_chars: int = Field(default=200, gt=0, le=100000)
+
+
+class DocumentChunkPayload(_TrimmedModel):
+    """Wire representation of a single DocumentChunk."""
+
+    chunk_id: str
+    element_type: str
+    text: str
+    section_path: list[str] = Field(default_factory=list)
+    page_span: tuple[int, int]
+    bbox: list[tuple[float, float, float, float]] = Field(default_factory=list)
+    block_ids: list[str] = Field(default_factory=list)
+    trust_score: float | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ExportChunksResponse(_TrimmedModel):
+    """Response payload containing extracted chunks and summary metadata."""
+
+    chunks: list[DocumentChunkPayload]
+    total_chunks: int

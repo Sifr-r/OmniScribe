@@ -142,8 +142,10 @@ def _apply_env_overrides(rows: list[PluginRow]) -> list[PluginRow]:
     for row in rows:
         row_overrides = overrides.get(row.id.lower())
         if row_overrides:
-            row = replace(row, config={**row.config, **row_overrides})
-        folded.append(row)
+            updated_row = replace(row, config={**row.config, **row_overrides})
+        else:
+            updated_row = row
+        folded.append(updated_row)
     return folded
 
 
@@ -196,17 +198,17 @@ class Loader:
 
         mounted: list[str] = []
         for row in rows:
-            row = replace(row, config=expand_env(row.config, row_id=row.id))
-            instance = self._instantiate(row)
-            config = self._validate(row, instance)
-            instance.id = row.id
+            updated_row = replace(row, config=expand_env(row.config, row_id=row.id))
+            instance = self._instantiate(updated_row)
+            config = self._validate(updated_row, instance)
+            instance.id = updated_row.id
             try:
                 await self._ctx.plugin(instance, config=config)
             except Exception as exc:
                 if isinstance(exc, PluginLoadError):
                     raise
-                raise PluginLoadError(row_id=row.id, reason=str(exc)) from exc
-            mounted.append(row.id)
+                raise PluginLoadError(row_id=updated_row.id, reason=str(exc)) from exc
+            mounted.append(updated_row.id)
         _LOGGER.info(
             "harness mounted plugins: %s (%d plugins)",
             ", ".join(mounted),

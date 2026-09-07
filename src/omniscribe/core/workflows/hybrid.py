@@ -375,7 +375,7 @@ class HybridEngine(EngineBase):
         images_dict: dict[int, str],
         page_nums: Sequence[int],
         progress: ProgressCallback | None,
-        input_path: str = "",
+        input_path: str,
         cancel_check: CancelCheck | None = None,
         decoded_put: Callable[[int, Image.Image], None] | None = None,
         decoded_get: Callable[[int], Image.Image | None] | None = None,
@@ -440,7 +440,7 @@ class HybridEngine(EngineBase):
         *,
         pages_structured: PagesData,
         page_nums: Sequence[int],
-        dense_mode: str,
+        dense_mode: DenseMode,
         dense_threshold: int,
     ) -> set[int]:
         return self.layout_detector.select_dense_pages(

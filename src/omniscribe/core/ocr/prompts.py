@@ -82,7 +82,7 @@ def model_supports_system_role(model_name: str | None) -> bool:
     if not model_name:
         return True
     name = model_name.lower()
-    return not any(needle in name for needle in _MODELS_WITHOUT_SYSTEM_ROLE)
+    return "olmocr" not in name and name not in _MODELS_WITHOUT_SYSTEM_ROLE
 
 
 # Canonical OlmOCR-2 prompt (the model was RL-trained on this exact string).

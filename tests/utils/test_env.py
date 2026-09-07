@@ -90,3 +90,36 @@ def test_env_bool(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("TEST_BOOL_FLAG", "invalid_value")
     assert env_bool("TEST_BOOL_FLAG", default=False) is False
     assert env_bool("TEST_BOOL_FLAG", default=True) is True
+
+
+def test_env_bool_logs_warning_on_invalid_value(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    import logging
+
+    from omniscribe.utils.env import env_bool
+
+    monkeypatch.setenv("TEST_BOOL_FLAG", "invalid_value")
+    with caplog.at_level(logging.WARNING, logger="omniscribe.utils.env"):
+        result = env_bool("TEST_BOOL_FLAG", default=True)
+    assert result is True
+    assert "Ignoring invalid boolean environment value for TEST_BOOL_FLAG" in caplog.text
+
+
+def test_env_str_vs_env_list_csv_empty_semantics(monkeypatch: pytest.MonkeyPatch) -> None:
+    from omniscribe.utils.env import env_list_csv, env_str
+
+    # Unset
+    monkeypatch.delenv("EMPTY_VAR", raising=False)
+    assert env_str("EMPTY_VAR") is None
+    assert env_list_csv("EMPTY_VAR") == []
+
+    # Empty string
+    monkeypatch.setenv("EMPTY_VAR", "")
+    assert env_str("EMPTY_VAR") is None
+    assert env_list_csv("EMPTY_VAR") == []
+
+    # Whitespace-only string
+    monkeypatch.setenv("EMPTY_VAR", "   ")
+    assert env_str("EMPTY_VAR") is None
+    assert env_list_csv("EMPTY_VAR") == []

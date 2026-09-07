@@ -42,6 +42,7 @@ plugins:
     use: omniscribe.plugins.jobs:plugin
     config:
       worker_count: 1
+      mode: ${OMNISCRIBE_JOBS_MODE:-inprocess}
 
   - id: progress
     use: omniscribe.plugins.progress:plugin

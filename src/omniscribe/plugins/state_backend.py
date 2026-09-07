@@ -31,11 +31,12 @@ from omniscribe.harness.context import Context
 from omniscribe.harness.plugin import Plugin
 
 from .state_backend_memory import MemoryStateBackend
-from .state_backend_sqlite import SQLiteStateBackend
+
 # Sprint 4 (RFC 003): RedisStateBackend is a runtime dep
 # (``redis>=8.1.0`` is a base dep, see ``pyproject.toml``), so
 # we import it at module level alongside the other backends.
 from .state_backend_redis import RedisStateBackend
+from .state_backend_sqlite import SQLiteStateBackend
 from .state_backend_types import (
     TERMINAL_JOB_STATUSES,
     ArtifactBlob,
@@ -55,6 +56,10 @@ _ALLOWED_BACKENDS = {"memory", "sqlite", "redis"}
 class StateBackendSchema(BaseModel):
     backend: Literal["memory", "sqlite", "redis"] = "memory"
     sqlite_path: str = ""
+    # Redis overrides (Profile 4). Empty/unset falls back to the
+    # env-driven ``REDIS_URL`` / ``OMNISCRIBE_REDIS_TLS`` settings.
+    redis_url: str = ""
+    redis_tls: bool = False
 
 
 class StateBackendPlugin(Plugin):
@@ -125,11 +130,18 @@ class StateBackendPlugin(Plugin):
             # it for non-loopback deployments. ``open()`` pings the
             # server so a misconfigured URL fails loud at boot, not
             # on the first request.
-            redis_url = settings.redis_url
-            redis_backend = RedisStateBackend(redis_url=redis_url)
+            redis_url = (
+                str(self.config.get("redis_url") or "").strip() or settings.redis_url
+            )
+            redis_tls = bool(self.config.get("redis_tls")) or settings.redis_tls
+            redis_backend = RedisStateBackend(redis_url=redis_url, redis_tls=redis_tls)
             await redis_backend.open()
             backend = redis_backend
-            _LOGGER.info("state backend redis url=%s", _redact_redis_url(redis_url))
+            _LOGGER.info(
+                "state backend redis url=%s tls=%s",
+                _redact_redis_url(redis_url),
+                redis_tls,
+            )
         ctx.service(StateBackend, backend)
         ctx.effect(backend.aclose)
 

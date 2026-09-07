@@ -37,8 +37,20 @@ from omniscribe import (
     PromptedGroundedOCR,
 )
 from omniscribe.confidence_eval import (
+    MarkdownScoreReport,
+    blocks_to_markdown,
+    compute_bleu,
+    compute_cer,
+    compute_chrf,
+    compute_heading_hierarchy_f1,
+    compute_levenshtein_distance,
     compute_report,
+    compute_table_similarity,
+    compute_wer,
+    extract_markdown_headings,
+    extract_markdown_tables,
     load_ground_truth,
+    score_markdown_pair,
 )
 
 FIXTURES = ROOT / "tests" / "fixtures"
@@ -147,6 +159,35 @@ def render_report(console: Console, reports: list):
             console.print(f"  ... and {len(unmatched) - 6} more.")
 
 
+def render_markdown_report(
+    console: Console, md_reports: list[tuple[str, MarkdownScoreReport]]
+) -> None:
+    table = Table(
+        title="Markdown evaluation (OmniDocBench metrics)", show_lines=True
+    )
+    table.add_column("document")
+    table.add_column("path")
+    table.add_column("CER", justify="right")
+    table.add_column("WER", justify="right")
+    table.add_column("BLEU", justify="right")
+    table.add_column("chrF", justify="right")
+    table.add_column("Heading F1", justify="right")
+    table.add_column("Table Sim", justify="right")
+
+    for path, report in md_reports:
+        table.add_row(
+            report.document,
+            path,
+            f"{report.cer:.3f}",
+            f"{report.wer:.3f}",
+            f"{report.bleu:.1f}",
+            f"{report.chrf:.1f}",
+            f"{report.heading_f1:.2f}",
+            f"{report.table_similarity:.2f}",
+        )
+    console.print(table)
+
+
 # ---------------------------------------------------------------------------
 
 
@@ -160,16 +201,31 @@ async def main() -> None:
     parser.add_argument("--hybrid-model", default="allenai/olmocr-2-7b")
     parser.add_argument("--max-image-dim", type=int, default=1024)
     parser.add_argument("--iou-threshold", type=float, default=0.3)
+    parser.add_argument(
+        "--score-markdown",
+        action="store_true",
+        help="Evaluate markdown export against ground-truth markdown fixtures (CER, WER, BLEU, chrF, heading F1, table similarity)",
+    )
     args = parser.parse_args()
 
     console = Console()
     reports = []
+    md_reports: list[tuple[str, MarkdownScoreReport]] = []
 
     for pdf_name, fixture_name in JOBS:
         pdf = EXAMPLES / pdf_name
         fixture = FIXTURES / fixture_name
         gt, (fw, fh) = load_ground_truth(fixture)
         console.print(f"\n[bold]>> {pdf_name}[/]  (GT: {len(gt)} blocks, {fw}x{fh})")
+
+        # Load or synthesize ground-truth markdown
+        gt_md = ""
+        if args.score_markdown:
+            md_fixture = FIXTURES / fixture_name.replace(".json", ".md")
+            if md_fixture.exists():
+                gt_md = md_fixture.read_text(encoding="utf-8")
+            else:
+                gt_md = blocks_to_markdown(gt)
 
         if args.path in ("both", "grounded"):
             console.print("   [cyan]grounded[/]...")
@@ -182,6 +238,12 @@ async def main() -> None:
                 )
                 reports.append(("grounded", report))
                 console.print(f"   {report.summary_line()}")
+
+                if args.score_markdown:
+                    pipe_md = blocks_to_markdown(out)
+                    md_rep = score_markdown_pair(pdf_name, gt_md, pipe_md)
+                    md_reports.append(("grounded", md_rep))
+                    console.print(f"   [green]md:[/] {md_rep.summary_line()}")
             except Exception as e:
                 console.print(f"   [red]grounded failed: {type(e).__name__}: {e}[/]")
 
@@ -196,11 +258,41 @@ async def main() -> None:
                 )
                 reports.append(("hybrid", report))
                 console.print(f"   {report.summary_line()}")
+
+                if args.score_markdown:
+                    pipe_md = blocks_to_markdown(out)
+                    md_rep = score_markdown_pair(pdf_name, gt_md, pipe_md)
+                    md_reports.append(("hybrid", md_rep))
+                    console.print(f"   [green]md:[/] {md_rep.summary_line()}")
             except Exception as e:
                 console.print(f"   [red]hybrid failed: {type(e).__name__}: {e}[/]")
 
     console.print()
     render_report(console, reports)
+    if args.score_markdown and md_reports:
+        console.print()
+        render_markdown_report(console, md_reports)
+
+
+__all__ = [
+    "MarkdownScoreReport",
+    "blocks_to_markdown",
+    "compute_bleu",
+    "compute_cer",
+    "compute_chrf",
+    "compute_heading_hierarchy_f1",
+    "compute_levenshtein_distance",
+    "compute_table_similarity",
+    "compute_wer",
+    "extract_markdown_headings",
+    "extract_markdown_tables",
+    "main",
+    "render_markdown_report",
+    "render_report",
+    "run_grounded",
+    "run_hybrid",
+    "score_markdown_pair",
+]
 
 
 if __name__ == "__main__":

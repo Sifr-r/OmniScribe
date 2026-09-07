@@ -7,6 +7,7 @@ from omniscribe.core.processors.base import (
     DocumentProcessor,
     DocumentProcessorFactory,
     DocumentProcessorRegistry,
+    ProcessorContract,
     _bbox_area,
     _normalize_space,
     _page_region,
@@ -24,6 +25,7 @@ from omniscribe.core.processors.table import (
     _TableCellRecord,
     _TableRecord,
 )
+from omniscribe.core.processors.table_fallback import TableFallbackProcessor
 
 __all__ = [
     "LOCAL_DOCUMENT_PROCESSOR_NAMES",
@@ -31,11 +33,13 @@ __all__ = [
     "DocumentProcessorFactory",
     "DocumentProcessorRegistry",
     "LayoutEnrichmentProcessor",
+    "ProcessorContract",
     "QualityAnalysisProcessor",
     "ReadingOrderProcessor",
     "SectionAnalysisProcessor",
     "StructureAnalysisProcessor",
     "TableExtractionProcessor",
+    "TableFallbackProcessor",
     "_TableCellRecord",
     "_TableRecord",
     "_bbox_area",

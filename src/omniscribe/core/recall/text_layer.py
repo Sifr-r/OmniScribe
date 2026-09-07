@@ -30,7 +30,7 @@ from omniscribe.core.recall import (
     STRADDLE_MIN_OVERLAP,
     geometry,
 )
-from omniscribe.utils.env import DISABLE_STRINGS, env_str
+from omniscribe.core.recall.base import BaseRecallOptions
 
 logger = logging.getLogger(__name__)
 
@@ -65,8 +65,8 @@ TEXT_LAYER_AGREEMENT_TARGET = 0.2
 
 
 @dataclass(frozen=True, slots=True)
-class TextLayerRecallOptions:
-    enabled: bool = True
+class TextLayerRecallOptions(BaseRecallOptions):
+    """Configuration options for PDF text-layer secondary recall."""
 
     @classmethod
     def from_env(cls) -> TextLayerRecallOptions:
@@ -79,8 +79,7 @@ class TextLayerRecallOptions:
         The env read goes through :func:`omniscribe.utils.env.env_str`
         (audit H3) so this module no longer imports ``os``.
         """
-        raw = (env_str(_ENV_TEXT_LAYER_RECALL) or "").strip().lower()
-        return cls(enabled=raw not in DISABLE_STRINGS)
+        return cls._from_env(_ENV_TEXT_LAYER_RECALL)
 
 
 class PdfTextLayerRecall:

@@ -30,6 +30,10 @@ from omniscribe.config import RuntimeSettings
 #:
 #: 1. ``api_base``: Base URL of the OpenAI-compatible VLM endpoint (e.g. LM Studio, Ollama).
 #: 2. ``api_key``: Authentication key for the VLM endpoint (masked as ``******`` in GET responses).
+#:    Masked skip contract (smell 6.86): GET ``/api/config`` returns ``******`` instead of the raw
+#:    secret to prevent credential exposure in UI responses. When clients submit updates via
+#:    ``update_config``, sending ``api_key == "******"`` is treated as an explicit no-op sentinel
+#:    that preserves the existing active secret rather than replacing it with literal asterisks.
 #: 3. ``model``: Target VLM model identifier loaded on the inference server.
 #: 4. ``concurrency``: Number of PDF pages rasterized and processed concurrently.
 #: 5. ``dpi``: Target rasterization resolution (DPI) for PDF rendering.
@@ -61,6 +65,12 @@ def seed_config(settings: RuntimeSettings) -> dict[str, Any]:
     Seeds the canonical configuration keys defined in
     :data:`CONFIG_KEY_SET`. See :data:`CONFIG_KEY_SET` for the
     detailed description of each exposed key.
+
+    Note on ``api_key`` masking (smell 6.86):
+        ``api_key`` is seeded with ``settings.llm_api_key`` in plaintext in the
+        internal service store. However, GET responses mask it as ``"******"``.
+        Subsequent config updates that submit the masked value ``"******"`` are
+        treated as no-ops by ``update_config``, avoiding accidental overwrites.
     """
     seeded: dict[str, Any] = dict(_SEED_DEFAULTS)
     seeded["api_base"] = settings.llm_api_base

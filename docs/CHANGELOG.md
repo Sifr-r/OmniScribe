@@ -12,6 +12,37 @@ _See [v0.3.0](#030--2026-09-06) for the most recent release and
 [docs/RELEASE-NOTES-v0.3.0.md](RELEASE-NOTES-v0.3.0.md) for the
 full v0.3.0 release report._
 
+- **2026-09-07 — RFC 004: Competitive Gap Remediation (All 5 Workstreams Shipped).**
+  Closes the competitive feature gap against Docling and Unstructured.io
+  ([`docs/rfcs/2026-09-competitive-gap-remediation.md`](rfcs/2026-09-competitive-gap-remediation.md))
+  across five production workstreams:
+  - **R1: Markdown writer & section-aware chunker.** Added `MarkdownWriter`
+    (`src/omniscribe/core/writers/markdown.py`) producing clean GitHub-Flavored
+    Markdown with heading hierarchy, GFM pipe tables, LaTeX equation blocks and
+    inline delimiters, figure references, and page-break comments (`<!-- PageBreak: <idx> -->`).
+    Added `SectionAwareChunker` (`src/omniscribe/core/chunking/`) with element taxonomy
+    (`RAGElementCategory`), boundary hierarchy, atomic table preservation, intra-section
+    overlap, and provenance metadata. Mounted new HTTP routes `GET|POST /api/export/markdown`
+    and `GET|POST /api/export/chunks`.
+  - **R2: Digital-document ingest fast path.** Added native readers
+    (`src/omniscribe/core/readers/`) for DOCX, HTML, and Markdown inputs. Digital files
+    bypass Surya layout detection and VLM inference completely (zero GPU/API latency and
+    cost), synthesizing a normalized `DocumentResult` (confidence=1.0, trust_flags=("source:digital",))
+    and rendering searchable synthetic PDFs via PyMuPDF.
+  - **R3: Redis multi-worker dispatch & standalone worker CLI.** Built `RedisJobQueue`
+    (`src/omniscribe/plugins/jobs_redis.py`) featuring atomic Lua job claims, visibility timeout
+    worker heartbeats, and dead-letter recovery. Added standalone `omniscribe-worker` CLI
+    (`src/omniscribe/worker.py`) enabling horizontally scalable processing across OCR, translation,
+    and glossary tasks. Integrated real-time Redis Pub/Sub progress fan-out across worker nodes
+    in `ProgressServiceImpl` (`src/omniscribe/plugins/progress.py`).
+  - **R4: External benchmark credibility.** Added end-to-end PDF-to-Markdown scoring
+    metrics (CER, WER, BLEU, chrF, heading hierarchy F1, table similarity) to
+    `scripts/confidence_eval.py --score-markdown`. Documented reproducible comparative
+    benchmarks against Docling, Marker, Unstructured, and Nougat in [`docs/benchmarks.md`](benchmarks.md).
+  - **R5: Table-structure fallback processor.** Added `TableFallbackProcessor`
+    (`src/omniscribe/core/processors/table_fallback.py`) providing heuristic grid
+    reconstruction, row/column boundary detection, and fail-open table repair for
+    unaligned or low-confidence tables.
 - **2026-09-06 — U12 in-UI "try with sample PDF" affordance
   (Sprint 3, RFC 002 §4 Option b).** A new user has no PDF of
   their own to upload; the Workstation screen's empty-state
@@ -36,6 +67,21 @@ full v0.3.0 release report._
 
 ### Maintenance
 
+- **2026-09-07 — Profile 4 SQLite-to-Redis migration tool & Redis TLS.**
+  Shipped `scripts/migrate_sqlite_to_redis.py` enabling zero-data-loss migration of
+  jobs, artifacts, and channels from SQLite state databases to Redis. Added Redis TLS
+  support via `rediss://` URI schemes and the `OMNISCRIBE_REDIS_TLS` environment variable,
+  with boot log password redaction (`_redact_redis_url`).
+- **2026-09-07 — OCR service buffer prune loop consolidation & SSE wait flap resolution.**
+  Consolidated event buffer and completed job cleanup into `_prune_events_if_needed`,
+  bounding both structures to `_max_buffered_jobs`. Resolved SSE event loop wait flapping
+  by treating the sequence-stamped event deque as the authoritative replay buffer and
+  signaling `asyncio.Event` reliably on append. Documented `update_config` settings
+  write-through behavior for subsequent pipeline requests. Normalized the grounded
+  repair loop to the explicit-closure + list-counter progress pattern (no default-arg
+  binding, no `nonlocal`), matching `hybrid_repair.py`. Surfaced `redis_url` /
+  `redis_tls` overrides on `StateBackendSchema` (boot-tree patches now work without
+  env vars).
 - **2026-09-07 — Redis state backend (Sprint 4, RFC 003).**
   `OMNISCRIBE_STATE_BACKEND=redis` paired with
   `REDIS_URL=redis://...` now boots a `RedisStateBackend` for

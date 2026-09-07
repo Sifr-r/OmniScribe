@@ -329,3 +329,19 @@ async def test_successful_call_resets_breaker_for_next_page():
 
         result = await p._chat("prompt", "aW1n", timeout=10, max_tokens=100)
         assert result == "ok"
+
+
+async def test_chat_context_length_error_generic_message():
+    p = _make_processor()
+    mock_call = AsyncMock(
+        side_effect=_FakeHTTPError("context_length_exceeded: prompt tokens exceeded window")
+    )
+    with patch("omniscribe.core.ocr.chat_client.call_llm", mock_call):
+        with pytest.raises(
+            LLMCallError, match=r"Model context length exceeded on endpoint"
+        ) as exc_info:
+            await p._chat("prompt", "aW1n", timeout=10, max_tokens=100)
+
+    assert p.api_base in str(exc_info.value)
+    assert "Context Size Limit" in str(exc_info.value)
+

@@ -28,6 +28,7 @@ from omniscribe.core.workflows.base import (
 from omniscribe.core.workflows.repair import (
     PageRepairSummary,
     QualityRepairLoop,
+    ReOcrBlock,
     RepairOptions,
     emit_job_repair_summary,
 )
@@ -287,8 +288,46 @@ class GroundedEngine(EngineBase):
         )
 
         summaries: list[PageRepairSummary] = []
-        completed = 0
+        completed_box = [0]
         obj_to_idx = {id(b): idx for idx, b in enumerate(response.blocks)}
+
+        def _make_re_ocr(p_idx: int) -> ReOcrBlock:
+            async def re_ocr(
+                block_idx: int,
+                bbox: tuple[float, float, float, float],
+                *,
+                previous_text: str = "",
+                attempt: int = 1,
+            ) -> str:
+                try:
+                    text: str = await crop_ocr(
+                        input_path,
+                        p_idx,
+                        bbox,
+                        previous_text=previous_text,
+                        attempt=attempt,
+                    )
+                except CircuitOpenError:
+                    raise
+                except Exception as exc:
+                    # Spec §3.2 graceful degradation: warning frame out,
+                    # then re-raise so repair_page keeps the best-so-far
+                    # text and the job continues.
+                    if on_warning is not None:
+                        await on_warning(p_idx, exc)
+                    raise
+                completed_box[0] += 1
+                await notify(
+                    progress,
+                    "refine",
+                    min(completed_box[0], targets),
+                    targets,
+                    f"Repairing below-target blocks ({min(completed_box[0], targets)}/{targets})",
+                )
+                return text
+
+            return re_ocr
+
         for page_idx in sorted(by_page):
             page_blocks_objs = by_page[page_idx]
             page_blocks: list[tuple[tuple[float, float, float, float], str]] = [
@@ -304,42 +343,7 @@ class GroundedEngine(EngineBase):
                 for b in page_blocks_objs
             ]
 
-            async def re_ocr(
-                block_idx: int,
-                bbox: tuple[float, float, float, float],
-                *,
-                previous_text: str = "",
-                attempt: int = 1,
-                _page: int = page_idx,
-            ) -> str:
-                nonlocal completed
-                try:
-                    text: str = await crop_ocr(
-                        input_path,
-                        _page,
-                        bbox,
-                        previous_text=previous_text,
-                        attempt=attempt,
-                    )
-                except CircuitOpenError:
-                    raise
-                except Exception as exc:
-                    # Spec §3.2 graceful degradation: warning frame out,
-                    # then re-raise so repair_page keeps the best-so-far
-                    # text and the job continues.
-                    if on_warning is not None:
-                        await on_warning(_page, exc)
-                    raise
-                completed += 1
-                await notify(
-                    progress,
-                    "refine",
-                    min(completed, targets),
-                    targets,
-                    f"Repairing below-target blocks ({min(completed, targets)}/{targets})",
-                )
-                return text
-
+            re_ocr = _make_re_ocr(page_idx)
             summary = await loop.repair_page(
                 page_idx=page_idx,
                 page_blocks=page_blocks,

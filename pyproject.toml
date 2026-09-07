@@ -147,6 +147,7 @@ glossary = [
 
 [project.scripts]
 omniscribe-server = "omniscribe.server:main"
+omniscribe-worker = "omniscribe.worker:main"
 omniscribe-migrate-lexicon = "omniscribe.cli.migrate_lexicon:main"
 
 [project.urls]

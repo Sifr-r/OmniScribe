@@ -99,6 +99,11 @@ class OCRService(Protocol):
         dpi: int = 150,
     ) -> bytes | None: ...
 
+    async def preflight_check(
+        self,
+        request: PreflightRequest | None = None,
+    ) -> PreflightResponse: ...
+
 
 # -- routes -------------------------------------------------------------------
 
@@ -136,6 +141,9 @@ _SUPPORTED_FORMAT_SIGNATURES: tuple[tuple[str, Callable[[bytes], bool]], ...] = 
             and head[8:12] in {b"avif", b"avis", b"mif1"}
         ),
     ),
+    ("docx", lambda head: head.startswith(b"PK\x03\x04")),
+    ("html", lambda head: head.decode("utf-8", errors="ignore").lstrip().lower().startswith(("<!doc", "<html", "<head", "<body", "<?xml", "<p", "<div", "<h1", "<h2", "<h3", "<table"))),
+    ("md", lambda head: bool(head) and b"\x00" not in head),
 )
 
 _MIME_TO_FORMAT: dict[str, str] = {
@@ -144,6 +152,10 @@ _MIME_TO_FORMAT: dict[str, str] = {
     "image/jpeg": "jpeg",
     "image/webp": "webp",
     "image/avif": "avif",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
+    "text/html": "html",
+    "text/markdown": "md",
+    "text/x-markdown": "md",
 }
 
 
@@ -233,6 +245,10 @@ def build_ocr_router(service: OCRServiceImpl) -> APIRouter:
             "image/jpeg",
             "image/webp",
             "image/avif",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "text/html",
+            "text/markdown",
+            "text/x-markdown",
         }
         if content_type and content_type not in allowed_types:
             raise HTTPException(
@@ -559,23 +575,11 @@ def build_ocr_router(service: OCRServiceImpl) -> APIRouter:
         the model is missing (the UI badge shows "model mismatch") and
         502 with an envelope when the server is unreachable.
         """
-        body = body or PreflightRequest()
-        loaded, requested, base, loaded_models, detail = await service.preflight_check(
-            api_base=body.api_base,
-            api_key=body.api_key,
-            model=body.model,
-        )
-        if not loaded and detail and "must be configured" in detail:
-            return _envelope(400, "bad_request", detail)
-        if not loaded and detail and "SSRF blocked" in detail:
-            return _envelope(403, "ssrf_blocked", detail)
-        return PreflightResponse(
-            loaded=loaded,
-            requested_model=requested,
-            api_base=base,
-            loaded_models=loaded_models,
-            detail=detail,
-        )
+        req = body or PreflightRequest()
+        res = await service.preflight_check(req)
+        if not res.loaded and res.detail and "SSRF blocked" in res.detail:
+            return _envelope(403, "ssrf_blocked", res.detail)
+        return res
 
     return router
 

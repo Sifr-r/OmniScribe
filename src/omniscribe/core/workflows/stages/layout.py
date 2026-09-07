@@ -261,18 +261,15 @@ class HybridLayoutDetector:
         self,
         pages_structured: PagesData,
         page_nums: Sequence[int],
-        dense_mode: str | DenseMode = DenseMode.AUTO,
+        dense_mode: DenseMode = DenseMode.AUTO,
         dense_threshold: int = 60,
     ) -> set[int]:
         """Decide which pages take the per-box OCR path (vs full-page OCR)."""
-        mode_val = (
-            dense_mode.value if isinstance(dense_mode, DenseMode) else str(dense_mode)
-        )
         per_box_pages: set[int] = set()
         for p_num in page_nums:
             n_boxes = len(pages_structured[p_num])
-            if mode_val == "always" or (
-                mode_val == "auto" and n_boxes > dense_threshold
+            if dense_mode == DenseMode.ALWAYS or (
+                dense_mode == DenseMode.AUTO and n_boxes > dense_threshold
             ):
                 per_box_pages.add(p_num)
         return per_box_pages

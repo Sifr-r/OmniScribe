@@ -10,7 +10,6 @@ import pytest
 from omniscribe.config import RuntimeSettings
 from omniscribe.harness.context import Context
 from omniscribe.plugins import state_backend as sb
-from omniscribe.plugins import state_backend_redis as sbm
 from omniscribe.plugins.state_backend import (
     MemoryStateBackend,
     RedisStateBackend,

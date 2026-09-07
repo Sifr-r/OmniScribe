@@ -20,15 +20,14 @@ from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any, cast
 
 from fastapi import HTTPException
 from fastapi.responses import Response
 
 from omniscribe.config import RuntimeSettings
-from omniscribe.core.ocr.exceptions import ModelNotLoadedError
-from omniscribe.core.ocr.processor import OCRProcessor
 from omniscribe.core.ocr_quality.summary import document_trust_summary
+from omniscribe.core.readers import get_reader_for_suffix, render_synthetic_pdf
 from omniscribe.core.workflows.base import OCRCancelled
 from omniscribe.harness.events import Event
 from omniscribe.plugins.artifacts import ArtifactStore
@@ -43,10 +42,13 @@ from omniscribe.plugins.jobs import (
 )
 from omniscribe.plugins.ocr.pipeline_bridge import build_pipeline, run_pipeline
 from omniscribe.plugins.ocr.schemas import (
+    _QUEUE_STATUS_TO_HTTP,
     AsyncSubmitResponse,
     JobListItemResponse,
     JobStatusResponse,
     OCRRequest,
+    PreflightRequest,
+    PreflightResponse,
 )
 
 # Phase 3.8 (4.8, 2026-09-05): the previous ``service.py`` carried
@@ -66,15 +68,6 @@ from omniscribe.plugins.progress import ProgressFrame, ProgressService
 from omniscribe.plugins.state_backend import TERMINAL_JOB_STATUSES, JobRecord
 from omniscribe.utils.security import check_ssrf_target_sync
 
-_HttpJobStatus = Literal["pending", "processing", "complete", "error", "cancelled"]
-
-_QUEUE_STATUS_TO_HTTP: dict[str, _HttpJobStatus] = {
-    "queued": "pending",
-    "running": "processing",
-    "complete": "complete",
-    "error": "error",
-    "cancelled": "cancelled",
-}
 _TERMINAL_QUEUE_STATUSES = TERMINAL_JOB_STATUSES
 
 _EVENT_NAMES: dict[type, str] = {
@@ -324,6 +317,37 @@ class OCRServiceImpl:
         output_path = work_dir / "output.pdf"
         try:
             channel = options.progress_channel
+
+            # Digital-Document Ingest Fast Path (RFC 004 R2)
+            suffix = (input_path.suffix or guess_suffix(filename)).lower()
+            reader = get_reader_for_suffix(suffix)
+            if reader is not None:
+                on_progress = self._progress_adapter(job_id, channel)
+                if on_progress is not None:
+                    await on_progress(20, "reader", f"Parsing digital document {filename}...")
+
+                doc_result = reader.read(input_path, filename=filename)
+
+                cancel_check = self._cancel_check(job_id, channel)
+                if cancel_check is not None and cancel_check():
+                    raise OCRCancelled(f"job {job_id} cancelled")
+
+                if on_progress is not None:
+                    await on_progress(60, "render", "Rendering synthetic PDF...")
+
+                pdf_bytes = render_synthetic_pdf(doc_result)
+                output_path.write_bytes(pdf_bytes)
+
+                if on_progress is not None:
+                    await on_progress(100, "done", "Digital document ingest complete.")
+
+                pages_data = {
+                    page.page_index: [b.text for b in page.blocks if b.text.strip()]
+                    for page in doc_result.pages
+                }
+                trust_summary = document_trust_summary(doc_result)
+                return pdf_bytes, pages_data, trust_summary
+
             pipeline = build_pipeline(self._settings, options)
             pages_data = await run_pipeline(
                 pipeline,
@@ -337,9 +361,11 @@ class OCRServiceImpl:
             )
             # Real pipelines carry the scored DocumentResult; faked/test
             # doubles may not, hence the getattr fallback to ``None``.
-            doc_result = getattr(pipeline, "last_document_result", None)
+            pipeline_doc_result = getattr(pipeline, "last_document_result", None)
             trust_summary = (
-                document_trust_summary(doc_result) if doc_result is not None else None
+                document_trust_summary(pipeline_doc_result)
+                if pipeline_doc_result is not None
+                else None
             )
             return output_path.read_bytes(), pages_data, trust_summary
         finally:
@@ -535,6 +561,20 @@ class OCRServiceImpl:
             import pymupdf as fitz  # local: not every test env has it
 
             suffix = input_path.suffix.lower()
+            digital_reader = get_reader_for_suffix(suffix)
+            if digital_reader is not None:
+                doc_res = digital_reader.read(input_path)
+                pdf_bytes = render_synthetic_pdf(doc_res)
+                doc = fitz.open(stream=pdf_bytes, filetype="pdf")  # type: ignore[no-untyped-call]
+                try:
+                    if page_index < 0 or page_index >= doc.page_count:
+                        return None
+                    page = doc[page_index]
+                    pix = page.get_pixmap(dpi=dpi, alpha=False)
+                    return bytes(pix.tobytes("png"))  # type: ignore[no-untyped-call]
+                finally:
+                    doc.close()  # type: ignore[no-untyped-call]
+
             if suffix in {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tiff"}:
                 # Single-image input: there's only one page; ignore the
                 # caller-supplied index and render the file as-is.
@@ -572,96 +612,158 @@ class OCRServiceImpl:
 
     async def preflight_check(
         self,
+        request: PreflightRequest | None = None,
+        *,
         api_base: str | None = None,
         api_key: str | None = None,
         model: str | None = None,
-    ) -> tuple[bool, str, str, list[str], str]:
+    ) -> PreflightResponse:
         """Audit 6.3: verify the requested model is loaded on the VLM server.
 
-        Constructs an ephemeral :class:`OCRProcessor` against the resolved
-        coordinates (overrides → current ``/api/config``) and invokes its
-        ``ensure_model_loaded``. The long-lived per-request processor is
-        untouched; the ephemeral one is closed via its ``aclose`` so the
-        connection pool is released after the probe.
+        Constructs an ephemeral :class:`AsyncOpenAI` client against the resolved
+        coordinates (request overrides → settings / config) and probes the
+        server's loaded models. The ephemeral client is closed in ``finally``
+        so connection pools are cleanly released.
 
-        Returns ``(loaded, requested_model, api_base, loaded_models, detail)``.
-        On connection failure the detail is a human-readable diagnostic;
-        the caller can decide whether to surface a 200 with ``loaded=False``
-        (UI badge "model mismatch") or a 502 (server unreachable).
+        Returns :class:`PreflightResponse`.
         """
-        resolved_api_base = (api_base or self._config.get("api_base") or "").strip()
-        resolved_api_key = api_key or self._config.get("api_key") or ""
-        resolved_model = (model or self._config.get("model") or "").strip()
-        if not resolved_api_base or not resolved_model:
-            return (
-                False,
-                resolved_model,
-                resolved_api_base,
-                [],
-                "api_base and model must be configured before pre-flight",
+        if request is None and (api_base or api_key or model):
+            request = PreflightRequest(api_base=api_base, api_key=api_key, model=model)
+
+        req_base = (
+            request.api_base.strip()
+            if request and request.api_base and request.api_base.strip()
+            else None
+        )
+        req_key = (
+            request.api_key.strip()
+            if request and request.api_key and request.api_key.strip()
+            else None
+        )
+        req_model = (
+            request.model.strip()
+            if request and request.model and request.model.strip()
+            else None
+        )
+
+        settings_obj = getattr(self, "settings", None) or getattr(self, "_settings", None)
+
+        def _get_setting_str(attr: str) -> str:
+            val = getattr(settings_obj, attr, None)
+            if isinstance(val, str) and val.strip():
+                return val.strip()
+            return ""
+
+        target_api_base = (
+            req_base
+            or _get_setting_str("api_base")
+            or _get_setting_str("llm_api_base")
+            or (self._config.get("api_base", "") if hasattr(self, "_config") else "")
+        )
+        if isinstance(target_api_base, str):
+            target_api_base = target_api_base.strip()
+        else:
+            target_api_base = ""
+
+        target_api_key = (
+            req_key
+            or _get_setting_str("api_key")
+            or _get_setting_str("llm_api_key")
+            or (self._config.get("api_key", "") if hasattr(self, "_config") else "")
+        )
+        if isinstance(target_api_key, str):
+            target_api_key = target_api_key.strip()
+        else:
+            target_api_key = ""
+
+        target_model = (
+            req_model
+            or _get_setting_str("model")
+            or _get_setting_str("llm_model")
+            or (self._config.get("model", "") if hasattr(self, "_config") else "")
+        )
+        target_model = target_model.strip() if isinstance(target_model, str) else ""
+
+        if not target_api_base or not target_model:
+            return PreflightResponse(
+                loaded=False,
+                requested_model=target_model,
+                api_base=target_api_base,
+                loaded_models=[],
+                detail="api_base and model must be configured before pre-flight",
             )
 
-        if api_base and api_base.strip():
+        if target_api_base:
             from omniscribe.utils.security import check_ssrf_target_sync
 
-            check = check_ssrf_target_sync(api_base.strip())
+            check = check_ssrf_target_sync(target_api_base)
             if not check.allowed:
-                return (
-                    False,
-                    resolved_model,
-                    resolved_api_base,
-                    [],
-                    f"SSRF blocked: {check.reason}",
+                return PreflightResponse(
+                    loaded=False,
+                    requested_model=target_model,
+                    api_base=target_api_base,
+                    loaded_models=[],
+                    detail=f"SSRF blocked: {check.reason}",
                 )
 
-        probe = OCRProcessor(
-            api_base=resolved_api_base,
-            api_key=resolved_api_key,
-            model=resolved_model,
+        from openai import AsyncOpenAI
+
+        from omniscribe.core.ocr.client import _list_loaded_model_ids, _model_in_loaded
+
+        client = AsyncOpenAI(
+            base_url=target_api_base,
+            api_key=target_api_key or "lm-studio",
         )
         try:
-            try:
-                await probe.ensure_model_loaded()
-            except ModelNotLoadedError as exc:
-                return (
-                    False,
-                    resolved_model,
-                    resolved_api_base,
-                    list(getattr(exc, "loaded_models", []) or []),
-                    str(exc),
+            loaded = await _list_loaded_model_ids(client, target_api_base)
+            if _model_in_loaded(target_model, loaded):
+                return PreflightResponse(
+                    loaded=True,
+                    requested_model=target_model,
+                    api_base=target_api_base,
+                    loaded_models=loaded,
+                    detail="Model is loaded and ready",
                 )
-            # Walk the same listing the processor used so we can echo the
-            # server-side model list back to the UI without a second call.
-            from openai import AsyncOpenAI
-
-            list_client = getattr(probe, "client", None)
-            ephemeral_client = False
-            if list_client is None or not isinstance(list_client, AsyncOpenAI):
-                list_client = AsyncOpenAI(
-                    base_url=resolved_api_base,
-                    api_key=resolved_api_key or "lm-studio",
-                )
-                ephemeral_client = True
-            try:
-                from omniscribe.core.ocr.client import _list_loaded_model_ids
-
-                loaded_models = list(
-                    await _list_loaded_model_ids(list_client, resolved_api_base)
-                )
-            except Exception:
-                loaded_models = []
-            finally:
-                if ephemeral_client:
-                    close_method = getattr(list_client, "close", None)
-                    if callable(close_method):
-                        res = close_method()
-                        if asyncio.iscoroutine(res):
-                            await res
-            return (True, resolved_model, resolved_api_base, loaded_models, "")
+            return PreflightResponse(
+                loaded=False,
+                requested_model=target_model,
+                api_base=target_api_base,
+                loaded_models=loaded,
+                detail=f"Model '{target_model}' is not currently loaded on {target_api_base}",
+            )
+        except Exception as exc:
+            return PreflightResponse(
+                loaded=False,
+                requested_model=target_model,
+                api_base=target_api_base,
+                loaded_models=[],
+                detail=f"Endpoint unreachable: {exc}",
+            )
         finally:
-            await probe.aclose()
+            close_method = getattr(client, "close", None)
+            if callable(close_method):
+                res = close_method()
+                if asyncio.iscoroutine(res):
+                    await res
 
     def update_config(self, updates: Mapping[str, Any]) -> dict[str, Any]:
+        """Update runtime service configuration and LLM provider coordinates.
+
+        Mutations to ``self._settings`` (such as ``llm_api_base``, ``llm_api_key``,
+        and ``llm_model``) take effect immediately for all subsequent pipeline
+        requests. In-flight requests continue executing with their already-resolved
+        settings captured at pipeline build time.
+
+        Args:
+            updates: Key-value mapping of configuration updates. Supported keys
+                include ``api_base``, ``api_key``, ``model``, and form field defaults.
+
+        Returns:
+            The updated effective configuration dictionary.
+
+        Raises:
+            HTTPException: If an ``api_base`` update fails SSRF validation.
+        """
         if "api_base" in updates and updates["api_base"] is not None:
             new_base = str(updates["api_base"]).strip()
             if new_base and new_base != self._config.get("api_base"):
@@ -715,43 +817,44 @@ class OCRServiceImpl:
         self._prune_events_if_needed()
 
     def _prune_events_if_needed(self) -> None:
-        """Keep event buffers and done job sets bounded to _max_buffered_jobs."""
-        while len(self._event_buffers) > self._max_buffered_jobs:
-            oldest = next(iter(self._event_buffers))
-            self._event_buffers.pop(oldest, None)
-            self._event_notify.pop(oldest, None)
-            self._done_jobs.discard(oldest)
-
-        if len(self._done_jobs) > self._max_buffered_jobs:
-            excess = set(self._done_jobs) - set(self._event_buffers)
-            for jid in excess:
-                self._done_jobs.discard(jid)
-            while len(self._done_jobs) > self._max_buffered_jobs:
-                self._done_jobs.pop()
+        """Keep event buffers, notify handles, done jobs, and submissions bounded to _max_buffered_jobs."""
+        self.prune(self._max_buffered_jobs)
 
     def prune(self, max_buffered_jobs: int | None = None) -> int:
-        """Explicitly prune event buffers and done jobs to the specified limit.
+        """Explicitly prune event buffers, notify handles, done jobs, and submissions.
+
+        Single authoritative eviction implementation that bounds ``_event_buffers``,
+        ``_event_notify``, ``_done_jobs``, and ``_submission_to_job`` to ``limit``.
 
         Returns the number of pruned job buffers.
         """
-        limit = (
-            self._max_buffered_jobs if max_buffered_jobs is None else max_buffered_jobs
+        limit = max(
+            0,
+            self._max_buffered_jobs if max_buffered_jobs is None else max_buffered_jobs,
         )
-        initial_count = len(self._event_buffers)
-        while len(self._event_buffers) > limit:
-            oldest = next(iter(self._event_buffers))
-            self._event_buffers.pop(oldest, None)
-            self._event_notify.pop(oldest, None)
-            self._done_jobs.discard(oldest)
-        while len(self._submission_to_job) > limit:
-            self._submission_to_job.pop(next(iter(self._submission_to_job)), None)
-        if len(self._done_jobs) > limit:
-            excess = set(self._done_jobs) - set(self._event_buffers)
-            for jid in excess:
-                self._done_jobs.discard(jid)
+        initial_count = len(self._event_buffers) if hasattr(self, "_event_buffers") else 0
+        if hasattr(self, "_event_buffers"):
+            while len(self._event_buffers) > limit:
+                oldest = next(iter(self._event_buffers))
+                self._event_buffers.pop(oldest, None)
+                if hasattr(self, "_event_notify"):
+                    self._event_notify.pop(oldest, None)
+                if hasattr(self, "_done_jobs"):
+                    self._done_jobs.discard(oldest)
+        if hasattr(self, "_event_notify"):
+            while len(self._event_notify) > limit:
+                self._event_notify.pop(next(iter(self._event_notify)), None)
+        if hasattr(self, "_submission_to_job"):
+            while len(self._submission_to_job) > limit:
+                self._submission_to_job.pop(next(iter(self._submission_to_job)), None)
+        if hasattr(self, "_done_jobs"):
+            if hasattr(self, "_event_buffers") and len(self._done_jobs) > limit:
+                excess = set(self._done_jobs) - set(self._event_buffers)
+                for jid in excess:
+                    self._done_jobs.discard(jid)
             while len(self._done_jobs) > limit:
                 self._done_jobs.pop()
-        return initial_count - len(self._event_buffers)
+        return initial_count - (len(self._event_buffers) if hasattr(self, "_event_buffers") else 0)
 
     def event_backlog(self, job_id: str) -> list[dict[str, Any]]:
         return list(self._event_buffers.get(job_id, ()))
@@ -760,7 +863,21 @@ class OCRServiceImpl:
         return job_id in self._done_jobs
 
     async def wait_for_events(self, job_id: str) -> None:
+        """Wait until at least one new event is recorded for ``job_id`` or the job is done.
+
+        Guards against missed wake-ups and event flapping:
+        - If the job is already marked done (terminal event recorded), returns immediately
+          to prevent deadlocks.
+        - If events arrived just before waiting, the notification event is already set;
+          it is cleared and returns immediately without suspending.
+        - Otherwise, awaits notification. On wake-up, clears the event for subsequent waits.
+        """
+        if job_id in self._done_jobs:
+            return
         notify = self._event_notify.setdefault(job_id, asyncio.Event())
+        if notify.is_set():
+            notify.clear()
+            return
         await notify.wait()
         notify.clear()
 

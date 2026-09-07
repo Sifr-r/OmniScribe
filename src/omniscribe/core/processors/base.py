@@ -22,6 +22,7 @@ LOCAL_DOCUMENT_PROCESSOR_NAMES = (
     "section_analysis",
     "layout_enrichment",
     "table_extraction",
+    "table_fallback",
 )
 
 
@@ -98,6 +99,7 @@ def build_document_processors(names: Iterable[str]) -> tuple[DocumentProcessor, 
     from omniscribe.core.processors.section import SectionAnalysisProcessor
     from omniscribe.core.processors.structure import StructureAnalysisProcessor
     from omniscribe.core.processors.table import TableExtractionProcessor
+    from omniscribe.core.processors.table_fallback import TableFallbackProcessor
 
     registry = DocumentProcessorRegistry()
     registry.register("reading_order", ReadingOrderProcessor)
@@ -106,6 +108,7 @@ def build_document_processors(names: Iterable[str]) -> tuple[DocumentProcessor, 
     registry.register("section_analysis", SectionAnalysisProcessor)
     registry.register("layout_enrichment", LayoutEnrichmentProcessor)
     registry.register("table_extraction", TableExtractionProcessor)
+    registry.register("table_fallback", TableFallbackProcessor)
     return tuple(registry.create(name) for name in names)
 
 

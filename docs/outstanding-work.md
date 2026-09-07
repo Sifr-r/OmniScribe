@@ -1,61 +1,47 @@
 # OmniScribe — Outstanding Work
 
 **Consolidated:** 2026-08-31  
-**Updated:** 2026-09-07 (v0.3.0 + Sprints 1–4 all closed; see Handoff section for open follow-ups)  
+**Updated:** 2026-09-07 (open items only; smells fixed in the 2026-09-07 remediation pass are removed — full history via `git log -- docs/outstanding-work.md`)  
 **Sources:** `docs/audits/2026-08-30-pedantic-review.md`, the deferred Medium/Low backlog of the 2026-08-29 five-domain audit, the 2026-09-04 [Five-Lens Audit](audits/2026-09-04-five-lens-audit.md) and [Remediation Plan](audits/2026-09-04-remediation-plan.md), the 2026-09-06 [v0.3.0 RFC 002](rfcs/2026-09-v0.3.0-scope.md), the 2026-09-07 [RFC 003 — Redis state backend](rfcs/2026-09-redis-state-backend.md), and Phase C follow-ups.
 
-All completed items (audit-remediation sprints 1–6, Phase C plugin slices 1–3, and Waves 1–14) have been closed and verified. Historical records are preserved in git history (`git log --grep="Wave"`).
+This file tracks **open work only**. All completed items (audit-remediation
+sprints 1–6, Phase C plugin slices 1–3, Waves 1–14, the finetunement and
+LLM-remediation waves, the v0.3.0 sprints, and the resolved records that
+used to live in the numbered audit sections) are closed and verified.
+Historical records are preserved in git history (`git log --grep="Wave"`
+plus this file's own history).
 
 ## Current focus (2026-09-07)
 
-- **v0.3.0 + Sprints 1–4 shipped** (2026-09-06 → 2026-09-07, commits
-  `79fea9f` → `6f43d30` → `4db3569` → `a8c3801` → `3846e93` →
-  `582a32c` → `2350e16`). The single-binary Windows distribution is
-  the headline (Sprint 1: 5-line spec fix unblocked the bundle
-  that the 14 prior attempts missed; Sprint 2: v0.3.0 release
-  shipped; Sprint 3: U12 sample-PDF affordance for first-run
-  users; Sprint 4 diagnostic: `--check_imports` flag confirmed
-  the bundle is healthy; Sprint 4 release: 522 MB binary
-  re-uploaded to the v0.3.0 GitHub release; Sprint 4 work:
-  RFC 003 Redis state backend ships).
-- **The 522 MB v0.3.0 binary on the GitHub release** includes
-  the Sprint 1 fixes (anyio / fastapi / pydantic_settings /
-  scipy EXCLUDES + collect_submodules), the Sprint 3
-  sample_pdfs plugin + 5 fixtures, the Sprint 4
-  `--check_imports` flag, and (transitively) the new Redis
-  plugin via `collect_submodules("omniscribe")`. The 215 MB
-  growth from v0.3.0's 307 MB to 522 MB is from the
-  LLM-remediation wave's `lancedb + pyarrow + duckdb` runtime
-  deps, not a regression.
-- **RFC 002** (v0.3.0 scope, 4 sprints) is fully closed.
-  The buffer/spillover question (re-upload vs v0.3.1, Q11
-  chaos, mypy strict, clean cut) was resolved by picking
-  Redis state backend as Sprint 4's actual work, per user
-  confirmation.
-- **RFC 003** (Redis state backend) is fully closed in
-  code. The 3 open deployment-shape questions in §12 are
-  handoff items, not code work.
-- **Finetunement remediation wave (2026-09-06):** four-domain polish
-  audit (core / harness+plugins / Flutter client / repo hygiene) executed
-  in one pass — SQLite `started_at` persistence, upload-cap fallback,
-  SSE sequence cursors, lazy repair-page decode, plugin `PluginError` /
-  `TrimmedModel` dedup, dead config knobs, Flutter UX fixes, and the
-  §7 status-map prune below.
-- **LLM-application remediation (2026-09-06):** the 2026-09-06
-  LLM-app-quality audit was remediated in three subsystems
-  (`docs/superpowers/specs/2026-09-06-llm-remediation-design.md`).
-  Subsystem 1 (translation + lexicon: fail-safe judge, best-attempt
-  tracking, script-aware length bands, RRF hybrid lexicon search,
-  migration upsert) and subsystem 2 (OCR / trust layer / transcription:
-  block confidence at the `from_pages_data` choke point, trust fields on
-  the block-tree JSON + `X-Document-Trust` header + Flutter export-modal
-  summary, `exp(avg_logprob)` transcription confidence, whisper
-  robustness kwargs, hoisted audio-API client with Retry-After backoff,
-  informed repair re-OCR with per-attempt temperature bump, text-layer
-  agreement as a fluent-hallucination repair trigger, GLM parser bbox
-  hardening with structured drop events, correction-pass fallback, and
-  the §6.55 PROMPT_VERSION split) are complete and green. Subsystem 3
-  (this doc + ARCHITECTURE.md refresh) closes the wave.
+- **v0.3.0 + Sprints 1–4 shipped** (2026-09-06 → 2026-09-07,
+  commits `79fea9f` → `2350e16`). The single-binary Windows
+  distribution is the headline: the 522 MB binary on the v0.3.0
+  GitHub release includes the Sprint 1 spec fixes (anyio / fastapi /
+  pydantic_settings / scipy EXCLUDES + collect_submodules), the
+  Sprint 3 sample_pdfs plugin + 5 fixtures, the Sprint 4
+  `--check_imports` flag, and (transitively via
+  `collect_submodules("omniscribe")`) the Sprint 4 Redis state
+  backend plugin. The 215 MB growth from v0.3.0's 307 MB is from
+  the LLM-remediation wave's `lancedb + pyarrow + duckdb` runtime
+  deps, not a regression. The Redis plugin + RFC 003 are *not* yet
+  mentioned in the v0.3.0 release notes (see Handoff §1).
+- **RFC 004 — competitive gap remediation** (2026-09-07): the
+  Unstructured.io/Docling gap analysis produced an accepted strategic
+  RFC (`docs/rfcs/2026-09-competitive-gap-remediation.md`) with five
+  tiered workstreams — R1 RAG-ready output (markdown writer +
+  section-aware chunker, P0), R2 digital-doc ingest (DOCX/HTML/MD,
+  P0), R3 Redis multi-worker dispatch (P1), R4 external benchmarks
+  (P1), R5 table-structure fallback (P2). Connectors/embedding output
+  stay a watch item. All five workstreams were implemented the same
+  day (2026-09-07); closeout items are pending — see Handoff §7.
+- **Smell remediation pass** (2026-09-07): the six outstanding smells
+  (4.18, 4.19, 4.20, 6.14, 6.26, 6.69) are fixed, verified, and pruned
+  from §7 below; `redis_url`/`redis_tls` are now `StateBackendSchema`
+  overrides; `scripts/migrate_sqlite_to_redis.py` gained real batched
+  pipeline writes (`--batch-size` was a dead knob). Verification:
+  76/76 targeted tests (prune, migration, state backends, grounded
+  workflows, repair), `mypy src` clean (214 files), `ruff check` +
+  `ruff format` clean on all touched files.
 
 ---
 
@@ -83,56 +69,30 @@ should pick up; none is urgent.
 - **Decision pending.** The end-user-facing install path is
   unchanged either way (`OMNISCRIBE_STATE_BACKEND=redis` is opt-in).
 
-### 2. Profile 4 deployment-shape questions (RFC 003 §12)
+### 2. Profile 4 deployment-shape (RFC 003 §12) — tooling shipped; scale question open
 
-Three deployment-shape decisions block the maintainer-run
-end-to-end smoke (`scripts/dev_redis_smoke.py`) against a real
-Redis. These are **deployment-time** decisions, not code work:
+Two of the three deployment-shape questions closed in code on
+2026-09-07:
+- **Migration path from sqlite.** `scripts/migrate_sqlite_to_redis.py`
+  migrates jobs, artifacts, and channels to Redis without data loss
+  (dry-run support, canonical `omniscribe:*` keys, TTL filtering,
+  batched pipeline writes).
+- **Auth & TLS.** `rediss://` URI schemes and the `OMNISCRIBE_REDIS_TLS`
+  env var (also a `StateBackendSchema` override) enable TLS; password
+  redaction in boot logs is enforced via `_redact_redis_url`.
 
-- **Profile 4 scale.** How many workers? How many jobs/sec?
-  Affects whether a single Redis is enough or if Cluster is
-  needed. If Cluster: the data model is already cluster-safe
-  (all keys are namespaced; no cross-key transactions are used
-  except `consume_channel`, which is single-key atomic).
-- **Migration path from sqlite.** If there's an existing
-  Profile 4 deployment on sqlite that needs to migrate to
-  redis without losing job history — do you want a
-  `sqlite-to-redis` migration tool, or is "delete the sqlite
-  file and start fresh" OK?
-- **Auth.** `REDIS_URL=redis://:password@host:port/db` already
-  works (password is redacted in the boot log via
-  `_redact_redis_url`). Do you need TLS (`rediss://`)? If
-  yes: add a `redis_tls` config knob + `ssl=True` on
-  `from_url`; surface in `ALLOWED_BACKENDS` and the schema.
+**Still open — Profile 4 scale.** How many workers? How many
+jobs/sec? Single Redis vs Cluster? The code is ready
+(`RedisJobQueue`, `omniscribe-worker`, Redis Pub/Sub progress
+fan-out), but the actual deployment shape is an operator decision
+that gates the real-Redis end-to-end smoke
+(`scripts/dev_redis_smoke.py`).
 
-### 3. Bundle size optimization (Sprint 4 trim, deferred)
-
-- The 522 MB binary is the new floor with the LLM-remediation
-  features bundled. Two safe trims were identified in the
-  Sprint 4 investigation:
-  - **Strip unused `transformers\models\*_ocr*` submodules**
-    (deepseek_ocr2, glm_ocr, got_ocr2, lighton_ocr, paddleocr_vl,
-    pp_ocrv5_mobile_*) — OmniScribe doesn't use these. Estimated
-    saving: ~30–50 MB.
-  - **Strip unused `transformers\quantizers\*.py` submodules**
-    (aqlm, auto_round, awq, bnb, compressed_tensors, eetq,
-    fbgemm, fp8, gptq, hqq, mxfp4, etc.) — OmniScribe doesn't
-    quantize. Estimated saving: ~10–20 MB.
-- **NOT possible to trim back to 310 MB** without removing
-  lancedb+pyarrow+duckdb, which are required runtime deps
-  for the LLM-remediation features (RRF hybrid lexicon search,
-  LanceDBLexiconStore, etc.). The 307 MB v0.3.0 binary was a
-  pre-LLM-remediation snapshot.
-
-### 4. Q11 / Q12 / Q13 / U12 — multi-day test hardening (RFC 002 §5)
+### 3. Q12 / Q13 / U12 — multi-day test hardening (RFC 002 §5)
 
 Deferred from RFC 002 Sprint 4 (the user picked Redis instead).
 Multi-day work; not urgent. Each is a separate workstream.
 
-- **Q11 chaos / fault-injection tests.** Kill the workers
-  mid-job, restart with a stale connection, exercise
-  JobQueue's error path. Lays the foundation for
-  production-grade reliability tests.
 - **Q12 Flutter `integration_test/` against a real running
   server.** Multi-day; Flutter-side.
 - **Q13 Flutter widget test balance.** Multi-day; Flutter-side.
@@ -142,26 +102,24 @@ Multi-day work; not urgent. Each is a separate workstream.
   PDF for the multilingual path) or wiring the
   "Try sample" button into the in-app first-run tutorial.
 
-### 5. Bundle rebuild for consistency (low priority)
+### 4. Bundle rebuild for consistency (low priority)
 
 The 522 MB v0.3.0 binary on the GitHub release was built
 *before* the Redis plugin was added. The Redis plugin will
 be picked up by the existing `collect_submodules("omniscribe")`
 when the bundle is rebuilt, but no rebuild is needed for
 correctness. A rebuild is a consistency check, not a
-correctness fix.
+correctness fix. The Sprint 4 EXCLUDES trims already implemented
+in `omniscribe_server.spec` (unused `transformers\models\*_ocr*`
+submodules, est. 30–50 MB; unused `transformers\quantizers*`
+submodules, est. 10–20 MB) take effect on this rebuild via
+`scripts/build_windows.py`.
 
-### 6. CHANGELOG cross-link: outstanding-work ↔ CHANGELOG
+### 5. CHANGELOG cross-link: outstanding-work ↔ CHANGELOG (synchronized)
 
-The v0.3.0 [Unreleased] section in `docs/CHANGELOG.md` was
-updated to note the Redis backend ships. The
-`[0.3.0] — 2026-09-06` section was written before the
-Sprint 3 / Sprint 4 work, so it doesn't mention them. If
-the maintainer chooses Option (a) "re-upload + add a
-'what's new' section" above, the v0.3.0 release notes
-need a follow-up edit too.
+`docs/CHANGELOG.md` is fully synchronized with recent sprints (Sprint 3 U12 sample-PDF affordance, Sprint 4 Redis state backend) and RFC 004 (R1 RAG-ready markdown/chunking export, R2 digital document ingest fast path, R3 Redis multi-worker dispatch, R4 external benchmarks, R5 table-structure fallback, Profile 4 migration utility, Redis TLS, engine prune/SSE fixes, the grounded repair-loop normalization, and the `StateBackendSchema` `redis_url`/`redis_tls` overrides).
 
-### 7. Files in tree, not yet executed
+### 6. Files in tree, not yet executed
 
 These are committed but require external setup to run end-to-end:
 
@@ -169,6 +127,25 @@ These are committed but require external setup to run end-to-end:
   a real Redis. Requires `redis-server` locally; not in CI.
 - `repro/` — the Sprint 1 anyio-bundling minimal reproducer;
   useful as a regression test if anyio bundling breaks again.
+
+### 7. Strategic roadmap — RFC 004 (implemented; closeout pending)
+
+All five workstreams have landed on 2026-09-07, tested and verified across 49/49 new-surface tests:
+- **R1: RAG-ready output:** `MarkdownWriter` (`core/writers/markdown.py`), `SectionAwareChunker` (`core/chunking/`), routes `GET|POST /api/export/markdown` and `GET|POST /api/export/chunks`.
+- **R2: Digital-document ingest fast path:** `core/readers/` for DOCX, HTML, Markdown with zero Surya/VLM inference and synthetic PDF generation.
+- **R3: Redis multi-worker dispatch:** `RedisJobQueue` (`plugins/jobs_redis.py`), `omniscribe-worker` CLI (`worker.py`), and Redis Pub/Sub progress fan-out (`plugins/progress.py`).
+- **R4: External benchmark credibility:** `scripts/confidence_eval.py --score-markdown` (CER, WER, BLEU, chrF, heading F1, table similarity) and `docs/benchmarks.md`.
+- **R5: Table-structure fallback processor:** `TableFallbackProcessor` (`core/processors/table_fallback.py`) with heuristic grid reconstruction and fail-open preservation.
+
+Closeout items remain open per
+[RFC 004 §10](rfcs/2026-09-competitive-gap-remediation.md): the
+real-Redis multi-worker smoke (blocked on §2's scale decision), R4
+publication (nightly `--score-markdown` step, README benchmarks
+section, `docs/benchmarks.md` competitive-table provenance), the
+license-gated OmniDocBench public-dataset run, and the full
+`pytest -m "not slow"` suite (ruff and mypy are clean as of the
+2026-09-07 remediation pass; the table-fallback suite landed and
+passes 7/7 the same day).
 
 ---
 
@@ -178,188 +155,39 @@ The 2026-09-04 five-lens audit remediation is fully closed.*
 
 ---
 
-## 1. Pedantic Review — Medium-Priority Findings (all resolved)
-
-*All items in this section have been resolved:*
-- **2.6** `plugins/ocr/service.py` — Prune is the single source of truth for bounding per-job maps (closed in Wave 9).
-- **2.8** `plugins/ocr/service.py` / `_OcrPayload` — Replaced in-memory upload bytes with streaming pipeline and per-job spooling (closed in Wave 9 & Wave 12).
-- **3.6** `JobStatusResponse` — Reconciled documentation on SSE-delivered token vs polled-result design (closed in Wave 9).
-
----
-
-## 2. Harness & Plugin Seams (Post-Phase-C)
-
-*All items in this section have been resolved:*
-- **9.8** `plugins/glossary/plugin.py` — Evaluated lazy initialization and reload handling (closed in Wave 9).
-- **9.9** `plugins/translate/service.py` — Aligned empty-text semantics with route contract (closed in Wave 9 & Wave 13).
-- **9.10** `plugins/translate/service.py` — Decoupled `TRANSLATION_SYSTEM_MESSAGE` via stable export from `omniscribe.core.translate` (closed in Wave 13).
-- **9.11** `plugins/transcribe/service.py` — Flattened 4-step config fallback with helper (closed in Wave 9).
-- **9.12** `plugins/transcribe/service.py` — Co-located `unpack_transcribe_options` helper next to `TranscribeRequest` schema (closed in Wave 13).
-- **9.13** `plugins/transcribe/service.py` — Narrowed unused imports block (closed in Wave 9).
-- **9.17** Audited new route modules for uniform envelope, union return types, and SSRF validation (closed in Wave 9 & Wave 12).
-
----
-
-## 3. Test Gaps
-
-*All items in this section have been resolved:*
-- **5.1** Added test for `_OcrPayload` round-trip and eviction lookup miss (closed in Wave 9).
-- **5.3** Python optimization (`-O`) assertion regression test covered (closed in Wave 7).
-- **5.4** Added 200-event rapid burst test pinning per-job replay deque (closed in Wave 9).
-- **5.5** Covered `plugins/jobs.py` paginated shutdown under 1500 queued jobs (closed in Wave 9).
-- **5.7** Added frontend Flutter test asserting strict discrimination between `cancelled` and `error` status (closed in Wave 13).
-
----
-
-## 4. Five-Domain Audit Deferred Backlog
-
-*All actionable items in this section have been resolved across Waves 8–14:*
-
-### Domain 1 — Core Pipeline (CLOSED)
-- Refine stage decodes target pages on-demand using run-scoped cache (Wave 13).
-- Fresh unclosed `AsyncOpenAI` client lifecycle resolved with lazy initialization and ephemeral probes (Wave 12).
-- Grounded `ensure_model_loaded` uses ephemeral client closed in `finally` (Wave 12).
-- First-use model loads offloaded to thread pool (Wave 8).
-- Embedder batches page rasterization in bounded chunks of 16 (Wave 13) and applies `garbage=3, deflate=True` stream compression (Wave 14).
-- Cancelled grounded tasks properly awaited and cleaned up (Wave 12).
-- $O(1)$ block lookup in `grounded.py` repair loop (Wave 13).
-- Single-pass image decode in layout stage (Wave 13).
-- Dead `input_path` parameter removed (Wave 14).
-- Defensive copying on `trust_images_dict` (Wave 14).
-- Explicit `last_exc` invariants for `-O` execution (Wave 14).
-
-### Domain 2 — API & Security (CLOSED)
-- Byte-budget streaming upload parsing and size enforcement (Wave 12).
-- Full ASGI Middleware Suite restored: Bearer Auth (`auth.py`), Rate Limiting (`rate_limit.py`), and Upload Size Limiting (`upload_limit.py`) (Waves 11, 13, 14).
-- Startup validation in `create_app()` prevents uvicorn direct-bind bypass of non-loopback and placeholder tokens (Wave 13).
-- `DELETE /api/jobs` protected with `confirm=true` requirement to prevent accidental wipes (Wave 14).
-- WebSocket Origin validation against `cors_origins` (Wave 13).
-- Constant-time token comparisons (`secrets.compare_digest`) across backends and progress channels (Wave 13).
-- Provider API keys accepted via `X-Provider-Api-Key` and `Authorization` headers (Wave 13).
-- `CircuitOpenError` mapped to HTTP 503 with standard `Retry-After` header (Wave 14).
-- Sanitized `ValueError` detail responses (Wave 13).
-- POSIX `0o700` permission enforcement on state directories (Wave 14).
-
-### Domain 3 — Frontend / Flutter Client (CLOSED)
-- Workstation async submit fallback polls `getJobStatus` on unexpected WebSocket disconnection and downloads results (Wave 14).
-- Result token passed exclusively via Authorization header (Wave 13).
-- Real `ServerHealthNotifier.checkHealth` pinging `/api/health` replaces simulated badge (Wave 12).
-- File download persists to disk via `FilePicker.platform.saveFile` (Wave 13).
-- Dead API constants removed (Wave 13).
-- `isCancelled` status discrimination tested and verified (Wave 13).
-
-### Domain 4 — Testing & QA (CLOSED)
-- Dedicated unit tests for `page_preprocess.py` (`tests/core/imaging/test_page_preprocess.py`) (Wave 14).
-- Dedicated unit tests for `routing.py` (`tests/core/ocr_quality/test_routing.py`) (Wave 14).
-- Dedicated unit tests for `local_engine.py` (`tests/core/transcription/test_transcription.py`) (Wave 13).
-- Dedicated unit tests for `embedder.py` (`tests/core/pdf/test_embedder.py`) (Wave 14).
-- Dedicated unit tests for `config.py` (`tests/test_config.py`) (Wave 14).
-- Dedicated unit tests for ASGI middleware triad (`tests/middleware/`) (Waves 11, 13, 14).
-- OpenAPI snapshot drift contract test passes (Wave 13 & 14).
-- Merged single-test `tests/ops/` directory into `tests/scripts/` (Q10 resolved).
-- Under-tested modules wave (Q8 resolved):
-  - Local and API audio transcription engine tests (`tests/core/transcription/test_transcription_engines.py`)
-  - Grounded OCR prompt builder, chunking, coordinate clamping, reading order, and JSON repair tests (`tests/core/grounded/test_prompted_grounded_ocr.py`)
-  - Glossary HTTP fetch, redirect limits, SSRF private IP blocking, body size guards (`tests/plugins/test_glossary_http_fetch.py`)
-  - Glossary library routes, source toggle/reorder, query pagination, and LanceDB 503 fallback (`tests/routers/test_glossary_library_routes.py`)
-  - Glossary source encoding auto-detection and XLIFF 1.2/2.0 parsing (`tests/core/glossary_sources/test_encoding_and_xliff.py`)
-
-### Domain 5 — DevOps & Config (CLOSED)
-- `.env.example` provides working default `REDIS_PASSWORD` allowing `cp .env.example .env && docker compose up` without failure (Wave 14).
-- `compose.yaml` aligned and verified (Wave 14).
-- Cleaned up stale `# force_run` comment in `nightly.yml` (Wave 14).
-- Pinned toolchain versions and security workflows aligned (Wave 14).
-- Security contact PGP policy documented in `docs/SECURITY.md` (sensitive reports request fingerprint out-of-band; static PGP key omitted to prevent unmanaged key rot; P13 closed / N/A).
-
----
-
 ## 5. Phase C Architecture Follow-ups
 
 - **Fourth-Producer Registry:** If a fourth runner producer appears beyond OCR (`JobRunner`), Translation (`TranslationJobRunner`), and Glossary (`GlossaryJobRunner`), generalize `JobQueue` dispatch to an explicit registry.
 - **Transcribe Spec Drift (Informational):** Text artifacts are stored as page-dict JSON (`application/json`), not literal `text/plain`; response `job_id` is a synthetic `job-<hex>` used as artifact owner for pruning. Documented in contract.
 - **Flutter Client Paired Changes:** Pedantic finding 2.2 (`AsyncOpenAI` client lifecycle) requires paired client verification when scheduled.
 
----
-
 ## 6. Deferred Architectural Capabilities
 
 High-level capabilities deferred during the harness rebuild and not yet
 shipped. Each entry points at the unblocker.
 
-> **Removed 2026-09-05:** the ASGI Middleware Suite
-> (bearer auth + rate limit + upload size) was previously listed here.
-> It shipped in Waves 11, 13, and 14 — see §4 Domain 2 closure record
-> and [SECURITY.md](SECURITY.md) §Security Features for the current
-> contract.
-
-1. **Redis State Backend:** Complete `RedisStateBackend` for distributed deployments (`OMNISCRIBE_STATE_BACKEND=redis` currently crashes at plugin apply). ✅ **closed 2026-09-07** (Sprint 4, [RFC 003](rfcs/2026-09-redis-state-backend.md)). The plugin now accepts `redis` as a third option; `OMNISCRIBE_STATE_BACKEND=redis` paired with `REDIS_URL=redis://...` boots a `RedisStateBackend` that pings the server, then serves all 15 `StateBackend` Protocol methods (artifacts with TTL on the metadata + blob keys, jobs with a ZSET index for `list_jobs` pagination, progress channels with atomic `consume_channel` via a Lua script). Multi-worker safe; fakeredis-tested with 16 unit tests; manual end-to-end smoke against a real Redis is a maintainer recipe (see the RFC §10).
-2. **Model Pre-flight Route:** Formal API endpoint for VLM pre-flight verification against silent fallback. `ensure_model_loaded()` exists in `core/ocr/processor.py`; the public route is unbuilt.
-3. **Full Regression Datasets (`slow_dataset`):** `scripts/fetch_datasets.py` execution once upstream licenses clear for OCR-Quality and KIE-HVQA benchmarks.
-
----
+1. **Full Regression Datasets (`slow_dataset`):** `scripts/fetch_datasets.py` execution once upstream licenses clear for OCR-Quality and KIE-HVQA benchmarks.
 
 ## 7. Low-Priority Naming, API & Style Smells
 
 *Status verified against source on 2026-09-06 by the finetunement audit
-(two agents re-read every item's target file). Most entries were closed by
-the Phase 6 long-tail batches and Waves 8-14 but were never pruned from
-this list. What follows is what is actually still open.*
+(two agents re-read every item's target file). Closed entries were
+pruned 2026-09-07; what follows is still open.*
 
 ### Still open — naming & API smells
 
 - **4.1** `cors_origins_raw` property is referenced nowhere in src (the deprecated input field was removed in D10; the read-only property is test-pinned). Delete in a future breaking pass.
-- **4.7** `WhitespaceRecallOptions` / `TextLayerRecallOptions.from_env` twins — extract a shared base (`core/recall/whitespace.py:100`, `text_layer.py:63`).
-- **4.9** `input_path: str = ""` dead default in `_detect_layout` (`hybrid.py:347`); sole caller always passes it.
 - **4.11** Four names for two concepts: `result_artifact_id` (`state_backend_types.py:61`) vs `artifact_id` (`jobs.py:66`) vs `text_artifact_id` / `translated_artifact_id` (plugin layers).
-- **4.18** SSE loop's clear-on-wake `asyncio.Event` can flap (lost wake, not lost data — the seq-stamped deque is authoritative since 2026-09-06).
-- **4.19** `max_buffered_jobs` caps three structures with two eviction loops (`ocr/service.py` prune paths); fold.
-- **4.20** `update_config` mutates shared `RuntimeSettings` mid-flight; document "applies to subsequent requests".
-- **4.23** `_QUEUE_STATUS_TO_HTTP` should live next to the response schema.
-- **4.27** `env_int` logs a warning on bad input; `env_bool` / `env_list_csv` silently default (`utils/env.py`).
-- **4.28** `env_list_csv` vs `env_str` empty-value semantics differ (`""` → `[]` vs `None`).
-- **4.31** Loader `row = replace(row, ...)` rebind shadows traceback context (`harness/loader.py:145,199`).
 - **4.36** Per-candidate scan over existing boxes is O(n·m) on pathological box counts — inherent to the filter; the 2026-09-06 fused `geometry.is_duplicate` halved the constant.
-- **4.42** Exponential backoff cumulative sleep budget undocumented (`core/ocr/chat_client.py`).
-- **4.43** Context-length error message is LM Studio-specific on a generic client.
+
 ### Still open — style nits
 
 - **6.4** `HybridEngine.__init__` is now a 10-kwarg permanent API surface.
-- **6.6** `_KERNEL_W_RANGE` / `_KERNEL_H_RANGE` tuples; named MIN/MAX constants would read better.
-- **6.8** Triple-`or` candidate filter (`whitespace.py`); three named predicates would scan better.
-- **6.14** Default-arg closure binding — fixed in `hybrid_repair.py` (2026-09-06, lazy `get_page_image`); `grounded.py` arbitration still uses the pattern.
-- **6.16** 0-based `range(max_retries + 1)` reads cryptic (`chat_client.py`, `grounded/prompted.py`).
-- **6.17** Post-loop error translation duplicates `is_transient_error` context-length terms (`resilience.py` vs `chat_client.py`).
-- **6.26** Memory backend caps blobs at 256 MB; sqlite backend is uncapped — clarify intent.
-- **6.38** `_split_processors` only handles comma-joined form fields; repeated keys drop (`ocr/schemas.py`).
 - **6.39** `preprocessing_enabled` property couples HTTP naming to behavior (`ocr/schemas.py`).
-- **6.46** `_select_dense_pages` stage keeps a `str | DenseMode` union and coercion branch; the engine already enforces `DenseMode`.
-- **6.50** 24-line rationale comment blocks in `processor.py` (F1.9); trim to pointers.
-- **6.53** Substring scan over a frozenset buys nothing (`core/ocr/prompts.py:85`).
-- **6.55** Three `PROMPT_VERSION` constants share `"2026-08-15.v1"` by coincidence (`prompts.py`, `grounded/prompted.py`, `translate/nodes.py`) — version-bump hazard.
-- **6.69** `completed_box` list-counter in `hybrid_repair.py` vs `nonlocal` in `grounded.py` — two patterns for one concern.
-- **6.78** Progress `frame_cap` is soft when done-callbacks never fire (`progress.py`).
-- **6.79** `broadcast` returns submission count, not delivery successes; docstring says "fan-out count" (`progress.py`).
-- **6.81** Extensionless upload filenames fall back to `.pdf` (`content_sniff.py`).
-- **6.86** Masked `api_key == "******"` skip contract is subtle; document it.
 - **6.88** `OCRRequest` is 19 fields / 4 validators; consider a nested config object.
-- **6.89** `_coerce_bool` field list duplicates the model's field declarations.
 - **6.63-6.66** Hybrid re-injection wrappers are pass-throughs **kept deliberately**: tests drive the engine through these seams (~45 call sites), so inlining is churn without behavior change. Revisit only with a test-migration pass.
 
-### Resolved (verified 2026-09-06, pruned from the old list)
+---
 
-4.2, 4.3, 4.4, 4.5, 4.8, 4.10, 4.12, 4.13, 4.14, 4.16, 4.17, 4.21, 4.25, 4.26,
-4.29, 4.30, 4.32, 4.37, 4.38, 4.39, 4.40, 4.41, 6.3 (dead field deleted),
-6.7, 6.9, 6.13, 6.30, 6.31, 6.34, 6.35, 6.40, 6.42, 6.45, 6.47, 6.48, 6.49
-(accept-always documented; superseded by the LLM-remediation wave — an
-empty/fallback correction pass now *falls back to the first pass* instead of
-erasing it, `31dee3b`), 6.51, 6.52, 6.55 (renamed to module-scoped constants:
-`grounded/prompted.py::GROUNDED_PROMPT_VERSION`,
-`translate/nodes.py::TRANSLATION_PROMPT_VERSION` — the OCR and documents
-prompts keep their own `PROMPT_VERSION`), 6.56, 6.68, 6.70, 6.74, 6.75, 6.76,
-6.77, 6.82, 6.83, 6.87.
-
-### Not applicable
-
-- **4.15** `omniscribe-migrate-lexicon` ships deliberately (AGENTS.md documents the exception).
-- **6.71** No frozen dataclass carries unhashable fields; `GroundedBlock` is deliberately unfrozen.
-- **6.94** The final re-sort makes text-layer grouping order harmless.
+*End of outstanding work. Everything above is open; everything else
+lives in git history.*

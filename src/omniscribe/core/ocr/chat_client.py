@@ -41,6 +41,7 @@ from omniscribe.core.llm.temperatures import TEMPERATURE_OCR
 from omniscribe.core.ocr.exceptions import LLMCallError
 from omniscribe.core.ocr.resilience import (
     CircuitBreaker,
+    is_context_length_error,
     is_transient_error,
 )
 
@@ -56,6 +57,15 @@ class ChatClient:
     immediately. The circuit breaker counts consecutive failures
     (across all attempts) and fails fast once the endpoint is deemed
     down, so a dead server doesn't serialize N page-timeouts.
+
+    Backoff and Cumulative Sleep Budget (smell 4.42):
+        Each retry delay is calculated as:
+        ``delay = min(retry_base_delay_s * (2 ** (attempt - 1)), retry_max_delay_s)``
+        for failed attempt numbers ``1 <= attempt <= max_retries``.
+        The theoretical cumulative sleep budget across all retries is bounded by:
+        ``sum(min(retry_base_delay_s * (2 ** k), retry_max_delay_s) for k in range(max_retries))``.
+        For the default configuration (``max_retries=2``, ``retry_base_delay_s=1.0``,
+        ``retry_max_delay_s=8.0``), the cumulative sleep ceiling is 1.0s + 2.0s = 3.0s.
 
     ``system_prompt``: when set, sent as a separate system-role
     message. The OLMOCR-2 page path leaves this ``None`` to keep
@@ -100,15 +110,16 @@ class ChatClient:
         Returns the model's stripped text. Raises :class:`LLMCallError`
         after exhausting retries on a transient error, or immediately on
         a permanent error (the context-size-exceeded branch translates
-        the LLM error into an LM-Studio-context-length fix message).
+        the LLM error into a generic context-length fix message).
         """
         # M3 audit fix: removed the redundant unconditional pre-loop
         # ``await self.circuit_breaker.check()``. The in-loop call is
         # now invoked on EVERY attempt (not just attempt > 0) so the
         # first attempt also consults the breaker — a previously OPEN
         # breaker fails fast without consuming an LLM call.
+        total_attempts = self.max_retries + 1
         last_exc: Exception | None = None
-        for attempt in range(self.max_retries + 1):
+        for attempt in range(1, total_attempts + 1):
             # Re-check on every attempt: a prior attempt may have
             # tripped the breaker, or the breaker may already be open
             # when this call started. CircuitOpenError propagates
@@ -147,16 +158,16 @@ class ChatClient:
 
                 if not is_transient_error(e):
                     break  # permanent failure — do not retry
-                if attempt < self.max_retries:
+                if attempt < total_attempts:
                     delay = min(
-                        self.retry_base_delay_s * (2**attempt),
+                        self.retry_base_delay_s * (2 ** (attempt - 1)),
                         self.retry_max_delay_s,
                     )
                     logger.warning(
                         "Transient LLM error (attempt %d/%d), retrying in "
                         "%.1fs: %s: %s",
-                        attempt + 1,
-                        self.max_retries + 1,
+                        attempt,
+                        total_attempts,
                         delay,
                         type(e).__name__,
                         e,
@@ -165,19 +176,11 @@ class ChatClient:
 
         if last_exc is None:  # pragma: no cover - unreachable defensive guard
             raise RuntimeError("retry loop exited without capturing an exception")
-        err_msg = str(last_exc)
-        if any(
-            term in err_msg.lower()
-            for term in (
-                "context size",
-                "context_length_exceeded",
-                "context length",
-            )
-        ):
+        if is_context_length_error(last_exc):
             raise LLMCallError(
-                f"LLM OCR call failed due to Context Size Limit. "
-                f"Please load the model in LM Studio and increase the 'Context Length' in the right-side panel "
-                f"to at least 8192 or 16384 tokens. "
+                f"Model context length exceeded on endpoint {self.api_base} (Context Size Limit). "
+                f"Please increase the context length / window size on your LLM provider "
+                f"(e.g. at least 8192 or 16384 tokens in LM Studio, Ollama, or vLLM). "
                 f"Underlying error: {last_exc}"
             ) from last_exc
         raise LLMCallError(

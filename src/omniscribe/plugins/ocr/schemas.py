@@ -8,14 +8,26 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from collections.abc import Mapping
+from typing import Any, Literal, get_args, get_origin
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from omniscribe.core.document import DenseMode
 from omniscribe.utils.env import parse_bool
 
 PipelineMode = Literal["hybrid", "grounded"]
+
+_HttpJobStatus = Literal["pending", "processing", "complete", "error", "cancelled"]
+
+
+def _is_bool_annotation(annotation: Any) -> bool:
+    if annotation is bool:
+        return True
+    origin = get_origin(annotation)
+    if origin is not None:
+        return any(_is_bool_annotation(arg) for arg in get_args(annotation))
+    return False
 
 #: Frontend dense toggles ("on"/"off") are still accepted at the HTTP
 #: edge for backwards compatibility, but the aliasing now lives in
@@ -86,28 +98,43 @@ class OCRRequest(BaseModel):
     @classmethod
     def _split_processors(cls, value: object) -> object:
         if isinstance(value, str):
-            names = [item.strip() for item in value.split(",") if item.strip()]
-            unknown = sorted(set(names) - _VALID_PROCESSORS)
-            if unknown:
-                raise ValueError(f"unknown document processor(s): {', '.join(unknown)}")
-            return names
-        return value
+            raw_items: list[object] = [value]
+        elif isinstance(value, (list, tuple, set)):
+            raw_items = list(value)
+        else:
+            return value
 
-    @field_validator(
-        "preprocess_pages",
-        "orientation_detection",
-        "deskew",
-        "denoise",
-        "normalize_contrast",
-        "crop_cleanup",
-        "quality_loop_enabled",
-        mode="before",
-    )
+        names: list[str] = []
+        for item in raw_items:
+            if isinstance(item, str):
+                for part in item.split(","):
+                    cleaned = part.strip()
+                    if cleaned:
+                        names.append(cleaned)
+            elif item is not None:
+                cleaned = str(item).strip()
+                if cleaned:
+                    names.append(cleaned)
+
+        unknown = sorted(set(names) - _VALID_PROCESSORS)
+        if unknown:
+            raise ValueError(f"unknown document processor(s): {', '.join(unknown)}")
+        return names
+
+    @model_validator(mode="before")
     @classmethod
-    def _coerce_bool(cls, value: object) -> object:
-        if isinstance(value, str):
-            return _parse_bool(value)
-        return value
+    def _coerce_bool(cls, data: Any) -> Any:
+        if isinstance(data, (dict, Mapping)):
+            coerced = dict(data)
+            for field_name, field_info in cls.model_fields.items():
+                if _is_bool_annotation(field_info.annotation):
+                    val = coerced.get(field_name)
+                    if isinstance(val, str):
+                        coerced[field_name] = _parse_bool(val)
+            return coerced
+        if isinstance(data, str):
+            return _parse_bool(data)
+        return data
 
     @field_validator("dense_mode", mode="before")
     @classmethod
@@ -166,6 +193,16 @@ class JobStatusResponse(BaseModel):
     failed_pages: list[int] = Field(default_factory=list)
 
 
+#: Mapping from internal JobRecord status strings onto the HTTP API status vocabulary.
+_QUEUE_STATUS_TO_HTTP: dict[str, _HttpJobStatus] = {
+    "queued": "pending",
+    "running": "processing",
+    "complete": "complete",
+    "error": "error",
+    "cancelled": "cancelled",
+}
+
+
 class JobListItemResponse(BaseModel):
     """Mirrors the frontend ``JobRecordResponse`` contract."""
 
@@ -208,8 +245,20 @@ class PreflightResponse(BaseModel):
     loaded_models: list[str] = Field(default_factory=list)
     detail: str = ""
 
+    def __iter__(self) -> Any:
+        return iter(
+            (
+                self.loaded,
+                self.requested_model,
+                self.api_base,
+                self.loaded_models,
+                self.detail,
+            )
+        )
+
 
 __all__ = [
+    "_QUEUE_STATUS_TO_HTTP",
     "AsyncSubmitResponse",
     "JobListItemResponse",
     "JobStatusResponse",

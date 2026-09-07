@@ -425,26 +425,51 @@ class InMemoryJobQueue:
 
 class JobsSchema(BaseModel):
     worker_count: int = 1
+    mode: str = "inprocess"
 
 
 class JobsPlugin(Plugin):
-    """Mounts the single-worker queue; the runner arrives later via DI."""
+    """Mounts the job queue (inprocess or redis); the runner arrives later via DI."""
 
     Schema = JobsSchema
 
     async def apply(self, ctx: Context) -> None:
-        worker_count = int(self.config.get("worker_count", 1))
-        if worker_count != 1:
-            _LOGGER.warning(
-                "worker_count=%d requested; this build ships a single worker",
-                worker_count,
-            )
+        mode = str(self.config.get("mode") or "").strip().lower()
+        if not mode or mode == "inprocess":
+            from omniscribe.config import load_settings
+
+            settings_mode = load_settings().jobs_mode
+            if settings_mode and mode != "inprocess":
+                mode = settings_mode
         backend = ctx.inject(StateBackend)
         artifacts = ctx.inject(ArtifactStore)
-        queue = InMemoryJobQueue(ctx, backend, artifacts)
-        queue.start()
-        ctx.service(JobQueue, queue)
-        ctx.effect(queue.shutdown)
+        if mode == "redis":
+            from omniscribe.config import load_settings
+            from .jobs_redis import RedisJobQueue
+
+            settings = load_settings()
+            redis_queue = RedisJobQueue(
+                ctx,
+                backend,
+                artifacts,
+                redis_url=settings.redis_url,
+            )
+            await redis_queue.open()
+            ctx.service(JobQueue, redis_queue)
+            ctx.effect(redis_queue.aclose)
+            _LOGGER.info("jobs plugin mounted (mode=redis, url=%s)", settings.redis_url)
+        else:
+            worker_count = int(self.config.get("worker_count", 1))
+            if worker_count != 1:
+                _LOGGER.warning(
+                    "worker_count=%d requested; this build ships a single worker",
+                    worker_count,
+                )
+            inmem_queue = InMemoryJobQueue(ctx, backend, artifacts)
+            inmem_queue.start()
+            ctx.service(JobQueue, inmem_queue)
+            ctx.effect(inmem_queue.shutdown)
+            _LOGGER.info("jobs plugin mounted (mode=inprocess)")
 
 
 plugin = JobsPlugin()
@@ -468,3 +493,4 @@ __all__ = [
     "TranslationJobRunner",
     "plugin",
 ]
+

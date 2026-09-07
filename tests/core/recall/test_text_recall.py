@@ -484,7 +484,7 @@ class TestHybridWhitespaceRecall:
             recall_booster=_FixedBooster(),  # type: ignore[arg-type]
         )
         pages = await engine._detect_layout(
-            images_dict={0: _make_tiny_b64_image()}, page_nums=[0], progress=None
+            images_dict={0: _make_tiny_b64_image()}, page_nums=[0], progress=None, input_path=""
         )
         boxes = [box for box, _ in pages[0]]
         assert boxes == [(0.1, 0.02, 0.9, 0.05), [0.1, 0.1, 0.9, 0.2]]
@@ -494,7 +494,7 @@ class TestHybridWhitespaceRecall:
         engine = _engine(aligner=aligner)
         assert engine.recall_booster is None
         pages = await engine._detect_layout(
-            images_dict={0: _make_tiny_b64_image()}, page_nums=[0], progress=None
+            images_dict={0: _make_tiny_b64_image()}, page_nums=[0], progress=None, input_path=""
         )
         assert pages == {0: [([0.1, 0.1, 0.9, 0.2], "")]}  # type: ignore[comparison-overlap]
 
@@ -512,7 +512,7 @@ class TestHybridWhitespaceRecall:
             recall_booster=_ExplodingBooster(),  # type: ignore[arg-type]
         )
         pages = await engine._detect_layout(
-            images_dict={0: _make_tiny_b64_image()}, page_nums=[0], progress=None
+            images_dict={0: _make_tiny_b64_image()}, page_nums=[0], progress=None, input_path=""
         )
         assert pages == {0: [([0.1, 0.1, 0.9, 0.2], "")]}  # type: ignore[comparison-overlap]
 
@@ -541,7 +541,10 @@ class TestHybridWhitespaceRecallRunSummary:
         )
         with caplog.at_level("INFO", logger="omniscribe.core.workflows.hybrid"):
             await engine._detect_layout(
-                images_dict={0: _make_tiny_b64_image()}, page_nums=[0], progress=None
+                images_dict={0: _make_tiny_b64_image()},
+                page_nums=[0],
+                progress=None,
+                input_path="",
             )
         summaries = [
             r.getMessage()
@@ -570,7 +573,10 @@ class TestHybridWhitespaceRecallRunSummary:
         )
         with caplog.at_level("INFO", logger="omniscribe.core.workflows.hybrid"):
             await engine._detect_layout(
-                images_dict={0: _make_tiny_b64_image()}, page_nums=[0], progress=None
+                images_dict={0: _make_tiny_b64_image()},
+                page_nums=[0],
+                progress=None,
+                input_path="",
             )
         summaries = [
             r.getMessage()
@@ -690,6 +696,7 @@ class TestHybridWhitespaceRecallGuardRails:
             images_dict={0: _make_tiny_b64_image(), 1: _make_tiny_b64_image()},
             page_nums=[0, 1],
             progress=None,
+            input_path="",
         )
         # Page 0 merged (recall box sorts first); page 1 keeps Surya only.
         assert [box for box, _ in pages[0]] == [
@@ -739,7 +746,7 @@ class TestHybridWhitespaceRecallGuardRails:
             recall_booster=_ListBooster(),  # type: ignore[arg-type]
         )
         pages = await engine._detect_layout(
-            images_dict={0: _make_tiny_b64_image()}, page_nums=[0], progress=None
+            images_dict={0: _make_tiny_b64_image()}, page_nums=[0], progress=None, input_path=""
         )
         box = pages[0][0][0]
         assert isinstance(box, tuple)
@@ -767,7 +774,7 @@ class TestHybridWhitespaceRecallGuardRails:
             recall_booster=booster,  # type: ignore[arg-type]
         )
         pages = await engine._detect_layout(
-            images_dict={0: _make_tiny_b64_image()}, page_nums=[0], progress=None
+            images_dict={0: _make_tiny_b64_image()}, page_nums=[0], progress=None, input_path=""
         )
         assert booster.calls == 0
         assert pages == {0: [([0.1, 0.1, 0.9, 0.2], "")]}  # type: ignore[comparison-overlap]

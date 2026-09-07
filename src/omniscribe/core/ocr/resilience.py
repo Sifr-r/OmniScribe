@@ -22,6 +22,7 @@ import threading
 import time
 from collections.abc import Callable
 from enum import StrEnum
+from typing import Final
 
 from omniscribe.config import RuntimeSettings, load_settings
 
@@ -98,12 +99,18 @@ _TRANSIENT_TERMS = (
     "econnrefused",
 )
 
-# Substrings that indicate a permanent condition — never retry these.
-_PERMANENT_TERMS = (
+
+# Substrings that indicate context length / window size exceeded.
+CONTEXT_LENGTH_TERMS: Final[tuple[str, ...]] = (
     "context size",
     "context_length_exceeded",
     "context length",
     "maximum context",
+)
+
+# Substrings that indicate a permanent condition — never retry these.
+_PERMANENT_TERMS = (
+    *CONTEXT_LENGTH_TERMS,
     "invalid api key",
     "unauthorized",
     "authentication",
@@ -112,6 +119,12 @@ _PERMANENT_TERMS = (
     "does not exist",
     "invalid request",
 )
+
+
+def is_context_length_error(exc: BaseException) -> bool:
+    """Return True if exception message indicates context length or window size was exceeded."""
+    msg = str(exc).lower()
+    return any(term in msg for term in CONTEXT_LENGTH_TERMS)
 
 
 def is_transient_error(exc: BaseException) -> bool:

@@ -139,7 +139,7 @@ class TestHybridDetectLayout:
         engine = _engine(aligner=aligner)
         images = {0: _make_tiny_b64_image()}
         pages_structured = await engine._detect_layout(
-            images_dict=images, page_nums=[0], progress=None
+            images_dict=images, page_nums=[0], progress=None, input_path=""
         )
         assert pages_structured == {  # type: ignore[comparison-overlap]
             0: [([0.1, 0.1, 0.9, 0.2], ""), ([0.1, 0.3, 0.9, 0.4], "")]
@@ -158,7 +158,7 @@ class TestHybridDetectLayout:
         images = {p: _make_tiny_b64_image() for p in page_nums}
         engine = _engine(aligner=_ChunkTracker())
         await engine._detect_layout(
-            images_dict=images, page_nums=page_nums, progress=None
+            images_dict=images, page_nums=page_nums, progress=None, input_path=""
         )
         assert batch_sizes == [10, 10, 5]
 
@@ -170,7 +170,7 @@ class TestHybridDetectLayout:
 
         engine = _engine()
         await engine._detect_layout(
-            images_dict={0: _make_tiny_b64_image()}, page_nums=[0], progress=cb
+            images_dict={0: _make_tiny_b64_image()}, page_nums=[0], progress=cb, input_path=""
         )
         assert ("detect", 0, 1) in events
         assert ("detect", 1, 1) in events
@@ -194,7 +194,7 @@ class TestHybridDecodedCache:
         images = {p: _make_tiny_b64_image() for p in range(3)}
         assert engine._decoded_cache == {}
         await engine._detect_layout(
-            images_dict=images, page_nums=[0, 1, 2], progress=None
+            images_dict=images, page_nums=[0, 1, 2], progress=None, input_path=""
         )
         # Every page in page_nums should have a decoded PIL.Image cached.
         assert set(engine._decoded_cache.keys()) == {
@@ -212,7 +212,9 @@ class TestHybridDecodedCache:
         """The cache populated in Phase 2 must still be readable in Phase 3+."""
         engine = _engine()
         images = {0: _make_tiny_b64_image()}
-        await engine._detect_layout(images_dict=images, page_nums=[0], progress=None)
+        await engine._detect_layout(
+            images_dict=images, page_nums=[0], progress=None, input_path=""
+        )
         cached_image = engine._decoded_cache.get((engine._current_run_id, 0))
         assert cached_image is not None
         # The cache key survives a second ``_detect_layout`` call *only if*

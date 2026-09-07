@@ -94,30 +94,10 @@ class OCRProcessor:
     budget for paragraph-level content.
     """
 
-    # Pedantic review 1.11 / 1.12: the audit-H3 knobs (page / crop
-    # timeouts, max retries, retry base delay, page/crop max-tokens) used
-    # to be class-level constants that read ``load_settings()`` and
-    # ``env_int`` at module import. Two problems:
-    #
-    # 1. **Instance rebind on stale import-time value** (1.11):
-    #    ``self.page_max_tokens = self.PAGE_MAX_TOKENS`` in ``__init__``
-    #    captured the import-time env value, so an env-var change after
-    #    import did not reach a freshly-constructed instance.
-    # 2. **Module un-importable in subprocesses without env setup**
-    #    (1.12): every import of :mod:`omniscribe.core.ocr.processor`
-    #    parsed the full env and instantiated ``BaseSettings`` via
-    #    ``load_settings()`` at class-body evaluation time, which made
-    #    test runners and child processes fail when the env was empty
-    #    or partial. The ``__getattr__`` workaround masked the failure
-    #    for ``__new__``-based tests but every import still paid the cost.
-    #
-    # The class-level constants below are now **hardcoded defaults**
-    # matching the values :func:`load_settings` would return when no env
-    # override is present. ``__init__`` re-resolves the live values via
-    # :func:`load_settings` and :func:`env_int` at instance construction
-    # time, so a fresh ``OCRProcessor()`` always reflects the current
-    # env. The class-level defaults are still the fallback used by
-    # ``__getattr__`` for ``__new__``-built test instances.
+    # Hardcoded default constants below serve as fallbacks for __getattr__ when
+    # instances are constructed without __init__ (e.g., __new__ in tests; F1.9).
+    # Live instances resolve settings in __init__ to reflect current env (1.11, 1.12).
+
 
     # Page-level OCR (full image): up to ~4 minutes, ~6k tokens of output.
     # Dense handwritten pages with tables can easily produce 2-3k tokens
@@ -222,20 +202,8 @@ class OCRProcessor:
         self.tesseract_error_count: int = 0
 
     def __getattr__(self, name: str) -> object:
-        """F1.9 fallback: resolve the audit-H3 setting attributes that
-        ``__init__`` would normally set, falling back to the
-        class-level constants.
+        """F1.9 fallback: resolve class-level default settings for uninitialized test instances (see 1.11/1.12)."""
 
-        A few pre-existing tests construct ``OCRProcessor`` via
-        ``OCRProcessor.__new__(OCRProcessor)`` to skip the real
-        ``__init__`` (which would otherwise build an ``AsyncOpenAI``
-        client and load the runtime settings). Those tests still
-        expect ``self.crop_timeout_s`` etc. to resolve to the
-        class-level defaults. This ``__getattr__`` is only invoked
-        when the attribute is missing on the instance, so the
-        ``__init__``-set values still win in production. The fallback
-        list mirrors the attributes ``__init__`` sets.
-        """
         class_attr = _DEFAULTS.get(name)
         if class_attr is not None and hasattr(self.__class__, class_attr):
             return getattr(self.__class__, class_attr)

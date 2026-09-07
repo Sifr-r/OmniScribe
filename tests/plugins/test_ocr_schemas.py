@@ -312,17 +312,17 @@ async def test_preflight_check_returns_misconfigured_when_coords_empty() -> None
     service._config = {}
     service._settings = MagicMock()
 
-    loaded, _requested, _base, models, detail = await service.preflight_check()
-    assert loaded is False
-    assert detail == "api_base and model must be configured before pre-flight"
-    assert models == []
+    resp = await service.preflight_check()
+    assert resp.loaded is False
+    assert resp.detail == "api_base and model must be configured before pre-flight"
+    assert resp.loaded_models == []
 
 
 async def test_preflight_check_closes_ephemeral_processor(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """On a clean probe (the requested model is loaded) the ephemeral
-    OCRProcessor must be closed via aclose so the connection pool is
+    AsyncOpenAI client must be closed via close so the connection pool is
     released — otherwise every preflight leaks an AsyncOpenAI client.
     """
     from unittest.mock import AsyncMock, MagicMock
@@ -339,33 +339,27 @@ async def test_preflight_check_closes_ephemeral_processor(
 
     closed = []
 
-    class _StubProcessor:
-        def __init__(self, *, api_base, api_key, model):
-            self.api_base = api_base
+    class _MockClient:
+        def __init__(self, *, base_url: str, api_key: str):
+            self.base_url = base_url
             self.api_key = api_key
-            self.model = model
-            self.client = MagicMock()
 
-        async def ensure_model_loaded(self) -> None:
-            return None
-
-        async def aclose(self) -> None:
+        async def close(self) -> None:
             closed.append(self)
 
-    monkeypatch.setattr("omniscribe.plugins.ocr.service.OCRProcessor", _StubProcessor)
-    # _list_loaded_model_ids is called after ensure; stub it to return [].
+    monkeypatch.setattr("openai.AsyncOpenAI", _MockClient)
     monkeypatch.setattr(
         "omniscribe.core.ocr.client._list_loaded_model_ids",
-        AsyncMock(return_value=[]),
+        AsyncMock(return_value=["allenai/olmocr-2-7b"]),
     )
 
-    loaded, requested, base, models, detail = await service.preflight_check()
-    assert loaded is True
-    assert requested == "allenai/olmocr-2-7b"
-    assert base == "http://localhost:1234/v1"
-    assert models == []
-    assert detail == ""
-    assert closed, "ephemeral processor must be closed after preflight"
+    resp = await service.preflight_check()
+    assert resp.loaded is True
+    assert resp.requested_model == "allenai/olmocr-2-7b"
+    assert resp.api_base == "http://localhost:1234/v1"
+    assert resp.loaded_models == ["allenai/olmocr-2-7b"]
+    assert resp.detail == "Model is loaded and ready"
+    assert closed, "ephemeral client must be closed after preflight"
 
 
 async def test_preflight_post_rejects_ssrf() -> None:
@@ -390,11 +384,11 @@ async def test_preflight_post_rejects_ssrf() -> None:
     service._max_upload_mb = 100
 
     # Verify service method directly
-    loaded, _req, _base, _models, detail = await service.preflight_check(
+    resp_obj = await service.preflight_check(
         api_base="http://169.254.169.254/v1"
     )
-    assert loaded is False
-    assert "SSRF blocked" in detail
+    assert resp_obj.loaded is False
+    assert "SSRF blocked" in resp_obj.detail
 
     # Verify POST /api/process/preflight route
     app = FastAPI()
@@ -461,3 +455,59 @@ async def test_empty_content_type_format_validation() -> None:
         )
         assert resp_valid.status_code == 200
         service.run_sync.assert_awaited_once()
+
+
+def test_queue_status_to_http_exported_and_mapped() -> None:
+    import omniscribe.plugins.ocr.schemas as schemas
+    from omniscribe.plugins.ocr.schemas import _QUEUE_STATUS_TO_HTTP
+
+    assert "_QUEUE_STATUS_TO_HTTP" in schemas.__all__
+    assert _QUEUE_STATUS_TO_HTTP["queued"] == "pending"
+    assert _QUEUE_STATUS_TO_HTTP["running"] == "processing"
+    assert _QUEUE_STATUS_TO_HTTP["complete"] == "complete"
+    assert _QUEUE_STATUS_TO_HTTP["error"] == "error"
+    assert _QUEUE_STATUS_TO_HTTP["cancelled"] == "cancelled"
+
+
+def test_split_processors_with_sequence_and_flattening() -> None:
+    # List of strings
+    req1 = OCRRequest(document_processors=["reading_order", "table_extraction"])
+    assert req1.document_processors == ["reading_order", "table_extraction"]
+
+    # Tuple of strings
+    req2 = OCRRequest(document_processors=("reading_order", "table_extraction"))  # type: ignore[arg-type]
+    assert req2.document_processors == ["reading_order", "table_extraction"]
+
+    # Sequence containing comma-separated strings
+    req3 = OCRRequest(
+        document_processors=["reading_order, table_extraction", "section_analysis"]
+    )
+    assert req3.document_processors == [
+        "reading_order",
+        "table_extraction",
+        "section_analysis",
+    ]
+
+    # Rejection of unknown processor in sequence
+    with pytest.raises(ValidationError, match="unknown document processor"):
+        OCRRequest(document_processors=["reading_order", "nonexistent_proc"])
+
+
+def test_coerce_bool_dynamic_across_fields() -> None:
+    # All boolean fields coerced from strings
+    req = OCRRequest(
+        preprocess_pages="true",
+        orientation_detection="1",
+        deskew="false",
+        denoise="yes",
+        normalize_contrast="0",
+        crop_cleanup="no",
+        quality_loop_enabled="true",
+    )  # type: ignore[arg-type]
+    assert req.preprocess_pages is True
+    assert req.orientation_detection is True
+    assert req.deskew is False
+    assert req.denoise is True
+    assert req.normalize_contrast is False
+    assert req.crop_cleanup is False
+    assert req.quality_loop_enabled is True

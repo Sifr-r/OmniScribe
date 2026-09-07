@@ -79,6 +79,7 @@ __all__ = [
     "ArtifactError",
     "ArtifactNotFoundError",
     "CancellationError",
+    "ChunkingError",
     "ConfigError",
     "DetectionError",
     "EmbedError",
@@ -268,6 +269,10 @@ class CancellationError(OmniScribeError):
     long-running pipelines that the user explicitly stops via a
     /cancel endpoint or a keyboard interrupt.
     """
+
+
+class ChunkingError(OmniScribeError):
+    """Raised when document chunking fails or invalid parameters are provided."""
 
 
 def _redact(value: Any) -> Any:

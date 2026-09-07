@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import contextlib
 import json
 import logging
 import secrets
@@ -71,7 +72,14 @@ class ProgressService(Protocol):
         self, channel_id: str, session_token: str
     ) -> ChannelRecord | None: ...
 
-    async def broadcast(self, channel_id: str, frame: Mapping[str, Any]) -> int: ...
+    async def broadcast(self, channel_id: str, frame: Mapping[str, Any]) -> int:
+        """Send ``frame`` to attached sockets.
+
+        Returns the number of socket connections submitted to (dispatched),
+        not guaranteed consumer delivery (foreign-loop sends are scheduled
+        asynchronously via ``run_coroutine_threadsafe``).
+        """
+        ...
 
     async def emit_progress(
         self, job_id: str, channel_id: str | None, frame: Mapping[str, Any]
@@ -123,7 +131,21 @@ class ProgressServiceImpl:
         *,
         frame_cap: int = 1000,
         channel_ttl_seconds: int = 600,
+        redis_mode: bool = False,
+        redis_url: str | None = None,
+        redis_client: Any | None = None,
     ) -> None:
+        """Construct the progress service.
+
+        ``frame_cap`` (smell 6.78):
+            Soft bound on the cumulative broadcast dispatches accepted on any
+            single channel. Tracks initiated ``broadcast`` calls; when workers
+            dispatch from foreign event loops via ``run_coroutine_threadsafe``,
+            dispatches are scheduled asynchronously. If foreign callbacks never
+            fire or deliveries fail after scheduling, ``_frame_counts`` still
+            increments per accepted dispatch call rather than confirmed socket
+            deliveries.
+        """
         self._ctx = ctx
         self._backend = backend
         self._frame_cap = frame_cap
@@ -131,6 +153,12 @@ class ProgressServiceImpl:
         self._connections: dict[str, set[_Connection]] = {}
         self._cancelled: set[str] = set()
         self._frame_counts: dict[str, int] = {}
+        self._redis_mode = redis_mode or bool(redis_url) or (redis_client is not None)
+        self._redis_url = redis_url or "redis://localhost:6379/0"
+        self._redis = redis_client
+        self._owns_redis = redis_client is None
+        self._pubsub_task: asyncio.Task[None] | None = None
+        self._closed = False
 
     # -- channel lifecycle ----------------------------------------------------
 
@@ -167,14 +195,102 @@ class ProgressServiceImpl:
             if not connections:
                 self._connections.pop(channel_id, None)
 
+    async def open(self) -> None:
+        """Initialize Redis connection and start Pub/Sub listener if in redis_mode."""
+        if not self._redis_mode:
+            return
+        if self._redis is None:
+            import redis.asyncio as redis_async
+
+            self._redis = redis_async.from_url(
+                self._redis_url, encoding="utf-8", decode_responses=False
+            )
+        try:
+            await self._redis.ping()
+        except Exception as exc:
+            _LOGGER.warning("Redis ping failed in progress service (%s)", exc)
+            return
+
+        if self._pubsub_task is None:
+            self._pubsub_task = asyncio.create_task(
+                self._run_redis_pubsub(), name="omniscribe-progress-redis-pubsub"
+            )
+
+    async def aclose(self) -> None:
+        """Close Pub/Sub subscriber and Redis connection."""
+        self._closed = True
+        if self._pubsub_task is not None:
+            self._pubsub_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._pubsub_task
+            self._pubsub_task = None
+        if self._owns_redis and self._redis is not None:
+            with contextlib.suppress(Exception):
+                await self._redis.aclose()
+            self._redis = None
+
+    async def _run_redis_pubsub(self) -> None:
+        """Subscribe to Redis Pub/Sub pattern and fan out frames to local WebSockets."""
+        if self._redis is None:
+            return
+        try:
+            pubsub = self._redis.pubsub()
+            await pubsub.psubscribe("omniscribe:progress:*")
+            while not self._closed:
+                message = await pubsub.get_message(
+                    ignore_subscribe_messages=True, timeout=1.0
+                )
+                if message and message.get("type") in ("message", "pmessage"):
+                    channel_raw = message.get("channel")
+                    channel_name = (
+                        channel_raw.decode("utf-8")
+                        if isinstance(channel_raw, bytes)
+                        else str(channel_raw or "")
+                    )
+                    channel_id = channel_name.split(":")[-1]
+                    data_raw = message.get("data")
+                    data_str = (
+                        data_raw.decode("utf-8")
+                        if isinstance(data_raw, bytes)
+                        else str(data_raw or "")
+                    )
+                    try:
+                        frame = json.loads(data_str)
+                        if isinstance(frame, dict):
+                            await self.broadcast(channel_id, frame, _from_redis=True)
+                    except Exception:
+                        pass
+                await asyncio.sleep(0.01)
+        except asyncio.CancelledError:
+            pass
+        except Exception as exc:
+            if not self._closed:
+                _LOGGER.warning("Progress pubsub subscriber exited: %s", exc)
+
     # -- fan-out --------------------------------------------------------------------
 
-    async def broadcast(self, channel_id: str, frame: Mapping[str, Any]) -> int:
-        """Send ``frame`` to every attached socket; returns the fan-out count.
+    async def broadcast(
+        self,
+        channel_id: str,
+        frame: Mapping[str, Any],
+        *,
+        _from_redis: bool = False,
+    ) -> int:
+        """Send ``frame`` to every attached socket.
 
-        Sends from a foreign loop are marshaled onto the connection's accept
-        loop; sends from the current loop are awaited directly.
+        Returns the number of socket connections submitted to (dispatched),
+        not guaranteed consumer delivery (smell 6.79). Sends from a foreign loop
+        are marshaled asynchronously onto the connection's accept loop via
+        ``asyncio.run_coroutine_threadsafe`` and increment the count immediately
+        upon scheduling (done-callbacks detach on failure later). Sends from the
+        current loop are awaited directly.
         """
+        if self._redis_mode and not _from_redis and self._redis is not None:
+            with contextlib.suppress(Exception):
+                await self._redis.publish(
+                    f"omniscribe:progress:{channel_id}",
+                    json.dumps(dict(frame)),
+                )
         connections = list(self._connections.get(channel_id, ()))
         if not connections:
             return 0
@@ -428,6 +544,7 @@ def build_progress_router(
 class ProgressSchema(BaseModel):
     frame_cap: int = 1000
     channel_ttl_seconds: int = 600
+    mode: str = "inprocess"
 
 
 class ProgressPlugin(Plugin):
@@ -436,13 +553,27 @@ class ProgressPlugin(Plugin):
     Schema = ProgressSchema
 
     async def apply(self, ctx: Context) -> None:
+        from omniscribe.config import load_settings
+
+        settings = load_settings()
+        mode = str(self.config.get("mode") or "").strip().lower()
+        if not mode or mode == "inprocess":
+            mode = settings.jobs_mode
+
+        redis_mode = mode == "redis"
         backend = ctx.inject(StateBackend)
         service = ProgressServiceImpl(
             ctx,
             backend,
             frame_cap=int(self.config.get("frame_cap", 1000)),
             channel_ttl_seconds=int(self.config.get("channel_ttl_seconds", 600)),
+            redis_mode=redis_mode,
+            redis_url=settings.redis_url if redis_mode else None,
         )
+        if redis_mode:
+            await service.open()
+            ctx.effect(service.aclose)
+
         ctx.service(ProgressService, service)
         try:
             from omniscribe.plugins.runtime import RuntimeService
@@ -454,8 +585,9 @@ class ProgressPlugin(Plugin):
             runtime_settings = None
         ctx.mount_router(build_progress_router(service, settings=runtime_settings))
         _LOGGER.info(
-            "progress plugin mounted (frame_cap=%d)",
+            "progress plugin mounted (frame_cap=%d, mode=%s)",
             int(self.config.get("frame_cap", 1000)),
+            mode,
         )
 
 

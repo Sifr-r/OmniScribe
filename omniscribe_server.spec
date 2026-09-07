@@ -212,6 +212,19 @@ EXCLUDES = [
     # PyInstaller itself — accidentally self-including this in a
     # bundle is a known footgun.
     "PyInstaller",
+    # Sprint 4 bundle size optimization (Handoff §3, RFC 002):
+    # Strip unused transformers models and quantizers. OmniScribe does not
+    # use these models/quantizers; excluding them saves ~40-70 MB from bundle.
+    "transformers.models.deepseek_ocr2",
+    "transformers.models.glm_ocr",
+    "transformers.models.got_ocr2",
+    "transformers.models.lighton_ocr",
+    "transformers.models.paddleocr_vl",
+    "transformers.models.pp_ocrv5_mobile_*",
+    "transformers.models.pp_ocrv5_mobile_det",
+    "transformers.models.pp_ocrv5_mobile_rec",
+    "transformers.quantizers",
+    "transformers.quantizers.auto",
 ]
 
 

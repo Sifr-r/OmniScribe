@@ -25,12 +25,26 @@ and close enough for a confidence summary.
 from __future__ import annotations
 
 import json
+import math
+import re
+from collections import Counter
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 from pathlib import Path
+from typing import TypeVar
 
 from omniscribe.core.document import BBox
 from omniscribe.utils.text import normalize_text  # L-7 audit: shared helper
+
+T = TypeVar("T")
+
+try:
+    import sacrebleu
+
+    _HAS_SACREBLEU = True
+except ImportError:
+    _HAS_SACREBLEU = False
 
 # --- data classes ----------------------------------------------------------
 
@@ -287,3 +301,442 @@ def compute_report(
         pipeline_count=len(pipeline_output),
         matches=matches,
     )
+
+
+# --- End-to-End PDF-to-Markdown Benchmark Scoring (RFC 004 R4) -------------
+
+
+def compute_levenshtein_distance(seq1: Sequence[T], seq2: Sequence[T]) -> int:
+    """Compute exact Levenshtein distance between two sequences (chars or tokens)."""
+    if seq1 == seq2:
+        return 0
+    if not seq1:
+        return len(seq2)
+    if not seq2:
+        return len(seq1)
+
+    # Ensure seq2 is the shorter sequence to minimize memory in 2-row DP
+    if len(seq1) < len(seq2):
+        seq1, seq2 = seq2, seq1
+
+    prev_row = list(range(len(seq2) + 1))
+    for i, item1 in enumerate(seq1):
+        curr_row = [i + 1] * (len(seq2) + 1)
+        for j, item2 in enumerate(seq2):
+            cost = 0 if item1 == item2 else 1
+            curr_row[j + 1] = min(
+                curr_row[j] + 1,       # insertion
+                prev_row[j + 1] + 1,   # deletion
+                prev_row[j] + cost,    # substitution
+            )
+        prev_row = curr_row
+    return prev_row[-1]
+
+
+def compute_cer(reference: str, hypothesis: str, normalize: bool = True) -> float:
+    """Compute Character Error Rate (CER).
+
+    Args:
+        reference: Ground-truth reference text.
+        hypothesis: Pipeline hypothesis text.
+        normalize: If True, divides edit distance by max(1, len(reference)).
+
+    Returns:
+        float >= 0.0 (0.0 represents a perfect character match).
+    """
+    if reference == hypothesis:
+        return 0.0
+    if not reference:
+        return 1.0 if hypothesis else 0.0
+
+    dist = compute_levenshtein_distance(reference, hypothesis)
+    return dist / len(reference) if normalize else float(dist)
+
+
+def compute_wer(reference: str, hypothesis: str, normalize: bool = True) -> float:
+    """Compute Word Error Rate (WER).
+
+    Tokenizes text on whitespace and computes token-level Levenshtein distance.
+
+    Args:
+        reference: Ground-truth reference text.
+        hypothesis: Pipeline hypothesis text.
+        normalize: If True, divides edit distance by max(1, len(reference_words)).
+
+    Returns:
+        float >= 0.0 (0.0 represents a perfect word match).
+    """
+    ref_words = reference.split()
+    hyp_words = hypothesis.split()
+    if ref_words == hyp_words:
+        return 0.0
+    if not ref_words:
+        return 1.0 if hyp_words else 0.0
+
+    dist = compute_levenshtein_distance(ref_words, hyp_words)
+    return dist / len(ref_words) if normalize else float(dist)
+
+
+def _tokenize_words(text: str) -> list[str]:
+    """Tokenize text into lowercase alphanumeric words and punctuation."""
+    return re.findall(r"\w+|[^\w\s]", text.lower())
+
+
+def _compute_fallback_bleu(reference: str, hypothesis: str, max_n: int = 4) -> float:
+    """Compute pure-Python sentence-level BLEU with smoothing and brevity penalty."""
+    ref_tokens = _tokenize_words(reference)
+    hyp_tokens = _tokenize_words(hypothesis)
+
+    if not hyp_tokens:
+        return 0.0 if ref_tokens else 100.0
+    if not ref_tokens:
+        return 0.0
+
+    hyp_len = len(hyp_tokens)
+    ref_len = len(ref_tokens)
+
+    # Brevity penalty
+    if hyp_len > ref_len:
+        bp = 1.0
+    elif hyp_len == 0:
+        bp = 0.0
+    else:
+        bp = math.exp(1.0 - (ref_len / hyp_len))
+
+    # N-gram precisions
+    log_precisions: list[float] = []
+    for n in range(1, max_n + 1):
+        if hyp_len < n:
+            break
+        hyp_ngrams = Counter(
+            tuple(hyp_tokens[i : i + n]) for i in range(hyp_len - n + 1)
+        )
+        ref_ngrams = Counter(
+            tuple(ref_tokens[i : i + n]) for i in range(ref_len - n + 1)
+        )
+
+        overlap = sum(
+            min(count, ref_ngrams[ngram]) for ngram, count in hyp_ngrams.items()
+        )
+        total = sum(hyp_ngrams.values())
+
+        # Add-1 smoothing for higher n-grams if overlap is 0
+        p_n = 1.0 / (total + 1.0) if overlap == 0 else overlap / total
+        log_precisions.append(math.log(p_n))
+
+    if not log_precisions:
+        return 0.0
+
+    score = bp * math.exp(sum(log_precisions) / len(log_precisions)) * 100.0
+    return max(0.0, min(100.0, score))
+
+
+def compute_bleu(reference: str, hypothesis: str) -> float:
+    """Compute BLEU score (0..100). Uses sacrebleu if installed, else fallback."""
+    ref_clean = reference.strip()
+    hyp_clean = hypothesis.strip()
+
+    if not ref_clean and not hyp_clean:
+        return 100.0
+    if ref_clean == hyp_clean:
+        return 100.0
+    if not ref_clean or not hyp_clean:
+        return 0.0
+
+    if _HAS_SACREBLEU:
+        try:
+            return float(sacrebleu.sentence_bleu(hyp_clean, [ref_clean]).score)
+        except Exception:
+            pass
+
+    return _compute_fallback_bleu(ref_clean, hyp_clean)
+
+
+def _compute_fallback_chrf(
+    reference: str, hypothesis: str, max_n: int = 6, beta: float = 2.0
+) -> float:
+    """Compute character n-gram F-score (chrF) without sacrebleu."""
+    ref_chars = "".join(reference.split())
+    hyp_chars = "".join(hypothesis.split())
+
+    if not hyp_chars:
+        return 0.0 if ref_chars else 100.0
+    if not ref_chars:
+        return 0.0
+
+    precisions: list[float] = []
+    recalls: list[float] = []
+
+    for n in range(1, max_n + 1):
+        if len(hyp_chars) < n or len(ref_chars) < n:
+            continue
+        hyp_ngrams = Counter(
+            hyp_chars[i : i + n] for i in range(len(hyp_chars) - n + 1)
+        )
+        ref_ngrams = Counter(
+            ref_chars[i : i + n] for i in range(len(ref_chars) - n + 1)
+        )
+
+        overlap = sum(
+            min(count, ref_ngrams[ngram]) for ngram, count in hyp_ngrams.items()
+        )
+        total_hyp = sum(hyp_ngrams.values())
+        total_ref = sum(ref_ngrams.values())
+
+        p_n = overlap / total_hyp if total_hyp > 0 else 0.0
+        r_n = overlap / total_ref if total_ref > 0 else 0.0
+        precisions.append(p_n)
+        recalls.append(r_n)
+
+    if not precisions:
+        return 0.0
+
+    avg_p = sum(precisions) / len(precisions)
+    avg_r = sum(recalls) / len(recalls)
+
+    if avg_p + avg_r == 0:
+        return 0.0
+
+    beta_sq = beta**2
+    f_score = (1.0 + beta_sq) * (avg_p * avg_r) / (beta_sq * avg_p + avg_r)
+    return max(0.0, min(100.0, f_score * 100.0))
+
+
+def compute_chrf(reference: str, hypothesis: str, beta: float = 2.0) -> float:
+    """Compute chrF score (0..100). Uses sacrebleu if installed, else fallback."""
+    ref_clean = reference.strip()
+    hyp_clean = hypothesis.strip()
+
+    if not ref_clean and not hyp_clean:
+        return 100.0
+    if ref_clean == hyp_clean:
+        return 100.0
+    if not ref_clean or not hyp_clean:
+        return 0.0
+
+    if _HAS_SACREBLEU:
+        try:
+            return float(sacrebleu.sentence_chrf(hyp_clean, [ref_clean]).score)
+        except Exception:
+            pass
+
+    return _compute_fallback_chrf(ref_clean, hyp_clean, beta=beta)
+
+
+def extract_markdown_headings(md_text: str) -> list[tuple[int, str]]:
+    """Extract headings from markdown as a list of (level, normalized_title)."""
+    headings: list[tuple[int, str]] = []
+    for line in md_text.splitlines():
+        line = line.strip()
+        m = re.match(r"^(#{1,6})\s+(.+)$", line)
+        if m:
+            level = len(m.group(1))
+            title = normalize_text(m.group(2))
+            if title:
+                headings.append((level, title))
+    return headings
+
+
+def compute_heading_hierarchy_f1(
+    reference_md: str, hypothesis_md: str, similarity_threshold: float = 0.80
+) -> float:
+    """Compute structural F1 score for markdown heading hierarchy matching.
+
+    Matches headings between reference and hypothesis requiring exact heading
+    level match and high text similarity (>= similarity_threshold).
+    """
+    gt_headings = extract_markdown_headings(reference_md)
+    hyp_headings = extract_markdown_headings(hypothesis_md)
+
+    if not gt_headings and not hyp_headings:
+        return 1.0
+    if not gt_headings or not hyp_headings:
+        return 0.0
+
+    used_hyp: set[int] = set()
+    true_positives = 0
+
+    for gt_level, gt_title in gt_headings:
+        best_i = -1
+        best_sim = 0.0
+        for i, (hyp_level, hyp_title) in enumerate(hyp_headings):
+            if i in used_hyp:
+                continue
+            if gt_level != hyp_level:
+                continue
+            sim = text_similarity(gt_title, hyp_title)
+            if sim >= similarity_threshold and sim > best_sim:
+                best_sim = sim
+                best_i = i
+
+        if best_i >= 0:
+            used_hyp.add(best_i)
+            true_positives += 1
+
+    precision = true_positives / len(hyp_headings) if hyp_headings else 0.0
+    recall = true_positives / len(gt_headings) if gt_headings else 0.0
+
+    if precision + recall == 0.0:
+        return 0.0
+
+    return (2.0 * precision * recall) / (precision + recall)
+
+
+_MD_TABLE_SEPARATOR_RE = re.compile(
+    r"^\s*\|?(\s*:?-+:?\s*\|)+\s*:?-+:?\s*\|?\s*$"
+)
+
+
+def extract_markdown_tables(md_text: str) -> list[list[list[str]]]:
+    """Parse all markdown pipe tables from text into 2D cell grids."""
+    tables: list[list[list[str]]] = []
+    current_table: list[list[str]] = []
+
+    for line in md_text.splitlines():
+        trimmed = line.strip()
+        if "|" in trimmed:
+            if _MD_TABLE_SEPARATOR_RE.match(trimmed):
+                continue
+            raw_cells = trimmed.split("|")
+            if raw_cells and not raw_cells[0].strip():
+                raw_cells = raw_cells[1:]
+            if raw_cells and not raw_cells[-1].strip():
+                raw_cells = raw_cells[:-1]
+            cells = [c.strip() for c in raw_cells]
+            if cells:
+                current_table.append(cells)
+        else:
+            if len(current_table) >= 2 and max(len(r) for r in current_table) >= 2:
+                tables.append(current_table)
+            current_table = []
+
+    if len(current_table) >= 2 and max(len(r) for r in current_table) >= 2:
+        tables.append(current_table)
+
+    return tables
+
+
+def _table_pair_similarity(
+    t1: list[list[str]], t2: list[list[str]]
+) -> float:
+    """Compute structural and cell content similarity between two 2D table grids."""
+    r1, c1 = len(t1), max(len(r) for r in t1)
+    r2, c2 = len(t2), max(len(r) for r in t2)
+
+    # Dimensional shape similarity
+    shape_sim = (1.0 - abs(r1 - r2) / max(r1, r2)) * (
+        1.0 - abs(c1 - c2) / max(c1, c2)
+    )
+
+    # Cell-by-cell content alignment
+    matched_sim = 0.0
+    min_r = min(r1, r2)
+    for r in range(min_r):
+        row1 = t1[r]
+        row2 = t2[r]
+        min_c = min(len(row1), len(row2))
+        for c in range(min_c):
+            matched_sim += text_similarity(row1[c], row2[c])
+
+    total_cells = max(r1 * c1, r2 * c2)
+    content_sim = matched_sim / total_cells if total_cells > 0 else 1.0
+
+    return 0.3 * shape_sim + 0.7 * content_sim
+
+
+def compute_table_similarity(reference_md: str, hypothesis_md: str) -> float:
+    """Compute structural similarity across all markdown tables in two documents."""
+    gt_tables = extract_markdown_tables(reference_md)
+    hyp_tables = extract_markdown_tables(hypothesis_md)
+
+    if not gt_tables and not hyp_tables:
+        return 1.0
+    if not gt_tables or not hyp_tables:
+        return 0.0
+
+    used_hyp: set[int] = set()
+    scores: list[float] = []
+
+    for gt_t in gt_tables:
+        best_i = -1
+        best_sim = 0.0
+        for i, hyp_t in enumerate(hyp_tables):
+            if i in used_hyp:
+                continue
+            sim = _table_pair_similarity(gt_t, hyp_t)
+            if sim > best_sim:
+                best_sim = sim
+                best_i = i
+
+        if best_i >= 0:
+            used_hyp.add(best_i)
+            scores.append(best_sim)
+        else:
+            scores.append(0.0)
+
+    # Penalize extra hypothesis tables
+    unmatched_hyp = len(hyp_tables) - len(used_hyp)
+    total_eval = len(gt_tables) + unmatched_hyp
+    return sum(scores) / max(1, total_eval)
+
+
+@dataclass
+class MarkdownScoreReport:
+    """Evaluation summary for end-to-end PDF-to-Markdown export (OmniDocBench style)."""
+
+    document: str
+    cer: float
+    wer: float
+    bleu: float
+    chrf: float
+    heading_f1: float
+    table_similarity: float
+
+    def summary_line(self) -> str:
+        return (
+            f"{self.document:<20} "
+            f"CER={self.cer:.3f} "
+            f"WER={self.wer:.3f} "
+            f"BLEU={self.bleu:.1f} "
+            f"chrF={self.chrf:.1f} "
+            f"HeadingF1={self.heading_f1:.2f} "
+            f"TableSim={self.table_similarity:.2f}"
+        )
+
+
+def score_markdown_pair(
+    document: str, reference_md: str, hypothesis_md: str
+) -> MarkdownScoreReport:
+    """Score hypothesis markdown against reference markdown across all R4 metrics."""
+    return MarkdownScoreReport(
+        document=document,
+        cer=compute_cer(reference_md, hypothesis_md),
+        wer=compute_wer(reference_md, hypothesis_md),
+        bleu=compute_bleu(reference_md, hypothesis_md),
+        chrf=compute_chrf(reference_md, hypothesis_md),
+        heading_f1=compute_heading_hierarchy_f1(reference_md, hypothesis_md),
+        table_similarity=compute_table_similarity(reference_md, hypothesis_md),
+    )
+
+
+def blocks_to_markdown(
+    blocks: Sequence[tuple[BBox, str] | GTBlock],
+) -> str:
+    """Render a sequence of bounding-box text blocks to a markdown string in reading order."""
+    normalized_items: list[tuple[float, float, str]] = []
+    for b in blocks:
+        if isinstance(b, GTBlock):
+            y0, x0 = b.bbox[1], b.bbox[0]
+            text = b.text.strip()
+        else:
+            bbox, text = b
+            y0, x0 = bbox[1], bbox[0]
+            text = text.strip()
+        if text:
+            normalized_items.append((y0, x0, text))
+
+    # Sort primarily top-to-bottom, secondarily left-to-right
+    normalized_items.sort(key=lambda item: (item[0], item[1]))
+
+    return "\n\n".join(item[2] for item in normalized_items)
+

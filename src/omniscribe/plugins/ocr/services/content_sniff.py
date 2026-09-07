@@ -30,6 +30,10 @@ _CONTENT_TYPE_TO_SUFFIX: dict[str, str] = {
     "image/tiff": ".tiff",
     "image/bmp": ".bmp",
     "image/gif": ".gif",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
+    "text/html": ".html",
+    "text/markdown": ".md",
+    "text/x-markdown": ".md",
 }
 
 
@@ -39,6 +43,14 @@ def guess_suffix(filename: str, content_type: str | None = None) -> str:
     Prefers the extension from ``filename`` if present. For
     extensionless uploads, inspects ``content_type`` (MIME type
     sniffing) before falling back to ``.pdf``.
+
+    Fallback semantics (smell 6.81):
+        When ``filename`` has no extension (e.g. ``"upload"`` or ``""``) and
+        ``content_type`` is missing, unrecognized, generic
+        (``application/octet-stream``, ``binary/octet-stream``), or resolves
+        to ``.bin``, this function deliberately falls back to ``.pdf``.
+        This default assumes incoming document uploads are PDFs unless
+        indicated otherwise, matching the primary OCR ingest format.
     """
     suffix = Path(filename).suffix
     if suffix:
