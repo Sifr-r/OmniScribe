@@ -11,8 +11,25 @@ All completed items (audit-remediation sprints 1–6, Phase C plugin slices 1–
 - **v0.3.0 shipped** (2026-09-06, `6f43d30`): the 307 MB single-binary
   Windows bundle boots and serves `/api/health -> 200`; the release is
   tagged and the changelog updated. RFC 002 Sprints 1–2 are complete.
-- **Next up (per RFC 002):** Sprint 3 — U12 "try with sample PDF"
-  (FastAPI `/api/sample-pdf/{name}` + Flutter Workstation button).
+- **Sprint 3 — U12 "try with sample PDF"** ✅ (closed 2026-09-07).
+  New `omniscribe.plugins.sample_pdfs` Cordis plugin serves a
+  fixed allowlist of 5 canonical fixture PDFs at
+  `GET /api/sample-pdf/{name}`. Path traversal is a structural
+  impossibility (user input never joins a filesystem path);
+  the path is auth-exempt so the Profile 1 loopback Flutter
+  client can hit it without a token. The Flutter Workstation
+  empty-state header now has a "Try sample PDF" `AppButton`
+  that fetches the default fixture and stages the bytes as
+  the active document so the existing Run OCR flow takes
+  over. 24 new tests across pytest (15) and Flutter (9).
+  Bundle rebuild landed at 522 MB (was 307 MB at the v0.3.0
+  cut) — `collect_submodules` drift across PyInstaller runs
+  pulled in extra transitive deps; the size is functional
+  but worth a Sprint 4 trim pass.
+- **Next up (per RFC 002):** Sprint 4 — buffer / spillover
+  (trim the bundle, re-upload the new binary vs cut v0.3.1,
+  Redis state backend if Profile 4 in flight, Q11 chaos test
+  first slice, additional mypy strict, or clean cut).
 - **Finetunement remediation wave (2026-09-06):** four-domain polish
   audit (core / harness+plugins / Flutter client / repo hygiene) executed
   in one pass — SQLite `started_at` persistence, upload-cap fallback,
