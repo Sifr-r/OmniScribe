@@ -1,35 +1,40 @@
 # OmniScribe — Outstanding Work
 
 **Consolidated:** 2026-08-31  
-**Updated:** 2026-09-06 (v0.3.0 shipped at `6f43d30`; finetunement remediation wave — see §7 status map)  
-**Sources:** `docs/audits/2026-08-30-pedantic-review.md`, the deferred Medium/Low backlog of the 2026-08-29 five-domain audit, the 2026-09-04 [Five-Lens Audit](audits/2026-09-04-five-lens-audit.md) and [Remediation Plan](audits/2026-09-04-remediation-plan.md), the 2026-09-06 [v0.3.0 RFC 002](rfcs/2026-09-v0.3.0-scope.md), and Phase C follow-ups.
+**Updated:** 2026-09-07 (v0.3.0 + Sprints 1–4 all closed; see Handoff section for open follow-ups)  
+**Sources:** `docs/audits/2026-08-30-pedantic-review.md`, the deferred Medium/Low backlog of the 2026-08-29 five-domain audit, the 2026-09-04 [Five-Lens Audit](audits/2026-09-04-five-lens-audit.md) and [Remediation Plan](audits/2026-09-04-remediation-plan.md), the 2026-09-06 [v0.3.0 RFC 002](rfcs/2026-09-v0.3.0-scope.md), the 2026-09-07 [RFC 003 — Redis state backend](rfcs/2026-09-redis-state-backend.md), and Phase C follow-ups.
 
 All completed items (audit-remediation sprints 1–6, Phase C plugin slices 1–3, and Waves 1–14) have been closed and verified. Historical records are preserved in git history (`git log --grep="Wave"`).
 
-## Current focus (2026-09-06)
+## Current focus (2026-09-07)
 
-- **v0.3.0 shipped** (2026-09-06, `6f43d30`): the 307 MB single-binary
-  Windows bundle boots and serves `/api/health -> 200`; the release is
-  tagged and the changelog updated. RFC 002 Sprints 1–2 are complete.
-- **Sprint 3 — U12 "try with sample PDF"** ✅ (closed 2026-09-07).
-  New `omniscribe.plugins.sample_pdfs` Cordis plugin serves a
-  fixed allowlist of 5 canonical fixture PDFs at
-  `GET /api/sample-pdf/{name}`. Path traversal is a structural
-  impossibility (user input never joins a filesystem path);
-  the path is auth-exempt so the Profile 1 loopback Flutter
-  client can hit it without a token. The Flutter Workstation
-  empty-state header now has a "Try sample PDF" `AppButton`
-  that fetches the default fixture and stages the bytes as
-  the active document so the existing Run OCR flow takes
-  over. 24 new tests across pytest (15) and Flutter (9).
-  Bundle rebuild landed at 522 MB (was 307 MB at the v0.3.0
-  cut) — `collect_submodules` drift across PyInstaller runs
-  pulled in extra transitive deps; the size is functional
-  but worth a Sprint 4 trim pass.
-- **Next up (per RFC 002):** Sprint 4 — buffer / spillover
-  (trim the bundle, re-upload the new binary vs cut v0.3.1,
-  Redis state backend if Profile 4 in flight, Q11 chaos test
-  first slice, additional mypy strict, or clean cut).
+- **v0.3.0 + Sprints 1–4 shipped** (2026-09-06 → 2026-09-07, commits
+  `79fea9f` → `6f43d30` → `4db3569` → `a8c3801` → `3846e93` →
+  `582a32c` → `2350e16`). The single-binary Windows distribution is
+  the headline (Sprint 1: 5-line spec fix unblocked the bundle
+  that the 14 prior attempts missed; Sprint 2: v0.3.0 release
+  shipped; Sprint 3: U12 sample-PDF affordance for first-run
+  users; Sprint 4 diagnostic: `--check_imports` flag confirmed
+  the bundle is healthy; Sprint 4 release: 522 MB binary
+  re-uploaded to the v0.3.0 GitHub release; Sprint 4 work:
+  RFC 003 Redis state backend ships).
+- **The 522 MB v0.3.0 binary on the GitHub release** includes
+  the Sprint 1 fixes (anyio / fastapi / pydantic_settings /
+  scipy EXCLUDES + collect_submodules), the Sprint 3
+  sample_pdfs plugin + 5 fixtures, the Sprint 4
+  `--check_imports` flag, and (transitively) the new Redis
+  plugin via `collect_submodules("omniscribe")`. The 215 MB
+  growth from v0.3.0's 307 MB to 522 MB is from the
+  LLM-remediation wave's `lancedb + pyarrow + duckdb` runtime
+  deps, not a regression.
+- **RFC 002** (v0.3.0 scope, 4 sprints) is fully closed.
+  The buffer/spillover question (re-upload vs v0.3.1, Q11
+  chaos, mypy strict, clean cut) was resolved by picking
+  Redis state backend as Sprint 4's actual work, per user
+  confirmation.
+- **RFC 003** (Redis state backend) is fully closed in
+  code. The 3 open deployment-shape questions in §12 are
+  handoff items, not code work.
 - **Finetunement remediation wave (2026-09-06):** four-domain polish
   audit (core / harness+plugins / Flutter client / repo hygiene) executed
   in one pass — SQLite `started_at` persistence, upload-cap fallback,
@@ -51,6 +56,125 @@ All completed items (audit-remediation sprints 1–6, Phase C plugin slices 1–
   hardening with structured drop events, correction-pass fallback, and
   the §6.55 PROMPT_VERSION split) are complete and green. Subsystem 3
   (this doc + ARCHITECTURE.md refresh) closes the wave.
+
+---
+
+## Handoff — open items as of 2026-09-07
+
+The 2026-09-04 five-lens audit remediation is fully closed
+(Phases 0–3, 5, 6) and the v0.3.0 release ships the single-binary
+Windows distribution (RFC 002 Sprints 1–4 all closed). The items
+below are **post-remediation follow-ups** that the next maintainer
+should pick up; none is urgent.
+
+### 1. v0.3.0 GitHub release: re-upload vs v0.3.1 cut
+
+- The v0.3.0 release page currently has the 522 MB binary
+  (re-uploaded at Sprint 4). That binary includes the Sprint 1
+  spec fixes, the Sprint 3 sample_pdfs plugin + fixtures, the
+  Sprint 4 `--check_imports` flag, and (transitively) the
+  Sprint 4 Redis plugin via `collect_submodules("omniscribe")`.
+- The Redis plugin + RFC 003 are *not* mentioned in the
+  v0.3.0 release notes. The Redis work landed in commit
+  `2350e16` (2026-09-07) after the v0.3.0 cut.
+- Two clean follow-up paths: (a) re-upload the binary and add a
+  "what's new since 6f43d30" section to the release notes, or
+  (b) cut v0.3.1 with the Redis work as the headline.
+- **Decision pending.** The end-user-facing install path is
+  unchanged either way (`OMNISCRIBE_STATE_BACKEND=redis` is opt-in).
+
+### 2. Profile 4 deployment-shape questions (RFC 003 §12)
+
+Three deployment-shape decisions block the maintainer-run
+end-to-end smoke (`scripts/dev_redis_smoke.py`) against a real
+Redis. These are **deployment-time** decisions, not code work:
+
+- **Profile 4 scale.** How many workers? How many jobs/sec?
+  Affects whether a single Redis is enough or if Cluster is
+  needed. If Cluster: the data model is already cluster-safe
+  (all keys are namespaced; no cross-key transactions are used
+  except `consume_channel`, which is single-key atomic).
+- **Migration path from sqlite.** If there's an existing
+  Profile 4 deployment on sqlite that needs to migrate to
+  redis without losing job history — do you want a
+  `sqlite-to-redis` migration tool, or is "delete the sqlite
+  file and start fresh" OK?
+- **Auth.** `REDIS_URL=redis://:password@host:port/db` already
+  works (password is redacted in the boot log via
+  `_redact_redis_url`). Do you need TLS (`rediss://`)? If
+  yes: add a `redis_tls` config knob + `ssl=True` on
+  `from_url`; surface in `ALLOWED_BACKENDS` and the schema.
+
+### 3. Bundle size optimization (Sprint 4 trim, deferred)
+
+- The 522 MB binary is the new floor with the LLM-remediation
+  features bundled. Two safe trims were identified in the
+  Sprint 4 investigation:
+  - **Strip unused `transformers\models\*_ocr*` submodules**
+    (deepseek_ocr2, glm_ocr, got_ocr2, lighton_ocr, paddleocr_vl,
+    pp_ocrv5_mobile_*) — OmniScribe doesn't use these. Estimated
+    saving: ~30–50 MB.
+  - **Strip unused `transformers\quantizers\*.py` submodules**
+    (aqlm, auto_round, awq, bnb, compressed_tensors, eetq,
+    fbgemm, fp8, gptq, hqq, mxfp4, etc.) — OmniScribe doesn't
+    quantize. Estimated saving: ~10–20 MB.
+- **NOT possible to trim back to 310 MB** without removing
+  lancedb+pyarrow+duckdb, which are required runtime deps
+  for the LLM-remediation features (RRF hybrid lexicon search,
+  LanceDBLexiconStore, etc.). The 307 MB v0.3.0 binary was a
+  pre-LLM-remediation snapshot.
+
+### 4. Q11 / Q12 / Q13 / U12 — multi-day test hardening (RFC 002 §5)
+
+Deferred from RFC 002 Sprint 4 (the user picked Redis instead).
+Multi-day work; not urgent. Each is a separate workstream.
+
+- **Q11 chaos / fault-injection tests.** Kill the workers
+  mid-job, restart with a stale connection, exercise
+  JobQueue's error path. Lays the foundation for
+  production-grade reliability tests.
+- **Q12 Flutter `integration_test/` against a real running
+  server.** Multi-day; Flutter-side.
+- **Q13 Flutter widget test balance.** Multi-day; Flutter-side.
+- **U12 follow-ups.** The Sprint 3 sample-PDF affordance
+  closes the audit finding; remaining U12 work would be
+  adding more canonical fixtures (e.g. an Arabic sample
+  PDF for the multilingual path) or wiring the
+  "Try sample" button into the in-app first-run tutorial.
+
+### 5. Bundle rebuild for consistency (low priority)
+
+The 522 MB v0.3.0 binary on the GitHub release was built
+*before* the Redis plugin was added. The Redis plugin will
+be picked up by the existing `collect_submodules("omniscribe")`
+when the bundle is rebuilt, but no rebuild is needed for
+correctness. A rebuild is a consistency check, not a
+correctness fix.
+
+### 6. CHANGELOG cross-link: outstanding-work ↔ CHANGELOG
+
+The v0.3.0 [Unreleased] section in `docs/CHANGELOG.md` was
+updated to note the Redis backend ships. The
+`[0.3.0] — 2026-09-06` section was written before the
+Sprint 3 / Sprint 4 work, so it doesn't mention them. If
+the maintainer chooses Option (a) "re-upload + add a
+'what's new' section" above, the v0.3.0 release notes
+need a follow-up edit too.
+
+### 7. Files in tree, not yet executed
+
+These are committed but require external setup to run end-to-end:
+
+- `scripts/dev_redis_smoke.py` — maintainer-run recipe against
+  a real Redis. Requires `redis-server` locally; not in CI.
+- `repro/` — the Sprint 1 anyio-bundling minimal reproducer;
+  useful as a regression test if anyio bundling breaks again.
+
+---
+
+*End of handoff. The remaining open items are all
+**deployment-shape** or **follow-up** decisions, not code work.
+The 2026-09-04 five-lens audit remediation is fully closed.*
 
 ---
 
