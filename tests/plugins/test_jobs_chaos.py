@@ -505,7 +505,9 @@ async def test_redis_worker_crash_visibility_recovery_chaos() -> None:
     - Zero data loss across concurrent worker failures.
     """
     from dataclasses import replace
+
     import fakeredis.aioredis
+
     from omniscribe.plugins.jobs_redis import RedisJobQueue
     from omniscribe.plugins.state_backend_redis import RedisStateBackend
     from omniscribe.plugins.state_backend_types import StateBackend

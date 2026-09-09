@@ -16,7 +16,6 @@ import asyncio
 import json
 import time
 from collections.abc import AsyncIterator
-from dataclasses import dataclass
 from typing import Any
 
 import fakeredis.aioredis
@@ -24,33 +23,26 @@ import pytest
 
 from omniscribe.harness.context import Context
 from omniscribe.plugins import artifacts as art_plugin
-from omniscribe.plugins import jobs, progress
 from omniscribe.plugins.artifacts import ArtifactStore
 from omniscribe.plugins.jobs import (
-    JobCancelled,
-    JobCompleted,
-    JobFailed,
     JobHandle,
     JobOutcome,
     JobQueue,
-    JobQueued,
     JobRunner,
-    JobStarted,
 )
 from omniscribe.plugins.jobs_redis import (
     KEY_ACTIVE,
-    KEY_CANCELLED_SET,
     KEY_HEARTBEAT_PREFIX,
-    KEY_PAYLOAD_PREFIX,
     KEY_QUEUE,
     RedisJobQueue,
-    deserialize_payload,
-    serialize_payload,
 )
-from omniscribe.plugins.progress import ProgressFrame, ProgressService, ProgressServiceImpl
+from omniscribe.plugins.progress import (
+    ProgressService,
+    ProgressServiceImpl,
+)
 from omniscribe.plugins.state_backend_redis import RedisStateBackend
-from omniscribe.plugins.state_backend_types import JobRecord, StateBackend
-from omniscribe.worker import _execute_job, _resolve_runner
+from omniscribe.plugins.state_backend_types import StateBackend
+from omniscribe.worker import _execute_job
 
 
 @pytest.fixture
@@ -115,7 +107,6 @@ async def harness(fake_redis: fakeredis.aioredis.FakeRedis) -> AsyncIterator[dic
 
 async def test_job_queue_submit_and_status(harness: dict[str, Any]) -> None:
     queue: RedisJobQueue = harness["queue"]
-    backend: StateBackend = harness["backend"]
 
     payload = {"task": "ocr", "page": 1}
     meta = {"filename": "doc.pdf", "user": "alice"}
@@ -278,7 +269,7 @@ async def test_multi_worker_race_condition(harness: dict[str, Any]) -> None:
 
     # Aggregate all claimed jobs
     all_claimed: list[str] = []
-    for w, jids in claimed_by_worker.items():
+    for _w, jids in claimed_by_worker.items():
         all_claimed.extend(jids)
 
     # Invariants:
@@ -443,7 +434,7 @@ async def test_full_worker_execution_flow(harness: dict[str, Any]) -> None:
 
     ctx.service(JobRunner, sample_runner)
 
-    handle = await queue.submit({"filename": "invoice.pdf"})
+    await queue.submit({"filename": "invoice.pdf"})
     claim = await queue.claim()
     assert claim is not None
     job_id, payload = claim
@@ -464,6 +455,7 @@ async def test_full_worker_execution_flow(harness: dict[str, Any]) -> None:
 
 async def test_standalone_worker_runner_graceful_drain(harness: dict[str, Any]) -> None:
     import contextlib
+
     from omniscribe.worker import run_worker
 
     ctx: Context = harness["ctx"]

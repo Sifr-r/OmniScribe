@@ -241,7 +241,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: subosito/flutter-action@f2c4f66bbda70cf87885ea0c6f16d8d40b5250c0 # v2.18.0
+      - uses: subosito/flutter-action@f2c4f6686ca8e8d6e6d0f28410eeef506ed66aff # v2.18.0
         with:
           channel: stable
           cache: true

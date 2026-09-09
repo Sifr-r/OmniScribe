@@ -2,15 +2,14 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock
 
 import httpx
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-
-from pathlib import Path
-import pytest
 
 from omniscribe.config import load_settings
 from omniscribe.harness.context import Context

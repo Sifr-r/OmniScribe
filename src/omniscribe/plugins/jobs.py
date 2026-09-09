@@ -445,6 +445,7 @@ class JobsPlugin(Plugin):
         artifacts = ctx.inject(ArtifactStore)
         if mode == "redis":
             from omniscribe.config import load_settings
+
             from .jobs_redis import RedisJobQueue
 
             settings = load_settings()

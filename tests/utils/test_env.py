@@ -136,6 +136,7 @@ def test_persist_env_key_all_exported() -> None:
 
 def test_persist_env_key_new_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     import dotenv
+
     from omniscribe.utils.env import persist_env_key
 
     monkeypatch.chdir(tmp_path)
@@ -156,6 +157,7 @@ def test_persist_env_key_updates_existing_key(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     import dotenv
+
     from omniscribe.utils.env import persist_env_key
 
     monkeypatch.chdir(tmp_path)
@@ -175,7 +177,9 @@ def test_persist_env_key_error_handling(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     import logging
+
     import dotenv
+
     from omniscribe.utils.env import persist_env_key
 
     monkeypatch.chdir(tmp_path)
@@ -196,6 +200,7 @@ def test_persist_env_key_boundary_validation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     import logging
+
     from omniscribe.utils.env import persist_env_key
 
     monkeypatch.chdir(tmp_path)
