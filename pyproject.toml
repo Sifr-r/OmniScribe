@@ -212,6 +212,7 @@ dev = [
 # drops the upper pin; bump this in lockstep.
 override-dependencies = [
     "pillow>=11.3",
+    "httpx2>=2.12.0",  # CVE-2026-84378/9/80/1/2 (Trivy 0.69.3). langsmith's `httpx2<3,>=2` allows this.
 ]
 
 [tool.pytest.ini_options]
