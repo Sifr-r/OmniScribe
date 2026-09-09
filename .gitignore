@@ -266,4 +266,12 @@ redis-password.txt
 /temp_*.png
 /scratch_*.png
 
+# Bundle-build log output left at the repo root by repeated `make
+# bundle-smoke` runs. The 5 files matching these patterns (~1.1 MB
+# total, untracked, identical in shape) are noise; future runs
+# accumulate the same way.
+/build_*.log
+/build_check*.log
+/build_sprint*.log
+
 
