@@ -44,19 +44,50 @@ class TestResolveProviderConfig:
         assert resolved.id == "ollama-local"
         assert resolved.format == ProviderFormatEnum.OLLAMA_COMPATIBLE
 
-    def test_api_base_builds_openai_compatible_config(self) -> None:
+    def test_api_base_builds_inferred_lmstudio_config(self) -> None:
         resolved = _resolve_provider_config(
             provider_config=None,
             api_base="http://localhost:1234/v1",
             api_key="secret-key",
             model="qwen2.5-vl-7b",
         )
-        assert resolved.id == "custom"
-        assert resolved.display_name == "Custom"
+        assert resolved.id == "lmstudio"
+        assert resolved.display_name == "LM Studio"
         assert resolved.format == ProviderFormatEnum.OPENAI_COMPATIBLE
         assert resolved.api_url == "http://localhost:1234/v1"
         assert resolved.api_key == "secret-key"
         assert resolved.models == ["qwen2.5-vl-7b"]
+
+    @pytest.mark.parametrize(
+        "api_base,expected_id,expected_name,expected_fmt",
+        [
+            ("http://localhost:1234/v1", "lmstudio", "LM Studio", ProviderFormatEnum.OPENAI_COMPATIBLE),
+            ("http://localhost:11434", "ollama", "Ollama", ProviderFormatEnum.OLLAMA_COMPATIBLE),
+            ("https://api.anthropic.com/v1", "anthropic", "Anthropic", ProviderFormatEnum.ANTHROPIC_COMPATIBLE),
+            ("https://api.openai.com/v1", "openai", "OpenAI", ProviderFormatEnum.OPENAI_COMPATIBLE),
+            ("https://openrouter.ai/api/v1", "openrouter", "OpenRouter", ProviderFormatEnum.OPENAI_COMPATIBLE),
+            ("https://api.groq.com/openai/v1", "groq", "Groq", ProviderFormatEnum.OPENAI_COMPATIBLE),
+            ("https://api.deepseek.com", "deepseek", "DeepSeek", ProviderFormatEnum.OPENAI_COMPATIBLE),
+            ("http://10.0.0.1:8000/v1", "custom", "Custom", ProviderFormatEnum.OPENAI_COMPATIBLE),
+        ],
+    )
+    def test_api_base_inference(
+        self,
+        api_base: str,
+        expected_id: str,
+        expected_name: str,
+        expected_fmt: ProviderFormatEnum,
+    ) -> None:
+        resolved = _resolve_provider_config(
+            provider_config=None,
+            api_base=api_base,
+            api_key="test-key",
+            model="test-model",
+        )
+        assert resolved.id == expected_id
+        assert resolved.display_name == expected_name
+        assert resolved.format == expected_fmt
+        assert resolved.api_url == api_base
 
     def test_api_base_without_model_produces_empty_models_list(self) -> None:
         resolved = _resolve_provider_config(

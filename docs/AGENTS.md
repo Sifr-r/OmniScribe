@@ -70,7 +70,7 @@ Source directories are split into **core** (OCR pipeline and API surface) and **
 | --- | --- |
 | `src/omniscribe/core/` | OCR engines, alignment, PDF/image handling, document model, workflows, processors, translation, grounded backends, OCR quality trust layer |
 | `src/omniscribe/harness/` | Cordis-style plugin harness: Context (services/events/effects/router queue), Loader (YAML + patches + env overrides), Plugin base |
-| `src/omniscribe/plugins/` | The thirteen boot plugins (runtime, logging, state_backend, artifacts, jobs, progress, providers, health, documents, translate, transcribe, glossary, ocr) and their Protocol seams |
+| `src/omniscribe/plugins/` | The fourteen boot plugins (runtime, logging, state_backend, artifacts, jobs, progress, providers, health, documents, translate, transcribe, glossary, ocr, sample_pdfs) and their Protocol seams |
 | `src/omniscribe/pipeline.py` | `OCRPipeline` facade |
 | `src/omniscribe/server.py` | FastAPI app entry point |
 | `src/omniscribe/config.py` | Runtime settings |
@@ -172,7 +172,7 @@ PDF/image -> grounded bbox-native VLM -> post-process -> DocumentResult -> optio
 | `src/omniscribe/core/ocr/` | OpenAI/Anthropic/Ollama multi-format client, prompts, limits, filters, and resilience (retry + circuit breaker) |
 | `src/omniscribe/core/ocr_quality/` | OCR Quality Trust Layer (watermark, script detector, hallucination guard, Platt scaling calibration, trust scorer, orchestrator) |
 | `src/omniscribe/core/transcription/` | Speech-to-text audio transcription engines (local & OpenAI-compatible API backends) |
-| `src/omniscribe/core/lexicon/` | LanceDB-backed canonical glossary / translation lexicon store (Protocol + LanceDB impl + embedding wrapper + helper queries + one-shot migration core). See `docs/lexicon-migration-spec.md`. |
+| `src/omniscribe/core/lexicon/` | LanceDB-backed canonical glossary / translation lexicon store (Protocol + LanceDB impl + embedding wrapper + helper queries + one-shot migration core) |
 | `src/omniscribe/core/glossary_sources/` | Glossary import parsers (TBX, CSV, JSON, URL, SQL, Git, TMX, XLIFF) |
 | `src/omniscribe/core/ocr/resilience.py` | `is_transient_error` classification, `CircuitBreaker` (closed/open/half-open), `CircuitOpenError` |
 | `src/omniscribe/core/pdf/` | PDF/image rasterization (`rasterizer.py`), sandwich PDF embedding (`embedder.py`), and `PDFHandler` facade (`handler.py`) |
@@ -191,10 +191,10 @@ PDF/image -> grounded bbox-native VLM -> post-process -> DocumentResult -> optio
 | `src/omniscribe/harness/context.py` | Harness `Context`: Protocol-keyed services, LIFO effect disposal, event subscriptions, `mount_router`/`routes()` |
 | `src/omniscribe/harness/loader.py` | `Loader(ctx).load(base, patch_paths=())` — parses `cordis.yml` plugin rows, deep-merges patches, applies `OMNISCRIBE_PLUGIN_<ID>__<FIELD>` env overrides, fails loud via `PluginLoadError` |
 | `src/omniscribe/harness/plugin.py` | `Plugin` base class (id, `Schema` ClassVar, config dict, `apply`/`dispose`) |
-| `src/omniscribe/resources/cordis.yml` | Shipped thirteen-plugin boot tree; operator patches layer via `OMNISCRIBE_CORDIS_PATCH` or `<artifact_dir>/cordis.patch.yml` |
+| `src/omniscribe/resources/cordis.yml` | Shipped fourteen-plugin boot tree; operator patches layer via `OMNISCRIBE_CORDIS_PATCH` or `<artifact_dir>/cordis.patch.yml` |
 | `src/omniscribe/plugins/runtime.py` | `RuntimeService` — settings holder, readiness flag, artifact/channel prune cadence |
 | `src/omniscribe/plugins/logging.py` | Structured logging setup (`format: text\|json`, `level`) applied at boot |
-| `src/omniscribe/plugins/state_backend.py` | `StateBackend` Protocol (artifacts + jobs + channels) + `MemoryStateBackend` (default) + `SQLiteStateBackend` (opt-in via `OMNISCRIBE_STATE_BACKEND=sqlite`); the single registration site for the backend service |
+| `src/omniscribe/plugins/state_backend.py` | `StateBackend` Protocol (artifacts + jobs + channels) + `SQLiteStateBackend` (default) + `MemoryStateBackend` (opt-in via `OMNISCRIBE_STATE_BACKEND=memory`); the single registration site for the backend service |
 | `src/omniscribe/plugins/artifacts.py` | `ArtifactStore` — opaque id/token blob store over the state backend |
 | `src/omniscribe/plugins/jobs.py` | `JobQueue` — single-worker async queue, job lifecycle events (`JobQueued`/`JobStarted`/`JobCompleted`/`JobFailed`/`JobCancelled`), `JobRunner` resolved at claim time |
 | `src/omniscribe/plugins/progress.py` | `ProgressService` — one-shot session tokens, WebSocket attach with cross-loop send marshaling, cancel mirror |
@@ -237,7 +237,7 @@ Unknown state backends or malformed rows fail boot loud (`PluginLoadError`).
 |---|---|---|---|
 | 1 | `runtime` | `plugins/runtime.py` | `RuntimeService` (settings, readiness, prune cadence) |
 | 2 | `logging` | `plugins/logging.py` | Structured logging side effect (no service) |
-| 3 | `state_backend` | `plugins/state_backend.py` | `StateBackend` (`memory` default, `sqlite` opt-in) — the only registration site |
+| 3 | `state_backend` | `plugins/state_backend.py` | `StateBackend` (`sqlite` default, `memory` opt-in) — the only registration site |
 | 4 | `artifacts` | `plugins/artifacts.py` | `ArtifactStore` over the state backend |
 | 5 | `jobs` | `plugins/jobs.py` | `JobQueue` + job lifecycle events; queue worker task |
 | 6 | `progress` | `plugins/progress.py` | `ProgressService` + `/api/progress/*` routes + `/ws/{channel_id}` |
@@ -248,18 +248,21 @@ Unknown state backends or malformed rows fail boot loud (`PluginLoadError`).
 | 11 | `transcribe` | `plugins/transcribe/` | `TranscriptionService`; `/api/transcribe`, `/api/config/transcription`, `/api/models/transcription` |
 | 12 | `glossary` | `plugins/glossary/` | `GlossaryImportService` + `GlossaryJobRunner`; `/api/glossary/import` (JSON + multipart), `/api/glossary/import/url` (query + JSON body), `/api/glossary/library{,/preview,/merged}`, `/library/{id}{,/enable,/entries}`, `/library/reorder` |
 | 13 | `ocr` | `plugins/ocr/` | `OCRService` + `JobRunner`, `/api/process*`, `/api/jobs*`, `/api/config*` |
+| 14 | `sample_pdfs` | `plugins/sample_pdfs.py` | Bundled sample PDF files for the in-UI "try with sample" affordance |
 
-**Deferred capabilities** (not yet rebuilt on the harness):
-the auth / rate-limit / upload-size ASGI middlewares, the Redis
-state backend, and formal model pre-flight API route (in-core pre-flight
-is implemented via `ensure_model_loaded()` in `core/ocr/processor.py`).
-Tracked in `docs/outstanding-work.md` §5.
+**Shipped since Phase C:** auth middleware (`middleware/auth.py`),
+rate-limit middleware (`middleware/rate_limit.py`), upload-size
+middleware (`middleware/upload_limit.py`), and Redis state backend
+(`plugins/state_backend_redis.py`). The only remaining deferred
+capability is a formal model pre-flight **public API route** (in-core
+pre-flight is implemented via `ensure_model_loaded()` in
+`core/ocr/processor.py`).
 
 **Phase C complete** (2026-08-31): all client-facing routes are rebuilt
 on the harness.
 
 **Testing.** `tests/conftest.py` ships three boot fixtures: `cordis_env`
-(temp thirteen-row tree, memory backend, small TTLs), `harness_ctx` (a loaded
+(temp fourteen-row tree, memory backend, small TTLs), `harness_ctx` (a loaded
 Context), and `api_client` (TestClient over `create_app()` — plugins boot
 inside lifespan on the portal loop that also serves the requests). Router
 contract tests live in `tests/routers/`, plugin unit tests in
@@ -287,35 +290,11 @@ contract tests live in `tests/routers/`, plugin unit tests in
 ## Known Tech Debt
 
 - `/api/process` runs the full OCR pipeline synchronously on the uvicorn worker (no background task queue on the default path); long jobs block other requests on the same worker. The async path ships already — `POST /api/process/async` returns `202 + job_id` immediately and the single-worker `JobQueue` (in `plugins/jobs.py`) drains jobs sequentially. The workstation UI's "Async processing" toggle lets users opt into the async path; the result PDF is fetched from `GET /api/jobs/{job_id}/result` once the job reaches `status: "complete"`. The **result token is delivered out-of-band** in the `job_completed` SSE event payload (mirrors the sync path's `X-Text-Artifact-Token` response header) — the polled `JobStatusResponse` exposes only the opaque `text_artifact_id`, never the token (audit C-3/H-3: keeps `GET /api/jobs/{job_id}/result` constant-time-checked without leaking a per-call bearer to the unauthenticated status endpoint). The queue stays single-worker — translation async rides the same harness JobQueue (the compose Celery worker service was retired); true multi-worker / crash-safe dispatch via Celery remains only a potential future option.
-- Job/artifact state is in-memory by default (`MemoryStateBackend`). Two opt-in persistent backends ship on the harness: `OMNISCRIBE_STATE_BACKEND=sqlite` (single-file, local-first; see `plugins/state_backend.py`; the WAL-mode file defaults to `<artifact_dir>/omniscribe-state.db`, override with `OMNISCRIBE_STATE_DB_PATH`) and `OMNISCRIBE_STATE_BACKEND=redis` paired with `REDIS_URL=redis://...` (Sprint 4 / RFC 003, multi-worker LAN; see `plugins/state_backend_redis.py`). Redis-side TTL is automatic; progress channels never persist on the memory or sqlite paths because they reference live WebSocket connections, and on the redis path the consume is one-shot and expires with the channel's TTL.
+- Job/artifact state defaults to SQLite (`SQLiteStateBackend`). An opt-in `MemoryStateBackend` is available via `OMNISCRIBE_STATE_BACKEND=memory`, and a Redis backend ships on the harness via `OMNISCRIBE_STATE_BACKEND=redis` paired with `REDIS_URL=redis://...` (Sprint 4 / RFC 003, multi-worker LAN; see `plugins/state_backend_redis.py`). The WAL-mode SQLite file defaults to `<artifact_dir>/omniscribe-state.db` (override with `OMNISCRIBE_STATE_DB_PATH`). Redis-side TTL is automatic; progress channels never persist on the memory or sqlite paths because they reference live WebSocket connections, and on the redis path the consume is one-shot and expires with the channel's TTL.
 - `pages_structured` legacy dict is still the working format inside `HybridEngine`; `DocumentResult` is built at finalize. The output boundary now supports the lossless rich path (`DocumentResultWriter`), but intermediate stages still convert.
 - `dense.pdf` and `notes.pdf` ground-truth fixtures are bootstrapped from hybrid output (regression baseline, not absolute quality).
 - `surya-ocr 0.17.x` used to import `requests` in `surya/common/s3.py` without declaring it; `pyproject.toml` shipped a `requests>=2.31` workaround dep. **Closed in audit-secondary Phase 5 (2026-08-19):** `surya-ocr ≥ 0.22` now declares `requests<3,>=2.28.0` in its own metadata, so the workaround is no longer required. `requests` has been removed from the base deps and moved to `[dependency-groups] dev` (it is only directly imported by `scripts/ingest_lexicon.py`, a dev-only ingestion helper).
 - **A11y regression coverage (F4.9, closed by Phase B).** The historical Playwright a11y spec covered the Svelte web workspace that Phase B deleted, so the F4.9 audit gap is effectively closed. **Forward guard:** any future web client (the current Flutter client lives in `client/`) must ship a11y regression tests on day one — `axe-playwright` (or the equivalent on the chosen stack) wired into the CI fast tier. The Phase 5d test `tests/scripts/test_tier_discipline.py::test_agents_md_documents_a11y_testing_gap` pins that this forward guard stays discoverable in AGENTS.md.
-
-## Product-Planning Notes (scout plans, not code)
-
-External scout plans live in `.mavis/plans/scout/`. The most recent
-plan (2026-06-14) has four tracks plus a synthesis plan:
-
-- `track-md.md` — Anything-to-Markdown / rich-text converter
-  landscape (29 players: Microsoft / Google / Adobe / Apple / OSS).
-  Headline finding: OSS has converged on three pipeline patterns
-  (local-only / local+VLM / VLM-only) with OmniScribe in the
-  defensible B-mode center; license posture (Marker's GPL+RAIL-M
-  $2M cap, PyMuPDF4LLM AGPL) is a real B2B wedge; Docling's
-  `StandardPdfPipeline` is the production reference for batch
-  multi-stage threaded PDF processing.
-- `track-schema-tables.md` — schema / table extraction landscape.
-- `track-ocr-vision.md` — AI OCR / VLM landscape.
-- `track-localdeepl.md` — internal architecture inventory.
-- `PLAN.md` — synthesis of all four tracks (recommendations by
-  extension point, sequenced roadmap).
-
-Per-track changelogs (project-specific findings that should
-survive into the post-scout roadmap) live in
-`.mavis/plans/scout/changelogs/`. Generic research patterns
-(fan-out, brief-correction) belong in agent memory, not here.
 
 ## See Also
 
@@ -325,4 +304,4 @@ survive into the post-scout roadmap) live in
 - [DEPLOYMENT.md](DEPLOYMENT.md) — local / LAN / public-internet deployment profiles
 - [SECURITY.md](SECURITY.md) — threat model, hardening checklist, vulnerability disclosure
 
-_Last updated: 2026-09-05_
+_Last updated: 2026-09-07_

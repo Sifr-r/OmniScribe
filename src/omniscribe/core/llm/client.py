@@ -39,10 +39,44 @@ def _resolve_provider_config(
     if provider_config is not None:
         return provider_config
     if api_base:
+        base = api_base.lower()
+        if ":1234" in base:
+            p_id = "lmstudio"
+            p_name = "LM Studio"
+            p_format = ProviderFormatEnum.OPENAI_COMPATIBLE
+        elif ":11434" in base:
+            p_id = "ollama"
+            p_name = "Ollama"
+            p_format = ProviderFormatEnum.OLLAMA_COMPATIBLE
+        elif "anthropic.com" in base:
+            p_id = "anthropic"
+            p_name = "Anthropic"
+            p_format = ProviderFormatEnum.ANTHROPIC_COMPATIBLE
+        elif "openai.com" in base:
+            p_id = "openai"
+            p_name = "OpenAI"
+            p_format = ProviderFormatEnum.OPENAI_COMPATIBLE
+        elif "openrouter.ai" in base:
+            p_id = "openrouter"
+            p_name = "OpenRouter"
+            p_format = ProviderFormatEnum.OPENAI_COMPATIBLE
+        elif "groq.com" in base:
+            p_id = "groq"
+            p_name = "Groq"
+            p_format = ProviderFormatEnum.OPENAI_COMPATIBLE
+        elif "deepseek.com" in base:
+            p_id = "deepseek"
+            p_name = "DeepSeek"
+            p_format = ProviderFormatEnum.OPENAI_COMPATIBLE
+        else:
+            p_id = "custom"
+            p_name = "Custom"
+            p_format = ProviderFormatEnum.OPENAI_COMPATIBLE
+
         return ProviderConfig(
-            id="custom",
-            display_name="Custom",
-            format=ProviderFormatEnum.OPENAI_COMPATIBLE,
+            id=p_id,
+            display_name=p_name,
+            format=p_format,
             api_url=api_base,
             api_key=api_key,
             models=[model] if model else [],

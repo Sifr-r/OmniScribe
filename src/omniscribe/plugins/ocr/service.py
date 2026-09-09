@@ -66,6 +66,7 @@ from omniscribe.plugins.ocr.services import (
 )
 from omniscribe.plugins.progress import ProgressFrame, ProgressService
 from omniscribe.plugins.state_backend import TERMINAL_JOB_STATUSES, JobRecord
+from omniscribe.utils.env import persist_env_key
 from omniscribe.utils.security import check_ssrf_target_sync
 
 _TERMINAL_QUEUE_STATUSES = TERMINAL_JOB_STATUSES
@@ -602,10 +603,16 @@ class OCRServiceImpl:
     # -- config store -------------------------------------------------------------
 
     def get_config(self) -> dict[str, Any]:
+        self._config["api_base"] = self._settings.llm_api_base
+        self._config["model"] = self._settings.llm_model
+        if self._settings.llm_api_key:
+            self._config["api_key"] = self._settings.llm_api_key
         cfg = dict(self._config)
-        key = str(cfg.get("api_key", "") or "")
+        key = str(self._settings.llm_api_key or cfg.get("api_key", "") or "")
         if key and key != "lm-studio":
             cfg["api_key"] = "******"
+        else:
+            cfg["api_key"] = key
         return cfg
 
     # -- preflight (audit 6.3) ----------------------------------------------------
@@ -790,10 +797,21 @@ class OCRServiceImpl:
         # and the providers plugin observe the same active provider.
         if "api_base" in changed_keys:
             self._settings.llm_api_base = str(self._config["api_base"])
+            persist_env_key("LLM_API_BASE", self._settings.llm_api_base)
         if "api_key" in changed_keys:
             self._settings.llm_api_key = str(self._config["api_key"])
+            persist_env_key("LLM_API_KEY", self._settings.llm_api_key)
         if "model" in changed_keys:
             self._settings.llm_model = str(self._config["model"])
+            persist_env_key("LLM_MODEL", self._settings.llm_model)
+        if "concurrency" in changed_keys:
+            persist_env_key("OCR_CONCURRENCY", str(self._config["concurrency"]))
+        if "dpi" in changed_keys:
+            persist_env_key("OCR_DPI", str(self._config["dpi"]))
+        if "dense_threshold" in changed_keys:
+            persist_env_key("OCR_DENSE_THRESHOLD", str(self._config["dense_threshold"]))
+        if "max_image_dim" in changed_keys:
+            persist_env_key("OCR_MAX_IMAGE_DIM", str(self._config["max_image_dim"]))
         return self.get_config()
 
     # -- SSE replay -----------------------------------------------------------------

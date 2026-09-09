@@ -2,9 +2,9 @@
 
 | Field | Value |
 | --- | --- |
-| **Author** | Mavis (synthesized from the 2026-09-04 [Five-Lens Audit](../audits/2026-09-04-five-lens-audit.md) and [Remediation Plan](../audits/2026-09-04-remediation-plan.md)) |
-| **Status** | **Accepted — source install as v0.2.0; PyInstaller bundle deferred to v0.3+** |
-| **Target** | v0.2.0 source install (live now); v0.3+ PyInstaller bundle (blocked on PyInstaller + anyio; see `docs/deployment/windows-bundle.md` §"Known build issue") |
+| **Author** | Mavis (synthesized from the 2026-09-04 [Five-Lens Audit](../audits/2026-09-04-five-lens-audit.md)) |
+| **Status** | **Accepted — source install as v0.2.0; PyInstaller bundle shipped in v0.3.0** |
+| **Target** | v0.2.0 source install (live); v0.3.0 PyInstaller bundle (shipped; see `docs/deployment/windows-bundle.md`) |
 | **Audit refs** | U2, U3, U4, U6, C2 |
 
 ## Problem
@@ -204,8 +204,7 @@ The previously-offered alternatives are now historical:
 ## Cross-references
 
 - [Five-Lens Audit §4.5 — End-User lens](../audits/2026-09-04-five-lens-audit.md#4-lens-findings-1)
-- [Remediation Plan §5 — Phase 4](../audits/2026-09-04-remediation-plan.md#phase-4--end-user-install-path-26-weeks-owner--desktop--devx)
 - [`docs/DEPLOYMENT.md`](../DEPLOYMENT.md) — the three deployment profiles; Option A only changes Profile 1.
 - [`docs/TROUBLESHOOTING.md`](../TROUBLESHOOTING.md) — install-step troubleshooting; needs a "the bundled server won't start" entry once A is in the wild.
 
-_Last updated: 2026-09-05_
+_Last updated: 2026-09-07_

@@ -1,10 +1,10 @@
 # OmniScribe on Windows — the bundled binary
 
 > **Status (2026-09-06): v0.3.0 SHIPS the single-binary Windows
-> distribution.** Sprint 1 of the [v0.3.0 RFC 002](../rfcs/2026-09-v0.3.0-scope.md)
-> identified the bundling failure as a local spec misclassification,
-> not an upstream PyInstaller bug. The fix was four lines in
-> `omniscribe_server.spec` + one force-import in
+> distribution.** Sprint 1 of the v0.3.0 RFC 002 (preserved in git
+> history) identified the bundling failure as a local spec
+> misclassification, not an upstream PyInstaller bug. The fix was four
+> lines in `omniscribe_server.spec` + one force-import in
 > `scripts/run_server.py`; the full 307 MB bundle now boots, serves
 > `/api/health -> 200`, `/api/jobs -> 200 []`, and `/openapi.json -> 200`
 > (45 KB) on a Windows 11 dev box. See the
@@ -21,7 +21,7 @@ the rest of the runtime stack. No Python install. No `uv`. No
 `PATH` wrangling. You download one file, double-click it, and a
 console window appears with the server log.
 
-> **Codesigning is intentionally out of scope for v0.2.0.** SmartScreen
+> **Codesigning is intentionally out of scope for v0.3.0.** SmartScreen
 > will show an "Unknown publisher" warning the first time you run
 > the binary. Click **More info** → **Run anyway** to proceed. The
 > warning is not a malware flag; it's a side effect of not paying
@@ -63,11 +63,11 @@ on `PATH`.
 
 ## What the binary contains
 
-The PyInstaller onefile bundle is roughly **1.0–1.5 GB** and
+The PyInstaller onefile bundle is roughly **307 MB** (v0.3.0) and
 includes:
 
 - Python 3.12 runtime
-- The full `omniscribe` package (server + plugin harness + 13
+- The full `omniscribe` package (server + plugin harness + 14
   plugins)
 - All runtime dependencies: `torch`, `torchvision`, `surya-ocr`,
   `pymupdf`, `pydantic`, `fastapi`, `uvicorn`, `httpx`, `redis`,
@@ -232,7 +232,6 @@ with `OMNISCRIBE_ARTIFACT_DIR` to put it anywhere.
 ## See also
 
 - [RFC 001 — End-User Install Path](../rfcs/2026-09-end-user-install.md) — the design discussion.
-- [Remediation Plan §Phase 4](../audits/2026-09-04-remediation-plan.md#phase-4--end-user-install-path-26-weeks-owner--desktop--devx) — the project plan.
 - [`scripts/build_windows.py`](../../scripts/build_windows.py) — the build orchestration.
 - [`omniscribe_server.spec`](../../omniscribe_server.spec) — the PyInstaller spec.
 - [`README.md`](../../README.md) — the product overview.

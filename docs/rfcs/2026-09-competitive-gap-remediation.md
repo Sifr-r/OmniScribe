@@ -5,7 +5,7 @@
 | **Author** | OmniScribe gap analysis session (2026-09-07), benchmarked vs Unstructured.io / Docling / MinerU / Marker |
 | **Status** | **Implemented** (2026-09-07) — closeout pending (see §10) |
 | **Target** | v0.3.1+ strategic roadmap |
-| **Refs** | RFC 003 (Redis state backend), `docs/audits/2026-09-04-remediation-plan.md` (audit remediation — distinct from this doc), `.mavis/plans/scout/PLAN.md` (extension-point synthesis) |
+| **Refs** | RFC 003 (Redis state backend), `docs/audits/2026-09-04-five-lens-audit.md` (audit remediation — distinct from this doc) |
 
 ## 1. Background
 
@@ -13,17 +13,24 @@ The 2026-09-07 gap analysis (vs Unstructured.io / Docling / MinerU / Marker) fou
 
 **Who is affected:** RAG builders evaluating OmniScribe against Unstructured/Docling (currently excluded by ingest + output), Profile 4 LAN deployers needing throughput, and the maintainer's positioning story.
 
-## 2. Current state (verified 2026-09-07)
+## 2. Pre-implementation state (as of 2026-09-07, before R1–R5)
 
-| Capability | State | Evidence |
+| Capability | State (before) | Evidence |
 | --- | --- | --- |
 | Ingest | PDF + 8 image MIMEs only | `plugins/ocr/services/content_sniff.py:23-62` |
 | Exports | DOCX, HTML, JSON block-tree, sandwich PDF — no markdown, no chunks | `core/writers/` (5 modules), `plugins/documents/routes.py:76-205` |
-| Chunking | None; `core/recall/` is OCR box recall, not text chunking; only splitter is the translate `_Chunker` | `core/recall/*`, `core/translate/workflow.py` |
-| Element taxonomy | `kind` + section metadata exist, but labels are not RAG-conventional | `core/document.py:43-56`, `core/processors/section.py:19` |
-| Scale | Single-worker in-process `JobQueue`; Redis state backend ships (RFC 003), workers do not scale horizontally | `plugins/jobs.py:1-5` |
+| Chunking | None; `core/recall/` is OCR box recall, not text chunking; only splitter was the translate `_Chunker` | `core/recall/*`, `core/translate/workflow.py` |
+| Element taxonomy | `kind` + section metadata exist, but labels were not RAG-conventional | `core/document.py:43-56`, `core/processors/section.py:19` |
+| Scale | Single-worker in-process `JobQueue`; Redis state backend ships (RFC 003), workers did not scale horizontally | `plugins/jobs.py:1-5` |
 | Benchmarks | Homegrown fixtures only; public datasets license-blocked (`slow_dataset` no-op) | `docs/outstanding-work.md` §6 |
 | Tables | VLM/processor output only; no dedicated table-structure model fallback | `core/processors/table.py:32` |
+
+**Post-implementation (2026-09-07):** All five workstreams (R1–R5) are
+implemented. Markdown writer + section-aware chunker (R1), digital-doc
+readers for DOCX/HTML/MD (R2), Redis multi-worker dispatch via
+`RedisJobQueue` (R3), `--score-markdown` benchmark metrics (R4), and
+`TableFallbackProcessor` (R5) all ship. See §4 for details and §10 for
+remaining closeout items.
 
 ## 3. Goals
 
@@ -107,8 +114,7 @@ Doc-only RFC. Each workstream is additive and opt-in (new routes/readers join th
 ## 9. Related
 
 - RFC 003 — Redis state backend (R3 builds on its key layout and `consume_channel` Lua pattern)
-- `docs/audits/2026-09-04-remediation-plan.md` — audit remediation (code-quality track, distinct from this competitive track)
-- `.mavis/plans/scout/PLAN.md` — extension-point synthesis this RFC operationalizes
+- `docs/audits/2026-09-04-five-lens-audit.md` — audit remediation (code-quality track, distinct from this competitive track)
 
 ## 10. Closeout status (2026-09-07 audit)
 

@@ -109,3 +109,120 @@ async def test_H1_validate_pins_resolved_ip() -> None:
 
     assert result.valid is True
     assert "url" in captured
+
+
+async def test_https_discover_models_uses_pinned_ip_transport() -> None:
+    """HTTPS endpoints must preserve host in URL and pin IP via _PinnedIPTransport."""
+    from omniscribe.plugins.providers_service import _PinnedIPTransport
+
+    manager = ProviderManagerImpl(_settings(), discovery_timeout_seconds=1.0)
+    fake_response = MagicMock()
+    fake_response.json.return_value = {"data": [{"id": "gpt-4o"}]}
+    fake_response.raise_for_status = MagicMock()
+
+    captured: dict[str, object] = {}
+
+    class _FakeClient:
+        def __init__(self, *a, **kw) -> None:
+            captured["client_kwargs"] = kw
+
+        async def get(self, url: str, headers=None):
+            captured["url"] = url
+            captured["headers"] = headers or {}
+            return fake_response
+
+        async def aclose(self) -> None:
+            pass
+
+    with (
+        patch(
+            "omniscribe.plugins.providers_service.is_ssrf_target",
+            new=AsyncMock(
+                return_value=MagicMock(
+                    allowed=True, resolved_ip="104.18.3.161", reason=None
+                )
+            ),
+        ),
+        patch("httpx.AsyncClient", _FakeClient),
+    ):
+        result = await manager.discover_models("openai", api_key="sk-test")
+
+    assert result == {"models": ["gpt-4o"], "error": None}
+    assert captured["url"] == "https://api.openai.com/v1/models"
+    client_kw = captured["client_kwargs"]
+    assert isinstance(client_kw, dict)
+    transport = client_kw.get("transport")
+    assert isinstance(transport, _PinnedIPTransport)
+
+
+async def test_https_validate_uses_pinned_ip_transport() -> None:
+    """HTTPS validation must use _PinnedIPTransport and return discovered models."""
+    from omniscribe.plugins.providers_service import _PinnedIPTransport
+
+    manager = ProviderManagerImpl(_settings(), discovery_timeout_seconds=1.0)
+    fake_response = MagicMock()
+    fake_response.json.return_value = {"data": [{"id": "gpt-4o"}, {"id": "gpt-4o-mini"}]}
+    fake_response.raise_for_status = MagicMock()
+
+    captured: dict[str, object] = {}
+
+    class _FakeClient:
+        def __init__(self, *a, **kw) -> None:
+            captured["client_kwargs"] = kw
+
+        async def get(self, url: str, headers=None):
+            captured["url"] = url
+            return fake_response
+
+        async def aclose(self) -> None:
+            pass
+
+    with (
+        patch(
+            "omniscribe.plugins.providers_service.is_ssrf_target",
+            new=AsyncMock(
+                return_value=MagicMock(
+                    allowed=True, resolved_ip="104.18.3.161", reason=None
+                )
+            ),
+        ),
+        patch("httpx.AsyncClient", _FakeClient),
+    ):
+        result = await manager.validate("openai", api_base="https://api.openai.com/v1", api_key="sk-test")
+
+    assert result.valid is True
+    assert result.model_count == 2
+    assert result.models == ["gpt-4o", "gpt-4o-mini"]
+    assert captured["url"] == "https://api.openai.com/v1/models"
+    client_kw = captured["client_kwargs"]
+    assert isinstance(client_kw, dict)
+    assert isinstance(client_kw.get("transport"), _PinnedIPTransport)
+
+
+async def test_pinned_network_backend_redirects_target_host() -> None:
+    """_PinnedNetworkBackend must rewrite host to resolved_ip only for matching host."""
+    from omniscribe.plugins.providers_service import _PinnedNetworkBackend
+
+    backend = _PinnedNetworkBackend("api.openai.com", "104.18.3.161")
+    backend._backend = AsyncMock()
+
+    # Target host match -> redirects to pinned IP
+    await backend.connect_tcp("api.openai.com", 443)
+    backend._backend.connect_tcp.assert_awaited_with(
+        "104.18.3.161", 443, timeout=None, local_address=None, socket_options=None
+    )
+
+    # Case-insensitive match -> redirects to pinned IP
+    backend._backend.reset_mock()
+    await backend.connect_tcp("API.OPENAI.COM", 443)
+    backend._backend.connect_tcp.assert_awaited_with(
+        "104.18.3.161", 443, timeout=None, local_address=None, socket_options=None
+    )
+
+    # Non-target host -> passes through unchanged
+    backend._backend.reset_mock()
+    await backend.connect_tcp("other.domain.com", 443)
+    backend._backend.connect_tcp.assert_awaited_with(
+        "other.domain.com", 443, timeout=None, local_address=None, socket_options=None
+    )
+

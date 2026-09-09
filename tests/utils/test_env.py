@@ -7,6 +7,8 @@ homegrown reimplementation was removed in the fat-trim PR.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 
@@ -123,3 +125,87 @@ def test_env_str_vs_env_list_csv_empty_semantics(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setenv("EMPTY_VAR", "   ")
     assert env_str("EMPTY_VAR") is None
     assert env_list_csv("EMPTY_VAR") == []
+
+
+def test_persist_env_key_all_exported() -> None:
+    import omniscribe.utils.env as env_mod
+
+    assert "persist_env_key" in env_mod.__all__
+    assert callable(env_mod.persist_env_key)
+
+
+def test_persist_env_key_new_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import dotenv
+    from omniscribe.utils.env import persist_env_key
+
+    monkeypatch.chdir(tmp_path)
+    env_file = tmp_path / ".env"
+    assert not env_file.exists()
+
+    persist_env_key("API_TOKEN", "secret123")
+    assert env_file.exists()
+    assert dotenv.get_key(str(env_file), "API_TOKEN") == "secret123"
+
+    # Append another key
+    persist_env_key("HOST", "localhost")
+    assert dotenv.get_key(str(env_file), "API_TOKEN") == "secret123"
+    assert dotenv.get_key(str(env_file), "HOST") == "localhost"
+
+
+def test_persist_env_key_updates_existing_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import dotenv
+    from omniscribe.utils.env import persist_env_key
+
+    monkeypatch.chdir(tmp_path)
+    env_file = tmp_path / ".env"
+    env_file.write_text("API_TOKEN=initial\nOTHER=keep_me\n", encoding="utf-8")
+
+    persist_env_key("API_TOKEN", "updated_secret")
+    assert dotenv.get_key(str(env_file), "API_TOKEN") == "updated_secret"
+    assert dotenv.get_key(str(env_file), "OTHER") == "keep_me"
+
+    # Idempotent write
+    persist_env_key("API_TOKEN", "updated_secret")
+    assert dotenv.get_key(str(env_file), "API_TOKEN") == "updated_secret"
+
+
+def test_persist_env_key_error_handling(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    import logging
+    import dotenv
+    from omniscribe.utils.env import persist_env_key
+
+    monkeypatch.chdir(tmp_path)
+
+    def _mock_set_key(*args: object, **kwargs: object) -> None:
+        raise OSError("Permission denied")
+
+    monkeypatch.setattr(dotenv, "set_key", _mock_set_key)
+
+    with caplog.at_level(logging.WARNING, logger="omniscribe.utils.env"):
+        # Must not raise an exception
+        persist_env_key("UNWRITABLE_KEY", "value")
+
+    assert "Failed to persist UNWRITABLE_KEY to .env: Permission denied" in caplog.text
+
+
+def test_persist_env_key_boundary_validation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    import logging
+    from omniscribe.utils.env import persist_env_key
+
+    monkeypatch.chdir(tmp_path)
+    env_file = tmp_path / ".env"
+
+    with caplog.at_level(logging.WARNING, logger="omniscribe.utils.env"):
+        persist_env_key("", "value")
+        persist_env_key("   ", "value")
+        persist_env_key(None, "value")  # type: ignore[arg-type]
+
+    assert not env_file.exists()
+    assert "Failed to persist" in caplog.text
+

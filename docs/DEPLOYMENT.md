@@ -6,20 +6,13 @@ use case.** The local-desktop default is correct for almost every
 user; only step up to LAN / public-internet when you actually need
 to.
 
-> **v0.2.0 install path (2026-09-05):** the supported end-user install
+> **Install path (updated 2026-09-07):** the supported end-user install
 > is the **source install** (Profile 1 below). The single-binary
-> Windows distribution per
+> Windows PyInstaller bundle per
 > [RFC 001 — End-User Install Path](rfcs/2026-09-end-user-install.md)
-> Option A is **deferred to v0.3+** (blocked on a PyInstaller + anyio
-> bundling issue; see
+> Option A **shipped in v0.3.0**; see
 > [`docs/deployment/windows-bundle.md`](deployment/windows-bundle.md)
-> §"Known build issue"). The bundle infrastructure
-> (`omniscribe_server.spec`, `scripts/build_windows.py`,
-> `scripts/run_server.py`) is kept in tree for the next maintainer
-> to pick up. The v0.2.0 user-facing improvement is the Phase 2
-> first-run affordances — `docs/TROUBLESHOOTING.md` (13 sections)
-> and `make doctor` remediation hints — not the install steps
-> themselves.
+> for build and distribution details.
 
 ## Profile 1: Local Desktop (Default)
 
@@ -101,7 +94,7 @@ omniscribe.example.com {
 }
 ```
 
-### docker-compose.yml
+### compose.yaml
 
 ```yaml
 services:
@@ -183,10 +176,9 @@ infrastructure. `/api/translate/async` dispatches tree-aware translation
 on the in-process harness JobQueue (single worker, `plugins/jobs.py`);
 poll `GET /api/translate/status/{job_id}` for the client status
 vocabulary. There is no Celery worker service and no `--profile async` —
-the compose stack is `api` + `redis` only. Redis stays in the stack for
-the `REDIS_URL` env-var contract (the api service still exports it; the
-Redis state backend that would consume it remains deferred in the
-harness rebuild).
+the compose stack is `api` + `redis` only. Redis serves double duty:
+as the optional `REDIS_URL` state backend (`OMNISCRIBE_STATE_BACKEND=redis`)
+and as a potential future multi-worker dispatch transport.
 
 ```bash
 uv sync --extra web --extra preprocessing --extra async-translation
@@ -285,4 +277,4 @@ Job artifacts in `/tmp/ocr_*` are removed by the startup sweep
 - [AGENTS.md](AGENTS.md) — contributor guide and full env-var
   reference
 
-_Last updated: 2026-09-05_
+_Last updated: 2026-09-07_

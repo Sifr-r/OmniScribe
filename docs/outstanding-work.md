@@ -2,7 +2,7 @@
 
 **Consolidated:** 2026-08-31  
 **Updated:** 2026-09-07 (open items only; smells fixed in the 2026-09-07 remediation pass are removed — full history via `git log -- docs/outstanding-work.md`)  
-**Sources:** `docs/audits/2026-08-30-pedantic-review.md`, the deferred Medium/Low backlog of the 2026-08-29 five-domain audit, the 2026-09-04 [Five-Lens Audit](audits/2026-09-04-five-lens-audit.md) and [Remediation Plan](audits/2026-09-04-remediation-plan.md), the 2026-09-06 [v0.3.0 RFC 002](rfcs/2026-09-v0.3.0-scope.md), the 2026-09-07 [RFC 003 — Redis state backend](rfcs/2026-09-redis-state-backend.md), and Phase C follow-ups.
+**Sources:** the deferred Medium/Low backlog of the 2026-08-29 five-domain audit, the 2026-09-04 [Five-Lens Audit](audits/2026-09-04-five-lens-audit.md), the 2026-09-07 [RFC 003 — Redis state backend](rfcs/2026-09-redis-state-backend.md), and Phase C follow-ups. Completed planning artifacts (remediation plan, RFC 002 scope) are preserved in git history.
 
 This file tracks **open work only**. All completed items (audit-remediation
 sprints 1–6, Phase C plugin slices 1–3, Waves 1–14, the finetunement and

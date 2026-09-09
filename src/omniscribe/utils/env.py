@@ -22,9 +22,11 @@ __all__ = [
     "env_list_csv",
     "env_str",
     "parse_bool",
+    "persist_env_key",
 ]
 
 logger = logging.getLogger(__name__)
+_LOGGER = logger
 
 ENABLE_STRINGS: Final[frozenset[str]] = frozenset(
     {"1", "true", "yes", "on", "y", "enabled"}
@@ -106,3 +108,25 @@ def env_list_csv(name: str) -> list[str]:
     if not raw:
         return []
     return [item.strip() for item in raw.split(",") if item.strip()]
+
+
+def persist_env_key(key: str, value: str) -> None:
+    """Persist key-value to .env in the project root safely."""
+    if not isinstance(key, str) or not key.strip():
+        _LOGGER.warning("Failed to persist %s to .env: key must be a non-empty string", key)
+        return
+
+    sanitized_key = key.strip()
+    sanitized_val = str(value) if not isinstance(value, str) else value
+    try:
+        from pathlib import Path
+
+        import dotenv
+
+        dotenv_path = Path(".env")
+        if not dotenv_path.exists():
+            dotenv_path.touch()
+        dotenv.set_key(str(dotenv_path), sanitized_key, sanitized_val)
+    except Exception as exc:
+        _LOGGER.warning("Failed to persist %s to .env: %s", sanitized_key, exc)
+

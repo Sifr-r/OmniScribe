@@ -172,3 +172,105 @@ def test_is_blocked_ip_reserved_and_cgnat(monkeypatch: pytest.MonkeyPatch) -> No
     assert is_blocked_host("240.0.0.1") is False
     # CGNAT stays blocked even when ALLOW_SSRF_LOCAL is true
     assert is_blocked_host("100.64.0.1") is True
+
+
+# ---------------------------------------------------------------------------
+# Pin-target selection for multi-address DNS results
+# ---------------------------------------------------------------------------
+
+
+def _dns_for(*addresses: str):
+    """Build a ``socket.getaddrinfo`` stub returning ``addresses`` in order."""
+    import ipaddress as _ip
+
+    def _resolve(host, port, *args, **kwargs):
+        return [
+            (
+                socket.AF_INET6 if _ip.ip_address(a).version == 6 else socket.AF_INET,
+                socket.SOCK_STREAM,
+                6,
+                "",
+                (a, 0, 0, 0) if _ip.ip_address(a).version == 6 else (a, 0),
+            )
+            for a in addresses
+        ]
+
+    return _resolve
+
+
+async def test_dual_stack_localhost_pins_ipv4(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``localhost`` must pin to 127.0.0.1, not the ::1 that Windows lists first.
+
+    Local model servers (LM Studio, Ollama) bind IPv4-only, so pinning the
+    TCP connection to the first address ``getaddrinfo`` returns made every
+    ``/api/providers/{id}/models`` discovery call fail with a connection
+    refusal on Windows.
+    """
+    monkeypatch.setenv("ALLOW_SSRF_LOCAL", "true")
+
+    with patch(
+        "omniscribe.utils.security.socket.getaddrinfo",
+        side_effect=_dns_for("::1", "127.0.0.1"),
+    ):
+        res = await is_ssrf_target("http://localhost:1234/v1/models")
+
+    assert res.allowed is True
+    assert res.resolved_ip == "127.0.0.1"
+
+
+async def test_ipv6_only_host_still_pins_ipv6(monkeypatch: pytest.MonkeyPatch) -> None:
+    """With no IPv4 candidate the guard must still return the IPv6 loopback."""
+    monkeypatch.setenv("ALLOW_SSRF_LOCAL", "true")
+
+    with patch(
+        "omniscribe.utils.security.socket.getaddrinfo",
+        side_effect=_dns_for("::1"),
+    ):
+        res = await is_ssrf_target("http://localhost:1234/v1/models")
+
+    assert res.allowed is True
+    assert res.resolved_ip == "::1"
+
+
+async def test_public_host_keeps_resolution_order() -> None:
+    """IPv4 preference must not reorder candidates for non-local hosts."""
+    with patch(
+        "omniscribe.utils.security.socket.getaddrinfo",
+        side_effect=_dns_for("104.18.3.161", "2606:2800:220:1:26:2ff:fe72:c9c0"),
+    ):
+        res = await is_ssrf_target("http://api.openai.com/v1")
+
+    assert res.allowed is True
+    assert res.resolved_ip == "104.18.3.161"
+
+
+async def test_metadata_in_multi_address_result_still_blocked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every resolved address is validated, not just the one that gets pinned."""
+    monkeypatch.setenv("ALLOW_SSRF_LOCAL", "true")
+
+    with patch(
+        "omniscribe.utils.security.socket.getaddrinfo",
+        side_effect=_dns_for("127.0.0.1", "169.254.169.254"),
+    ):
+        res = await is_ssrf_target("http://localhost:1234/v1/models")
+
+    assert res.allowed is False
+    assert res.resolved_ip is None
+
+
+async def test_dual_stack_loopback_names_blocked_without_local_opt_in(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A hostname resolving only to loopback stays rejected without opt-in."""
+    monkeypatch.setenv("ALLOW_SSRF_LOCAL", "false")
+
+    with patch(
+        "omniscribe.utils.security.socket.getaddrinfo",
+        side_effect=_dns_for("::1", "127.0.0.1"),
+    ):
+        res = await is_ssrf_target("http://my.local.dev:1234/v1/models")
+
+    assert res.allowed is False
+    assert res.reason == "resolved-blocked-ip"

@@ -3,7 +3,7 @@
 | Field | Value |
 | --- | --- |
 | **Author** | Mavis (Sprint 4 of v0.3.0 RFC 002) |
-| **Status** | **Implementation in progress** (2026-09-07) |
+| **Status** | **Implemented** (2026-09-07) |
 | **Target** | OmniScribe v0.3.1+ (Profile 4 multi-worker LAN deployment) |
 | **Audit refs** | §6 deferred capabilities, Phase 4 follow-up, D2-02 |
 

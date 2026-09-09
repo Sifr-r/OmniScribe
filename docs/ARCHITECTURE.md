@@ -176,6 +176,7 @@ Protocol (`ctx.inject(JobQueue)`), never by module singleton.
 | `src/omniscribe/utils/security.py` | SSRF target validation |
 | `src/omniscribe/utils/tqdm_patch.py` | Surya progress-bar suppression |
 | `src/omniscribe/utils/json_parse.py` | Robust extraction of first parseable JSON object or array from LLM/VLM text outputs using single-pass raw_decode |
+| `src/omniscribe/utils/env.py` | Typed environment-variable access helpers and robust atomic key persistence (`persist_env_key`) to `.env` |
 | `src/omniscribe/static/` | Static asset directory served by FastAPI |
 | `scripts/` | Repo-root developer utilities: confidence eval, fixture builder, debug/inspection scripts, bbox visualizers |
 | `examples/` | Sample PDFs and images used by `tests/` and the confidence scripts |
@@ -183,6 +184,7 @@ Protocol (`ctx.inject(JobQueue)`), never by module singleton.
 | `tests/middleware/test_rate_limit.py` | Unit tests for `RateLimitMiddleware` (limits, window expiration, IP isolation, exemptions) |
 | `tests/middleware/test_upload_limit.py` | Unit tests for `UploadSizeLimitMiddleware` (Content-Length limits, streaming chunk accumulation, exemptions, 413 responses) |
 | `tests/utils/test_json_parse.py` | Unit tests for `extract_json` utility |
+| `tests/utils/test_env.py` | Unit and boundary tests for typed environment variable parsing and `.env` file persistence (`persist_env_key`) |
 | `tests/core/llm/test_client.py` | Direct unit tests for `core/llm/client.py` (provider config resolution, prompt and image extraction, and VLM/LLM invocation) |
 | `tests/core/imaging/test_page_preprocess.py` | Unit tests for `PagePreprocessingOptions`, `PagePreprocessingResult`, and `CompositePagePreprocessor` (orientation, deskew, contrast, crop cleanup) |
 | `tests/core/ocr_quality/test_routing.py` | Unit tests for `QualityRoutingPolicy.apply` covering `empty_page`, `sparse_text`, and `empty_large_block` findings and decisions |
@@ -1105,6 +1107,7 @@ Comprehensive remediation across authentication, upload streaming, SSRF preventi
 | `src/omniscribe/plugins/ocr/service.py` | Enforce SSRF validation on user-supplied `api_base` in `preflight_check`; safely manage ephemeral client in model listing. |
 | `src/omniscribe/plugins/ocr/plugin.py` | Return HTTP 403 `ssrf_blocked` on blocked preflight requests; stream uploads in 1 MB chunks to bound memory against limits; enforce format sniffing on empty or octet-stream `Content-Type`. |
 | `src/omniscribe/plugins/glossary/http_fetch.py` | Replace process-wide `socket.getaddrinfo` mutation with an isolated `_PinnedNetworkBackend` (`httpcore.AsyncNetworkBackend`) and `_PinnedIPTransport`. |
+| `src/omniscribe/plugins/providers_service.py` | Pin TLS connections to SSRF-resolved IP using `_PinnedIPTransport` without breaking SNI/CA verification; auto-discover API keys from well-known environment variables and settings; support Anthropic `/v1/models` and `x-api-key` headers; return discovered `models` in `ValidateProviderResponse`. |
 | `src/omniscribe/core/workflows/utils.py` | Replace naive substring containment with token boundary word matching in `_drop_refined_duplicates` to prevent erroneous deletion of short tokens. |
 | `src/omniscribe/core/grounded/prompted.py` | Explicitly cancel uncompleted background tasks in `finally` before `asyncio.gather` in `PromptedGroundedOCR.ocr_document`. |
 | `src/omniscribe/core/ocr/processor.py` | Initialize `self.client = None` to avoid creating an unused `AsyncOpenAI` connection pool on each request. |
@@ -1299,8 +1302,49 @@ Implements Profile 4 Redis state backend tooling and documentation clarification
 | `tests/scripts/test_migrate_sqlite_to_redis.py` | Comprehensive test suite for SQLite-to-Redis migration covering full entity migration, dry-run safety, missing blob handling, non-existent database handling, CLI execution, and `RedisStateBackend` readability. |
 | `tests/plugins/test_state_backend_redis.py` | Tests verifying `redis_tls` flag, `rediss://` scheme automatic SSL activation, unencrypted default, and `RuntimeSettings.redis_tls` parsing. |
 
-## See Also
+### 2026-09-07: Provider Model Discovery, Persistence, and Workstation Synchronization
 
+Resolves provider model discovery across local runners (LM Studio / Ollama) and cloud providers (OpenAI, Anthropic, OpenRouter, Groq, DeepSeek), enables persistent configuration synchronization across server restarts, and fixes reactive workstation model selection:
+
+| File | Responsibility |
+| --- | --- |
+| `src/omniscribe/plugins/providers_service.py` | Implemented `_PinnedNetworkBackend` & `_PinnedIPTransport` using `httpcore.AsyncNetworkBackend` to pin TCP connection to SSRF-resolved IP while preserving original host for TLS SNI and certificate validation on HTTPS; added auto-discovery of provider API keys from environment variables; added Anthropic endpoint (`/v1/models`) and headers (`x-api-key`); returned discovered models in `ValidateProviderResponse`; persisted active provider settings to `.env`. |
+| `src/omniscribe/plugins/providers.py` | Mounted `@router.get("/active")` endpoint; injected shared `RuntimeSettings` from `RuntimeService` ensuring state synchronization with `OCRPlugin`. |
+| `src/omniscribe/plugins/ocr/service.py` | Synchronized `self._config` with `self._settings` in `get_config()`; persisted updated LLM coordinates to `.env` in `update_config()`. |
+| `src/omniscribe/config.py` | Configured `env_file=".env"` and `env_file_encoding="utf-8"` in `RuntimeSettings.model_config` to automatically load persisted environment settings on startup. |
+| `src/omniscribe/utils/env.py` | Added `persist_env_key` helper to safely write configuration keys to `.env` using `dotenv.set_key`. |
+| `client/lib/data/models/provider_preset.dart` | Updated `ValidateProviderResponse` with `models` list parsing and serialization. |
+| `client/lib/data/providers/provider_notifier.dart` | Forwarded `apiBase` and `apiKey` in `fetchModelsForProvider`; immediately updated `modelsMap` with discovered models in `validateProvider`. |
+| `client/lib/presentation/providers/provider_modal.dart` | Integrated discovered models into model selector; auto-selected discovered models upon successful connection test. |
+| `client/lib/presentation/providers/ai_setup_wizard_modal.dart` | Added model picker for offline engines (LM Studio / Ollama); populated picker with discovered models; auto-selected discovered models on test success; reloaded settings on completion. |
+| `client/lib/presentation/workstation/controls/right_control_dock.dart` | Fixed `activeModel` computation to prioritize `settingsState.runtimeConfig?.model`; wired `onComplete` callback to Quick Setup button. |
+| `client/lib/presentation/workstation/workstation_screen.dart` | Seeded `_processSettings` on `initState()`; added `ref.listen` on `settingsStateProvider` to reactively update `_processSettings`; computed `effectiveModel` and `effectiveApiBase` during document processing. |
+| `tests/utils/test_env.py` | Unit tests for `persist_env_key` validating creation, updating, and error handling. |
+| `tests/plugins/test_providers_plugin.py` | Unit and integration tests for model discovery, pinned transport, and active provider endpoints. |
+| `tests/api/test_providers_resolved_ip_pin.py` | Regression tests ensuring TLS SNI preservation during SSRF IP pinning. |
+| `client/test/presentation/smart_preset_and_ai_wizard_test.dart` | Widget tests for offline setup model picker and wizard navigation. |
+| `client/test/presentation/workstation_screen_test.dart` | Widget tests verifying reactive model display in `RightControlDock` upon runtime configuration update. |
+
+### 2026-09-07: Core OCR, LLM Robustness, Provider Inference, and Flexible Settings Persistence
+
+Hardens multi-format LLM completions, provider configuration inference, stage concurrency for local models, optional provider activation parameters, and configuration persistence across server restarts:
+
+| File | Responsibility |
+| --- | --- |
+| `src/omniscribe/core/ocr/multi_format_client.py` | Added `reasoning_content` fallback when `content` is empty/whitespace/None for OpenAI-compatible reasoning models (e.g. DeepSeek-R1, infinity-parser2-flash); enhanced exception detail formatting for empty exception strings (common with timeouts) and exhausted retries. |
+| `src/omniscribe/core/llm/client.py` | Updated `_resolve_provider_config` to automatically infer provider id, display name, and format from `api_base` URL patterns (LM Studio, Ollama, Anthropic, OpenAI, OpenRouter, Groq, DeepSeek, Custom). |
+| `src/omniscribe/core/workflows/stages/ocr.py` | Added local/loopback IP detection to clamp OCR concurrency to 1 to protect local inference servers; added preflight `ensure_model_loaded` verification with fast propagation of `ModelNotLoadedError`. |
+| `src/omniscribe/plugins/providers_service.py` | Made `api_base` and `model` optional in `SetActiveProviderRequest` and `set_active`; implemented fallback resolution from `PROVIDER_TEMPLATES` and settings persistence to `.env`. |
+| `src/omniscribe/plugins/providers.py` | Updated `POST /api/providers/active` to unpack and return resolved provider coordinates from `manager.set_active()`. |
+| `src/omniscribe/plugins/ocr/service.py` | Extended `update_config` to persist `OCR_CONCURRENCY`, `OCR_DPI`, `OCR_DENSE_THRESHOLD`, and `OCR_MAX_IMAGE_DIM` to `.env` upon configuration updates. |
+| `client/lib/presentation/settings/settings_screen.dart` | Added editable input fields for `API Base URL` and `API Key`; wired reactive listeners to update controllers on runtime configuration changes; passed `apiBase` and `apiKey` in `ConfigUpdate` on save. |
+| `client/test/presentation/settings_screen_test.dart` | Widget tests verifying that `_apiBaseController` and `_modelController` reactively update when `settingsStateProvider` changes, and that saving sends the new coordinates. |
+| `client/test/presentation/provider_modal_test.dart` | Widget tests verifying provider connection testing, model discovery display, and active provider selection. |
+| `tests/core/ocr/test_multi_format_client_enhancements.py` | Unit tests verifying timeout error detail formatting, exhausted retry messages, and reasoning content fallback. |
+| `tests/core/workflows/test_ocr_stage_concurrency_and_preflight.py` | Unit tests verifying loopback concurrency clamping, preflight `ensure_model_loaded` invocation, and `ModelNotLoadedError` propagation. |
+| `tests/core/llm/test_client.py` | Extended unit tests verifying provider configuration inference across all supported URL patterns and fallback to custom. |
+
+## See Also
 
 - [README.md](README.md) — feature overview, install, web workspace
 - [CHANGELOG.md](CHANGELOG.md) — version history and breaking changes
@@ -1310,5 +1354,6 @@ Implements Profile 4 Redis state backend tooling and documentation clarification
 - `audits/` — historical and comprehensive domain audit logs
 
 _Last updated: 2026-09-07_
+
 
 

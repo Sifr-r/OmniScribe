@@ -97,9 +97,10 @@ class SSRFCheckResult:
     ``allowed`` is True only when the URL is safe to fetch AND a concrete
     ``resolved_ip`` is available for the caller to pin the TCP connection
     to. For URL-as-literal-IP inputs, ``resolved_ip`` is the literal IP.
-    For DNS-resolved hosts, it's the first resolved address (a transport
-    that pins this IP neutralises the DNS-rebinding TOCTOU window that
-    exists when the HTTP client re-resolves the hostname on connect).
+    For DNS-resolved hosts it is one of the validated addresses, chosen by
+    :func:`_pick_pinned_address` (a transport that pins this IP neutralises
+    the DNS-rebinding TOCTOU window that exists when the HTTP client
+    re-resolves the hostname on connect).
 
     ``reason`` is a short, stable tag describing the failure mode when
     ``allowed`` is False (used for logging / metrics). It is ``None`` for
@@ -137,6 +138,25 @@ async def _resolve_host(host: str) -> list[tuple[str, int]]:
             address = str(raw_address)
         resolved.append((address, port))
     return resolved
+
+
+def _pick_pinned_address(
+    candidates: list[tuple[ipaddress.IPv4Address | ipaddress.IPv6Address, str | None]],
+) -> tuple[ipaddress.IPv4Address | ipaddress.IPv6Address, str | None]:
+    """Choose which validated address the transport should pin to.
+
+    Local model servers (LM Studio, Ollama) bind IPv4-only while Windows
+    ``getaddrinfo("localhost")`` lists ``::1`` first, so pinning the head of
+    the answer made every loopback discovery call fail with a connection
+    refusal. When the whole candidate set is non-public we therefore prefer
+    the first IPv4; a set containing any public address keeps resolution
+    order so public traffic is never re-pointed at a different host.
+    """
+    if all(_is_blocked_ip(ip) for ip, _reason in candidates):
+        for candidate in candidates:
+            if candidate[0].version == 4:
+                return candidate
+    return candidates[0]
 
 
 async def is_ssrf_target(url: str | None) -> SSRFCheckResult:
@@ -192,10 +212,14 @@ async def is_ssrf_target(url: str | None) -> SSRFCheckResult:
         if not resolved:
             return SSRFCheckResult(False, None, "dns-resolution-failed")
 
-        # If ANY resolved IP is blocked, the URL is blocked (unless the
-        # caller opted in to local addresses). The pinned IP for the
-        # transport is the first resolved address — same one httpx
-        # would have used, so HTTPS SNI / cert verification still matches.
+        # Validate EVERY resolved address before picking one to pin. The
+        # pinned IP is the only host the transport will contact, so
+        # skipping validation of the tail of a DNS answer would leave a
+        # DNS-rebinding hole. If ANY resolved IP is blocked the URL is
+        # blocked (unless the caller opted in to local addresses).
+        candidates: list[
+            tuple[ipaddress.IPv4Address | ipaddress.IPv6Address, str | None]
+        ] = []
         for address, _port in resolved:
             try:
                 resolved_ip = ipaddress.ip_address(address)
@@ -208,11 +232,15 @@ async def is_ssrf_target(url: str | None) -> SSRFCheckResult:
             if _is_blocked_ip(resolved_ip):
                 if not allow_local:
                     return SSRFCheckResult(False, None, "resolved-blocked-ip")
-                return SSRFCheckResult(
-                    True, str(resolved_ip), "resolved-blocked-but-allowed"
-                )
+                candidates.append((resolved_ip, "resolved-blocked-but-allowed"))
+            else:
+                candidates.append((resolved_ip, None))
 
-        return SSRFCheckResult(True, resolved[0][0])
+        if not candidates:
+            return SSRFCheckResult(False, None, "dns-resolution-failed")
+
+        chosen_ip, reason = _pick_pinned_address(candidates)
+        return SSRFCheckResult(True, str(chosen_ip), reason)
     except Exception as exc:
         return SSRFCheckResult(False, None, f"unexpected-error: {exc}")
 

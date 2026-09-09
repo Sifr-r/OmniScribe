@@ -67,7 +67,11 @@ class HybridOcrRunner:
         emit_page_callbacks: Callable[..., Coroutine[Any, Any, None]] | None = None,
     ) -> None:
         """Fan out OCR across pages, dispatching sparse vs dense per page."""
-        semaphore = asyncio.Semaphore(max(1, concurrency))
+        api_base = str(getattr(self.ocr_processor, "api_base", "") or "").lower()
+        effective_concurrency = concurrency
+        if any(h in api_base for h in ("localhost", "127.0.0.1", "::1", "192.168.")):
+            effective_concurrency = min(concurrency, 1)
+        semaphore = asyncio.Semaphore(max(1, effective_concurrency))
         total = len(page_nums)
 
         async def process_page(
@@ -111,6 +115,15 @@ class HybridOcrRunner:
                     "OCR failed for page %s: %s: %s", p_num, type(e).__name__, e
                 )
                 return p_num, pages_structured[p_num], e
+
+        if hasattr(self.ocr_processor, "ensure_model_loaded"):
+            try:
+                await self.ocr_processor.ensure_model_loaded()
+            except Exception as e:
+                logger.warning("Preflight ensure_model_loaded failed: %s", e)
+                # Let ModelNotLoadedError propagate so user sees loaded models diagnostic immediately
+                if type(e).__name__ == "ModelNotLoadedError":
+                    raise
 
         completed = 0
         ocr_label = (

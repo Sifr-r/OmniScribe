@@ -34,6 +34,23 @@ def test_extract_nests_under_extracted_data(
     assert calls and "'invoice_number'" in calls[0]["messages"][0]["content"]
 
 
+def test_extract_passes_a_timeout_beyond_the_shared_client_default(
+    api_client: TestClient, monkeypatch: Any
+) -> None:
+    """Extraction must not inherit the 60s shared-client timeout.
+
+    A local reasoning model can spend minutes producing its answer; at 60s the
+    route returned a bare 502 with no sign the model was still working.
+    """
+    calls: list[dict[str, Any]] = []
+    _stub_llm(monkeypatch, '{"vendor_name": "Acme"}', calls)
+    response = api_client.post(
+        "/api/extract", json={"text": "Invoice from Acme.", "template": "invoice"}
+    )
+    assert response.status_code == 200
+    assert calls[0]["timeout"] == 240.0
+
+
 def test_extract_invalid_model_json_yields_empty_object(
     api_client: TestClient, monkeypatch: Any
 ) -> None:

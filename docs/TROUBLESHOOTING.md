@@ -295,9 +295,8 @@ Paste the result into `.env` (gitignored) as `REDIS_PASSWORD=<value>`.
 Then `docker compose up` will pick it up via Docker's automatic `.env`
 loading.
 
-The empty default in `.env.example` is intentional — see
-[Phase 0 of the remediation plan](audits/2026-09-04-remediation-plan.md#phase-0--stop-the-bleeding)
-for the rationale.
+The empty default in `.env.example` is intentional (security hardening
+from the 2026-09-04 five-lens audit).
 
 ---
 
@@ -451,7 +450,7 @@ uv run omniscribe-server --host 127.0.0.1 --port 8000
   this file is repeated there in more detail.
 - [`README.md`](../README.md) §Before you start — if you haven't
   installed yet, that's where to begin.
-- [`audits/2026-09-04-remediation-plan.md`](audits/2026-09-04-remediation-plan.md) —
-  the long-form plan that produced this document.
+- [`audits/2026-09-04-five-lens-audit.md`](audits/2026-09-04-five-lens-audit.md) —
+  the audit that drove the security and reliability improvements.
 
-_Last updated: 2026-09-05_
+_Last updated: 2026-09-07_

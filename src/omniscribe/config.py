@@ -53,6 +53,8 @@ class RuntimeSettings(BaseSettings):
     """Environment-backed settings shared by the API and core pipeline."""
 
     model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
         env_prefix="",
         case_sensitive=False,
         env_ignore_empty=True,
@@ -102,6 +104,12 @@ class RuntimeSettings(BaseSettings):
     )
     vlm_crop_timeout: float = Field(
         default=60.0, validation_alias="OMNISCRIBE_VLM_CROP_TIMEOUT", gt=0
+    )
+    # Extraction gets its own ceiling: call_llm otherwise falls back to the
+    # 60s shared-client default, which a local reasoning model exceeds while
+    # it thinks, and the route reports that as a bare 502.
+    llm_extraction_timeout: float = Field(
+        default=240.0, validation_alias="OMNISCRIBE_LLM_EXTRACTION_TIMEOUT", gt=0
     )
     llm_max_retries: int = Field(
         default=2, validation_alias="OMNISCRIBE_LLM_MAX_RETRIES", ge=0

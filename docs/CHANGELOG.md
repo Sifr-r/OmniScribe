@@ -1660,6 +1660,6 @@ full v0.3.0 release report._
 - Svelte 5 + Tailwind CSS v4 workstation UI.
 - Single-worker FastAPI server with optional Celery background jobs.
 
-[Unreleased]: https://github.com/Sifr-r/OmniScribe/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/Sifr-r/OmniScribe/compare/v0.3.0...HEAD
 [0.2.0]: https://github.com/Sifr-r/OmniScribe/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Sifr-r/OmniScribe/releases/tag/v0.1.0

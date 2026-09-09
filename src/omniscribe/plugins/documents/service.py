@@ -196,6 +196,7 @@ async def run_extraction(
             api_base=(request.api_base or settings.llm_api_base).strip(),
             api_key=(request.api_key or settings.llm_api_key).strip(),
             temperature=TEMPERATURE_EXTRACTION,
+            timeout=settings.llm_extraction_timeout,
             system_prompt=EXTRACTION_SYSTEM_MESSAGE,
             messages=[{"role": "user", "content": prompt}],
         )

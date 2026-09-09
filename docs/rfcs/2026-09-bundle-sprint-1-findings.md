@@ -315,9 +315,8 @@ Sprints 3 and 4 are unchanged (U12 sample-PDF route, buffer).
 
 - [`docs/deployment/windows-bundle.md`](../deployment/windows-bundle.md)
   — the end-user install doc (status banner updated).
-- [`docs/rfcs/2026-09-v0.3.0-scope.md`](2026-09-v0.3.0-scope.md)
-  §3 — the bundle decision (Option (a) with v0.3.0 cap; Sprint 1
-  succeeds).
+- The v0.3.0 RFC 002 bundle decision (Option (a) with v0.3.0 cap;
+  Sprint 1 succeeds) is preserved in git history.
 - [`omniscribe_server.spec`](../../omniscribe_server.spec) — the
   full spec with the four fixes.
 - [`scripts/run_server.py`](../../scripts/run_server.py) — the

@@ -61,6 +61,10 @@ def build_providers_router(manager: ProviderManagerImpl) -> APIRouter:
     async def list_providers() -> dict[str, list[dict[str, Any]]]:
         return {"providers": manager.list_providers()}
 
+    @router.get("/active", status_code=200)
+    async def get_active() -> dict[str, str]:
+        return manager.get_active()
+
     @router.get("/{provider_id}")
     async def provider_details(provider_id: str) -> dict[str, Any]:
         preset = manager.get_provider(provider_id)
@@ -87,7 +91,7 @@ def build_providers_router(manager: ProviderManagerImpl) -> APIRouter:
     async def set_active(
         payload: SetActiveProviderRequest,
     ) -> SetActiveProviderResponse:
-        manager.set_active(
+        active = manager.set_active(
             provider_id=payload.provider_id,
             api_base=payload.api_base,
             model=payload.model,
@@ -95,9 +99,9 @@ def build_providers_router(manager: ProviderManagerImpl) -> APIRouter:
         )
         return SetActiveProviderResponse(
             status="ok",
-            provider_id=payload.provider_id,
-            api_base=payload.api_base,
-            model=payload.model,
+            provider_id=active.get("provider_id", payload.provider_id),
+            api_base=active.get("api_base", payload.api_base or ""),
+            model=active.get("model", payload.model or ""),
         )
 
     @router.post("/validate", status_code=200)
@@ -119,8 +123,15 @@ class ProvidersPlugin(Plugin):
     Schema = ProvidersSchema
 
     async def apply(self, ctx: Context) -> None:
+        from omniscribe.plugins.runtime import RuntimeService
+
+        settings = (
+            ctx.inject(RuntimeService).settings
+            if ctx.has(RuntimeService)
+            else load_settings()
+        )
         manager = ProviderManagerImpl(
-            load_settings(),
+            settings,
             discovery_timeout_seconds=float(
                 self.config.get("discovery_timeout_seconds", 5.0)
             ),

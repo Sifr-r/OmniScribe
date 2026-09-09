@@ -284,7 +284,12 @@ async def complete_vlm_prompt(
                     if choices and isinstance(choices, list):
                         msg = choices[0].get("message", {})
                         if isinstance(msg, dict):
-                            val = msg.get("content", "")
+                            val = msg.get("content")
+                            if isinstance(val, str) and val.strip():
+                                return val
+                            reasoning = msg.get("reasoning_content")
+                            if isinstance(reasoning, str) and reasoning.strip():
+                                return reasoning
                             if isinstance(val, str):
                                 return val
                             logger.warning(
@@ -392,13 +397,35 @@ async def complete_vlm_prompt(
                 await asyncio.sleep(retry_base_delay * (2 ** (attempt - 1)))
                 continue
 
+            if last_error is not None:
+                last_error = exc
+                break
+
+            if not str(exc).strip():
+                exc_detail = (
+                    f"{type(exc).__name__} (request timed out after {request_timeout:.1f}s)"
+                    if isinstance(exc, (httpx.TimeoutException, asyncio.TimeoutError))
+                    else f"{type(exc).__name__}"
+                )
+            else:
+                exc_detail = str(exc).strip()
+
             raise LLMCallError(
-                f"VLM call failed for provider '{provider_config.id}' ({fmt}): {exc}"
+                f"VLM call failed for provider '{provider_config.id}' ({fmt}): {exc_detail}"
             ) from exc
 
     if last_error:
+        if not str(last_error).strip():
+            last_error_detail = (
+                f"{type(last_error).__name__} (request timed out after {request_timeout:.1f}s)"
+                if isinstance(last_error, (httpx.TimeoutException, asyncio.TimeoutError))
+                else f"{type(last_error).__name__}"
+            )
+        else:
+            last_error_detail = str(last_error).strip()
+
         raise LLMCallError(
-            f"VLM call failed for provider '{provider_config.id}' after {max_retries + 1} attempts: {last_error}"
+            f"VLM call failed for provider '{provider_config.id}' after {max_retries + 1} attempts: {last_error_detail}"
         ) from last_error
 
     raise LLMCallError(f"VLM call failed for provider '{provider_config.id}'")
