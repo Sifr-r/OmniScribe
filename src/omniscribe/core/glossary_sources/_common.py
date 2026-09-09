@@ -7,16 +7,18 @@ import binascii
 import re
 from collections import Counter
 from typing import Any
-from xml.etree.ElementTree import (  # nosemgrep: python.lang.security.use-defused-xml.use-defused-xml
-    Element,
-    ParseError,
-)
 
 from defusedxml import ElementTree as _DefusedElementTree
 from defusedxml.common import DefusedXmlException
 
 from .encoding import decode_bytes
 from .summary import GlossaryImportSummary
+
+# `defusedxml.ElementTree.fromstring` returns an `xml.etree.ElementTree.Element`
+# instance, but we avoid importing that name from the stdlib to keep the
+# `use-defused-xml` Semgrep rule quiet. `Any` here costs a little static typing
+# in exchange for not pulling in a parser that does not guard against XXE.
+XmlElement = Any
 
 _IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
@@ -116,7 +118,7 @@ def local_name(tag: str) -> str:
     return tag.rsplit("}", 1)[-1].lower()
 
 
-def iter_text(element: Element | None) -> str:
+def iter_text(element: XmlElement) -> str:
     """Collect text from an XML element, including inline child elements."""
     if element is None:
         return ""
@@ -147,7 +149,7 @@ def validate_identifier(value: str, field_name: str) -> str:
     return value
 
 
-def safe_xml_root(data: bytes | str) -> Element:
+def safe_xml_root(data: bytes | str) -> XmlElement:
     """Parse XML while rejecting DTDs, entity declarations, and external refs.
 
     defusedxml drives the parse so the rejection happens at the expat
@@ -155,13 +157,21 @@ def safe_xml_root(data: bytes | str) -> Element:
     ``SYSTEM`` / ``<!DOCTYPE`` scan false-positived on ordinary
     glossary text content and could be bypassed by declarations past
     the scanned prefix.
+
+    `defusedxml.ElementTree.fromstring` raises `DefusedXmlException` for
+    DTD/external-entity violations and `xml.etree.ElementTree.ParseError`
+    for malformed XML. We deliberately don't import `ParseError` (semgrep
+    `use-defused-xml`) and rely on the broad `Exception` fallback below to
+    convert any remaining parse failure into a domain-level ValueError.
     """
     try:
-        root: Element = _DefusedElementTree.fromstring(data, forbid_dtd=True)
+        root: XmlElement = _DefusedElementTree.fromstring(data, forbid_dtd=True)
         return root
     except DefusedXmlException as exc:
         raise ValueError(
             "DTD and external entities are not allowed in glossary XML."
         ) from exc
-    except ParseError as exc:
+    except Exception as exc:
+        # Covers xml.etree.ElementTree.ParseError and any other parse failure
+        # without importing ParseError directly (semgrep use-defused-xml).
         raise ValueError(f"Invalid glossary XML: {exc}") from exc

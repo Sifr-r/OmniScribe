@@ -2,11 +2,8 @@
 
 from __future__ import annotations
 
-from xml.etree.ElementTree import (  # nosemgrep: python.lang.security.use-defused-xml.use-defused-xml
-    Element,
-)
-
 from ._common import (
+    XmlElement,
     decode_source,
     entry_dict,
     finalize,
@@ -67,7 +64,7 @@ def parse_xliff(
     )
 
 
-def _child_text(element: Element, wanted: str) -> str:
+def _child_text(element: XmlElement, wanted: str) -> str:
     for child in element:
         if local_name(child.tag) == wanted:
             return iter_text(child)

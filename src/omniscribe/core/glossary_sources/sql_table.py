@@ -78,7 +78,7 @@ def parse_sql_table(
         # SQL injection is prevented via three layers:
         # 1. validate_identifier() in _common.py enforces regex ^[A-Za-z_][A-Za-z0-9_]*$ on table/column names
         # 2. engine.dialect.identifier_preparer.quote() quotes identifiers per database dialect
-        # 3. WHERE clause uses parameterized placeholders (line 68: connection.execute(statement, parameters))
+        # 3. WHERE clause uses bound parameters via .bindparams(**parameters)
         # No user input is directly concatenated into the query.
         quoted_table = engine.dialect.identifier_preparer.quote(table)
         quoted_source = engine.dialect.identifier_preparer.quote(source)
@@ -86,10 +86,10 @@ def parse_sql_table(
         statement = text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
             f"SELECT {quoted_source} AS source, {quoted_target} AS target "
             f"FROM {quoted_table}{predicate}"
-        )
+        ).bindparams(**parameters)
         entries: list[dict[str, object]] = []
         with engine.connect() as connection:
-            result = connection.execute(statement, parameters)
+            result = connection.execute(statement)
             for row in result:
                 if len(entries) >= _MAX_ROWS:
                     raise ValueError(
