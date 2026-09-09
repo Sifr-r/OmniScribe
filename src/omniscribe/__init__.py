@@ -10,7 +10,7 @@ from __future__ import annotations
 from importlib import import_module
 from typing import Any
 
-__version__ = "0.1.0"
+__version__ = "0.3.0"
 
 _EXPORT_MODULES = {
     "PDFHandler": "omniscribe.core.pdf",
