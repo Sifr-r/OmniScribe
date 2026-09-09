@@ -68,9 +68,7 @@ async def test_redis_backend_registered(
     redis_async.from_url = lambda *a, **kw: fake  # type: ignore[assignment]
     try:
         ctx = Context()
-        await ctx.plugin(
-            sb.StateBackendPlugin(), config={"backend": "redis"}
-        )
+        await ctx.plugin(sb.StateBackendPlugin(), config={"backend": "redis"})
         backend = ctx.inject(StateBackend)
         assert isinstance(backend, RedisStateBackend)
         # ``aclose`` was registered as a harness effect; running

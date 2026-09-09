@@ -170,7 +170,10 @@ class TestHybridDetectLayout:
 
         engine = _engine()
         await engine._detect_layout(
-            images_dict={0: _make_tiny_b64_image()}, page_nums=[0], progress=cb, input_path=""
+            images_dict={0: _make_tiny_b64_image()},
+            page_nums=[0],
+            progress=cb,
+            input_path="",
         )
         assert ("detect", 0, 1) in events
         assert ("detect", 1, 1) in events

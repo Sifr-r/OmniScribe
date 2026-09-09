@@ -34,6 +34,7 @@ def forbid_vlm_and_surya_engines(monkeypatch: pytest.MonkeyPatch) -> None:
 
     Digital-document fast path must completely bypass Surya and VLM inference.
     """
+
     def forbidden_hybrid(*args: Any, **kwargs: Any) -> Any:
         raise AssertionError(
             "HybridEngine.execute was invoked! Digital documents must use reader fast path."
@@ -75,7 +76,10 @@ def _client(app: FastAPI) -> httpx.AsyncClient:
 
 
 async def _wait_for_job(
-    client: httpx.AsyncClient, job_id: str, target_status: str = "complete", timeout: float = 5.0
+    client: httpx.AsyncClient,
+    job_id: str,
+    target_status: str = "complete",
+    timeout: float = 5.0,
 ) -> dict[str, Any]:
     deadline = time.time() + timeout
     body: dict[str, Any] = {}
@@ -87,7 +91,9 @@ async def _wait_for_job(
         if body.get("status") in ("failed", "cancelled", "error"):
             raise AssertionError(f"Job {job_id} terminated prematurely: {body}")
         await asyncio.sleep(0.05)
-    raise AssertionError(f"Job {job_id} did not reach {target_status!r} within {timeout}s: {body}")
+    raise AssertionError(
+        f"Job {job_id} did not reach {target_status!r} within {timeout}s: {body}"
+    )
 
 
 # -- Sync Fast Path Tests -----------------------------------------------------
@@ -273,7 +279,9 @@ def test_docx_in_to_docx_out_parity() -> None:
 
     # Step 3: Inspect exported DOCX and check text parity
     exported_doc = Document(io.BytesIO(exported_docx_bytes))
-    exported_para_texts = [p.text.strip() for p in exported_doc.paragraphs if p.text.strip()]
+    exported_para_texts = [
+        p.text.strip() for p in exported_doc.paragraphs if p.text.strip()
+    ]
     exported_table_texts: list[str] = []
     for table in exported_doc.tables:
         for row in table.rows:

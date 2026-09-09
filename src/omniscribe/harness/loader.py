@@ -8,7 +8,6 @@ replaced. Bad config fails loud at boot, not on first request.
 
 from __future__ import annotations
 
-import importlib
 import logging
 import os
 from collections.abc import Sequence
@@ -27,6 +26,71 @@ from omniscribe.harness.plugin import Plugin
 _LOGGER = logging.getLogger("omniscribe.harness")
 
 _ENV_OVERRIDE_PREFIX = "OMNISCRIBE_PLUGIN_"
+
+# Plugin registry: maps a cordis ``use`` string (``"module:ClassName"``) to
+# a Plugin class. Built-ins are populated by :func:`_autoregister_builtin_plugins`
+# at module load time using literal imports — there is no dynamic import of a
+# caller-supplied module name, so the Semgrep ``non-literal-import`` rule does
+# not apply. Third-party plugins register themselves via
+# :func:`register_plugin` before the harness boots.
+_PLUGIN_REGISTRY: dict[str, type[Plugin]] = {}
+
+
+def register_plugin(cls: type[Plugin]) -> type[Plugin]:
+    """Decorator: opt a Plugin class into the harness plugin registry.
+
+    Once registered, the plugin can be referenced by a cordis ``use`` string
+    equal to ``f"{cls.__module__}:{cls.__qualname__}"``. A class is safe to
+    register when its constructor takes no required arguments (the harness
+    will instantiate it with no parameters).
+    """
+    key = f"{cls.__module__}:{cls.__qualname__}"
+    _PLUGIN_REGISTRY[key] = cls
+    return cls
+
+
+def _autoregister_builtin_plugins() -> None:
+    """Populate :data:`_PLUGIN_REGISTRY` with every built-in Plugin class.
+
+    Each import here is a literal module path — Semgrep's
+    ``non-literal-import`` rule only fires when the argument to
+    ``importlib.import_module`` is a variable, not a string literal.
+    """
+    from omniscribe.plugins.artifacts import ArtifactsPlugin
+    from omniscribe.plugins.documents.plugin import DocumentsPlugin
+    from omniscribe.plugins.glossary.plugin import GlossaryPlugin
+    from omniscribe.plugins.health import HealthPlugin
+    from omniscribe.plugins.jobs import JobsPlugin
+    from omniscribe.plugins.logging import LoggingPlugin
+    from omniscribe.plugins.ocr.plugin import OCRPlugin
+    from omniscribe.plugins.progress import ProgressPlugin
+    from omniscribe.plugins.providers import ProvidersPlugin
+    from omniscribe.plugins.runtime import RuntimePlugin
+    from omniscribe.plugins.sample_pdfs import SamplePdfsPlugin
+    from omniscribe.plugins.state_backend import StateBackendPlugin
+    from omniscribe.plugins.transcribe.plugin import TranscribePlugin
+    from omniscribe.plugins.translate.plugin import TranslatePlugin
+
+    for cls in (
+        ArtifactsPlugin,
+        DocumentsPlugin,
+        GlossaryPlugin,
+        HealthPlugin,
+        JobsPlugin,
+        LoggingPlugin,
+        OCRPlugin,
+        ProgressPlugin,
+        ProvidersPlugin,
+        RuntimePlugin,
+        SamplePdfsPlugin,
+        StateBackendPlugin,
+        TranscribePlugin,
+        TranslatePlugin,
+    ):
+        register_plugin(cls)
+
+
+_autoregister_builtin_plugins()
 
 
 @dataclass(frozen=True)
@@ -98,24 +162,39 @@ def deep_merge(base: list[PluginRow], patch: list[PluginRow]) -> list[PluginRow]
 
 
 def resolve_plugin(use: str, *, row_id: str) -> Any:
-    """Import ``module:attr`` and return the attribute."""
-    module_name, sep, attr = use.partition(":")
-    if not sep or not module_name or not attr:
+    """Look up a registered Plugin by ``module:ClassName`` key.
+
+    Resolution is a plain dict lookup; no dynamic import of caller-supplied
+    module names. Plugins that are not in the registry yield
+    :class:`PluginLoadError` rather than being silently imported.
+    """
+    if not isinstance(use, str) or ":" not in use:
         raise PluginLoadError(
-            row_id=row_id, reason=f"bad 'use' path {use!r}; expected 'module:attr'"
+            row_id=row_id, reason=f"bad 'use' path {use!r}; expected 'module:ClassName'"
         )
-    try:
-        module = importlib.import_module(module_name)
-    except Exception as exc:  # pragma: no cover - depends on installed tree
+    target = _PLUGIN_REGISTRY.get(use)
+    if target is None:
         raise PluginLoadError(
-            row_id=row_id, reason=f"cannot import {module_name!r}: {exc}"
-        ) from exc
-    try:
-        return getattr(module, attr)
-    except AttributeError as exc:
+            row_id=row_id,
+            reason=(
+                f"plugin {use!r} is not in the harness registry; "
+                "register it with omniscribe.harness.loader.register_plugin"
+            ),
+        )
+    if isinstance(target, type):
+        try:
+            target = target()
+        except Exception as exc:
+            raise PluginLoadError(
+                row_id=row_id,
+                reason=f"cannot instantiate plugin {use!r} (id {row_id!r}): {exc}",
+            ) from exc
+    if not isinstance(target, Plugin):
         raise PluginLoadError(
-            row_id=row_id, reason=f"module {module_name!r} has no attribute {attr!r}"
-        ) from exc
+            row_id=row_id,
+            reason=f"{use!r} (id {row_id!r}) is not a harness Plugin",
+        )
+    return target
 
 
 def _apply_env_overrides(rows: list[PluginRow]) -> list[PluginRow]:
@@ -217,21 +296,9 @@ class Loader:
         return self._ctx
 
     def _instantiate(self, row: PluginRow) -> Plugin:
-        target = resolve_plugin(row.use, row_id=row.id)
-        if isinstance(target, type):
-            try:
-                target = target()
-            except Exception as exc:
-                raise PluginLoadError(
-                    row_id=row.id,
-                    reason=f"cannot instantiate plugin {row.use!r} (id {row.id!r}): {exc}",
-                ) from exc
-        if not isinstance(target, Plugin):
-            raise PluginLoadError(
-                row_id=row.id,
-                reason=f"{row.use!r} (id {row.id!r}) is not a harness Plugin",
-            )
-        return target
+        # ``resolve_plugin`` returns an instantiated Plugin (or raises
+        # PluginLoadError); no further validation needed here.
+        return resolve_plugin(row.use, row_id=row.id)
 
     def _validate(self, row: PluginRow, instance: Plugin) -> dict[str, Any]:
         schema = instance.Schema

@@ -384,9 +384,7 @@ async def test_preflight_post_rejects_ssrf() -> None:
     service._max_upload_mb = 100
 
     # Verify service method directly
-    resp_obj = await service.preflight_check(
-        api_base="http://169.254.169.254/v1"
-    )
+    resp_obj = await service.preflight_check(api_base="http://169.254.169.254/v1")
     assert resp_obj.loaded is False
     assert "SSRF blocked" in resp_obj.detail
 

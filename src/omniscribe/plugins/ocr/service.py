@@ -325,7 +325,9 @@ class OCRServiceImpl:
             if reader is not None:
                 on_progress = self._progress_adapter(job_id, channel)
                 if on_progress is not None:
-                    await on_progress(20, "reader", f"Parsing digital document {filename}...")
+                    await on_progress(
+                        20, "reader", f"Parsing digital document {filename}..."
+                    )
 
                 doc_result = reader.read(input_path, filename=filename)
 
@@ -653,7 +655,9 @@ class OCRServiceImpl:
             else None
         )
 
-        settings_obj = getattr(self, "settings", None) or getattr(self, "_settings", None)
+        settings_obj = getattr(self, "settings", None) or getattr(
+            self, "_settings", None
+        )
 
         def _get_setting_str(attr: str) -> str:
             val = getattr(settings_obj, attr, None)
@@ -850,7 +854,9 @@ class OCRServiceImpl:
             0,
             self._max_buffered_jobs if max_buffered_jobs is None else max_buffered_jobs,
         )
-        initial_count = len(self._event_buffers) if hasattr(self, "_event_buffers") else 0
+        initial_count = (
+            len(self._event_buffers) if hasattr(self, "_event_buffers") else 0
+        )
         if hasattr(self, "_event_buffers"):
             while len(self._event_buffers) > limit:
                 oldest = next(iter(self._event_buffers))
@@ -872,7 +878,9 @@ class OCRServiceImpl:
                     self._done_jobs.discard(jid)
             while len(self._done_jobs) > limit:
                 self._done_jobs.pop()
-        return initial_count - (len(self._event_buffers) if hasattr(self, "_event_buffers") else 0)
+        return initial_count - (
+            len(self._event_buffers) if hasattr(self, "_event_buffers") else 0
+        )
 
     def event_backlog(self, job_id: str) -> list[dict[str, Any]]:
         return list(self._event_buffers.get(job_id, ()))

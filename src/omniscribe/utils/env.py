@@ -113,7 +113,9 @@ def env_list_csv(name: str) -> list[str]:
 def persist_env_key(key: str, value: str) -> None:
     """Persist key-value to .env in the project root safely."""
     if not isinstance(key, str) or not key.strip():
-        _LOGGER.warning("Failed to persist %s to .env: key must be a non-empty string", key)
+        _LOGGER.warning(
+            "Failed to persist %s to .env: key must be a non-empty string", key
+        )
         return
 
     sanitized_key = key.strip()
@@ -129,4 +131,3 @@ def persist_env_key(key: str, value: str) -> None:
         dotenv.set_key(str(dotenv_path), sanitized_key, sanitized_val)
     except Exception as exc:
         _LOGGER.warning("Failed to persist %s to .env: %s", sanitized_key, exc)
-

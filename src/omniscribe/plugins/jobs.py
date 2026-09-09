@@ -494,4 +494,3 @@ __all__ = [
     "TranslationJobRunner",
     "plugin",
 ]
-

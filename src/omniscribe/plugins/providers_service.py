@@ -569,7 +569,10 @@ class ProviderManagerImpl:
 
         persist_env_key("LLM_API_BASE", self._settings.llm_api_base)
         persist_env_key("LLM_MODEL", self._settings.llm_model)
-        if getattr(self._settings, "llm_api_key", None) and self._settings.llm_api_key.strip():
+        if (
+            getattr(self._settings, "llm_api_key", None)
+            and self._settings.llm_api_key.strip()
+        ):
             persist_env_key("LLM_API_KEY", self._settings.llm_api_key)
 
         return self.get_active()

@@ -71,10 +71,18 @@ def test_markdown_writer_tables() -> None:
     tree = DocumentTree()
     page = PageTree(page_idx=0)
 
-    cell_h1 = BlockNode(block_type=BlockType.TEXT, bbox=(0, 0, 0, 0), text="Name", page_idx=0)
-    cell_h2 = BlockNode(block_type=BlockType.TEXT, bbox=(0, 0, 0, 0), text="Value | Units", page_idx=0)
-    cell_d1 = BlockNode(block_type=BlockType.TEXT, bbox=(0, 0, 0, 0), text="Speed\nMax", page_idx=0)
-    cell_d2 = BlockNode(block_type=BlockType.TEXT, bbox=(0, 0, 0, 0), text="120 km/h", page_idx=0)
+    cell_h1 = BlockNode(
+        block_type=BlockType.TEXT, bbox=(0, 0, 0, 0), text="Name", page_idx=0
+    )
+    cell_h2 = BlockNode(
+        block_type=BlockType.TEXT, bbox=(0, 0, 0, 0), text="Value | Units", page_idx=0
+    )
+    cell_d1 = BlockNode(
+        block_type=BlockType.TEXT, bbox=(0, 0, 0, 0), text="Speed\nMax", page_idx=0
+    )
+    cell_d2 = BlockNode(
+        block_type=BlockType.TEXT, bbox=(0, 0, 0, 0), text="120 km/h", page_idx=0
+    )
 
     table = TableNode(
         rows=2,
@@ -97,8 +105,12 @@ def test_markdown_writer_standalone_table() -> None:
     page = PageTree(page_idx=0)
     tree.pages.append(page)
 
-    cell_a = BlockNode(block_type=BlockType.TEXT, bbox=(0, 0, 0, 0), text="A", page_idx=0)
-    cell_b = BlockNode(block_type=BlockType.TEXT, bbox=(0, 0, 0, 0), text="B", page_idx=0)
+    cell_a = BlockNode(
+        block_type=BlockType.TEXT, bbox=(0, 0, 0, 0), text="A", page_idx=0
+    )
+    cell_b = BlockNode(
+        block_type=BlockType.TEXT, bbox=(0, 0, 0, 0), text="B", page_idx=0
+    )
     table = TableNode(
         rows=1,
         cols=2,
@@ -178,11 +190,32 @@ def test_markdown_writer_equations() -> None:
 def test_markdown_writer_page_breaks() -> None:
     tree = DocumentTree()
     p0 = PageTree(page_idx=0)
-    p0.children.append(BlockNode(block_type=BlockType.PARAGRAPH, bbox=(0, 0, 0, 0), text="Page 0 text", page_idx=0))
+    p0.children.append(
+        BlockNode(
+            block_type=BlockType.PARAGRAPH,
+            bbox=(0, 0, 0, 0),
+            text="Page 0 text",
+            page_idx=0,
+        )
+    )
     p1 = PageTree(page_idx=1)
-    p1.children.append(BlockNode(block_type=BlockType.PARAGRAPH, bbox=(0, 0, 0, 0), text="Page 1 text", page_idx=1))
+    p1.children.append(
+        BlockNode(
+            block_type=BlockType.PARAGRAPH,
+            bbox=(0, 0, 0, 0),
+            text="Page 1 text",
+            page_idx=1,
+        )
+    )
     p2 = PageTree(page_idx=2)
-    p2.children.append(BlockNode(block_type=BlockType.PARAGRAPH, bbox=(0, 0, 0, 0), text="Page 2 text", page_idx=2))
+    p2.children.append(
+        BlockNode(
+            block_type=BlockType.PARAGRAPH,
+            bbox=(0, 0, 0, 0),
+            text="Page 2 text",
+            page_idx=2,
+        )
+    )
     tree.pages.extend([p0, p1, p2])
 
     md = render_markdown(tree)
@@ -214,10 +247,27 @@ def test_markdown_writer_spans_lists_and_code() -> None:
         ],
     )
     # List items
-    li1 = BlockNode(block_type=BlockType.LIST_ITEM, bbox=(0, 0, 0, 0), text="Item 1", page_idx=0, level=0)
-    li2 = BlockNode(block_type=BlockType.LIST_ITEM, bbox=(0, 0, 0, 0), text="Nested item", page_idx=0, level=1)
+    li1 = BlockNode(
+        block_type=BlockType.LIST_ITEM,
+        bbox=(0, 0, 0, 0),
+        text="Item 1",
+        page_idx=0,
+        level=0,
+    )
+    li2 = BlockNode(
+        block_type=BlockType.LIST_ITEM,
+        bbox=(0, 0, 0, 0),
+        text="Nested item",
+        page_idx=0,
+        level=1,
+    )
     # Code block
-    code = BlockNode(block_type=BlockType.CODE, bbox=(0, 0, 0, 0), text="x = 42\ny = x + 1", page_idx=0)
+    code = BlockNode(
+        block_type=BlockType.CODE,
+        bbox=(0, 0, 0, 0),
+        text="x = 42\ny = x + 1",
+        page_idx=0,
+    )
 
     page.children.extend([span_para, li1, li2, code])
     tree.pages.append(page)

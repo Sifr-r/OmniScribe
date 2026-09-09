@@ -418,7 +418,9 @@ async def complete_vlm_prompt(
         if not str(last_error).strip():
             last_error_detail = (
                 f"{type(last_error).__name__} (request timed out after {request_timeout:.1f}s)"
-                if isinstance(last_error, (httpx.TimeoutException, asyncio.TimeoutError))
+                if isinstance(
+                    last_error, (httpx.TimeoutException, asyncio.TimeoutError)
+                )
                 else f"{type(last_error).__name__}"
             )
         else:

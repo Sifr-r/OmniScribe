@@ -47,14 +47,13 @@ def _format_markdown_table(rows_data: list[list[str]]) -> str:
     if not rows_data or not rows_data[0]:
         return ""
     col_count = max(len(row) for row in rows_data)
-    padded = [
-        row + [""] * (col_count - len(row))
-        for row in rows_data
-    ]
+    padded = [row + [""] * (col_count - len(row)) for row in rows_data]
     lines: list[str] = []
     # Header row
     header_row = padded[0]
-    lines.append("| " + " | ".join(cell.replace("\n", " ") for cell in header_row) + " |")
+    lines.append(
+        "| " + " | ".join(cell.replace("\n", " ") for cell in header_row) + " |"
+    )
     lines.append("| " + " | ".join(["---"] * col_count) + " |")
     # Body rows
     for row in padded[1:]:
@@ -65,10 +64,18 @@ def _format_markdown_table(rows_data: list[list[str]]) -> str:
 def _has_page_break(p_elem: CT_P) -> bool:
     """Check if paragraph element contains an explicit page break."""
     for node in p_elem.iter():
-        if node.tag.endswith("br") and node.attrib.get("{http://schemas.openxmlformats.org/wordprocessingml/2006/main}type") == "page":
+        if (
+            node.tag.endswith("br")
+            and node.attrib.get(
+                "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}type"
+            )
+            == "page"
+        ):
             return True
         if node.tag.endswith("pageBreakBefore"):
-            val = node.attrib.get("{http://schemas.openxmlformats.org/wordprocessingml/2006/main}val")
+            val = node.attrib.get(
+                "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}val"
+            )
             if val is None or val in ("1", "true", "on"):
                 return True
     return False
@@ -114,7 +121,9 @@ class DocxReader(BaseDocumentReader):
         filename: str = "",
     ) -> DocumentResult:
         raw_bytes = resolve_source_bytes(source)
-        source_name = filename or (str(source) if isinstance(source, (str, Path)) else "document.docx")
+        source_name = filename or (
+            str(source) if isinstance(source, (str, Path)) else "document.docx"
+        )
 
         try:
             doc = Document(io.BytesIO(raw_bytes))
@@ -162,29 +171,35 @@ class DocxReader(BaseDocumentReader):
                 ]
 
                 if heading_level is not None:
-                    current_page.append({
-                        "type": "heading",
-                        "kind": "section_header",
-                        "level": heading_level,
-                        "text": text,
-                        "spans": spans,
-                    })
+                    current_page.append(
+                        {
+                            "type": "heading",
+                            "kind": "section_header",
+                            "level": heading_level,
+                            "text": text,
+                            "spans": spans,
+                        }
+                    )
                 elif _is_list_paragraph(p):
-                    current_page.append({
-                        "type": "list_item",
-                        "kind": "list_item",
-                        "level": 0,
-                        "text": text,
-                        "spans": spans,
-                    })
+                    current_page.append(
+                        {
+                            "type": "list_item",
+                            "kind": "list_item",
+                            "level": 0,
+                            "text": text,
+                            "spans": spans,
+                        }
+                    )
                 else:
-                    current_page.append({
-                        "type": "paragraph",
-                        "kind": "paragraph",
-                        "level": 0,
-                        "text": text,
-                        "spans": spans,
-                    })
+                    current_page.append(
+                        {
+                            "type": "paragraph",
+                            "kind": "paragraph",
+                            "level": 0,
+                            "text": text,
+                            "spans": spans,
+                        }
+                    )
 
             elif isinstance(child, CT_Tbl):
                 tbl = Table(child, doc)
@@ -195,13 +210,15 @@ class DocxReader(BaseDocumentReader):
 
                 if rows_data and any(any(c for c in r) for r in rows_data):
                     table_md = _format_markdown_table(rows_data)
-                    current_page.append({
-                        "type": "table",
-                        "kind": "table",
-                        "level": 0,
-                        "text": table_md,
-                        "rows_data": rows_data,
-                    })
+                    current_page.append(
+                        {
+                            "type": "table",
+                            "kind": "table",
+                            "level": 0,
+                            "text": table_md,
+                            "rows_data": rows_data,
+                        }
+                    )
 
         # Remove trailing empty pages if any
         pages_raw = [p for p in pages_raw if p]
@@ -210,7 +227,9 @@ class DocxReader(BaseDocumentReader):
             return DocumentResult(
                 pages=[create_synthetic_page(0, [])],
                 source_path=source_name,
-                tree=DocumentTree(pages=[PageTree(page_idx=0)], source_path=source_name),
+                tree=DocumentTree(
+                    pages=[PageTree(page_idx=0)], source_path=source_name
+                ),
             )
 
         # Build DocumentPage and DocumentTree
@@ -221,7 +240,10 @@ class DocxReader(BaseDocumentReader):
 
         for page_idx, raw_items in enumerate(pages_raw):
             # Layout blocks with valid normalized bboxes
-            spec = [(item["text"], item["kind"], {"level": item.get("level", 0)}) for item in raw_items]
+            spec = [
+                (item["text"], item["kind"], {"level": item.get("level", 0)})
+                for item in raw_items
+            ]
             doc_blocks = layout_synthetic_blocks(spec)
 
             tree_children: list[BlockNode | TableNode] = []
@@ -241,10 +263,16 @@ class DocxReader(BaseDocumentReader):
                         for c_idx, cell_text in enumerate(row):
                             # Synthetic cell bbox within the table bbox
                             cell_bbox: BBox = (
-                                bbox[0] + (c_idx / max(num_cols, 1)) * (bbox[2] - bbox[0]),
-                                bbox[1] + (r_idx / max(num_rows, 1)) * (bbox[3] - bbox[1]),
-                                bbox[0] + ((c_idx + 1) / max(num_cols, 1)) * (bbox[2] - bbox[0]),
-                                bbox[1] + ((r_idx + 1) / max(num_rows, 1)) * (bbox[3] - bbox[1]),
+                                bbox[0]
+                                + (c_idx / max(num_cols, 1)) * (bbox[2] - bbox[0]),
+                                bbox[1]
+                                + (r_idx / max(num_rows, 1)) * (bbox[3] - bbox[1]),
+                                bbox[0]
+                                + ((c_idx + 1) / max(num_cols, 1))
+                                * (bbox[2] - bbox[0]),
+                                bbox[1]
+                                + ((r_idx + 1) / max(num_rows, 1))
+                                * (bbox[3] - bbox[1]),
                             )
                             c_node = BlockNode(
                                 block_type=BlockType.TEXT,

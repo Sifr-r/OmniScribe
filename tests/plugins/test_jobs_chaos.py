@@ -80,7 +80,9 @@ async def _wait_status(
             return record
         await asyncio.sleep(0.01)
     record = await queue.status(job_id)
-    raise AssertionError(f"Job {job_id} never reached {status!r}; last record: {record}")
+    raise AssertionError(
+        f"Job {job_id} never reached {status!r}; last record: {record}"
+    )
 
 
 async def _wait_terminal(
@@ -94,7 +96,9 @@ async def _wait_terminal(
             return record
         await asyncio.sleep(0.01)
     record = await queue.status(job_id)
-    raise AssertionError(f"Job {job_id} never reached a terminal status; last record: {record}")
+    raise AssertionError(
+        f"Job {job_id} never reached a terminal status; last record: {record}"
+    )
 
 
 def _bare_ocr_service(max_buffered_jobs: int = 500) -> OCRServiceImpl:
@@ -162,7 +166,9 @@ async def test_worker_cancellation_mid_job_cleans_up_and_does_not_wedge() -> Non
 
         async def hung_runner(request: Any) -> JobOutcome:
             job3_running.set()
-            await asyncio.sleep(60.0)  # deliberate hang to simulate mid-job interruption
+            await asyncio.sleep(
+                60.0
+            )  # deliberate hang to simulate mid-job interruption
             return JobOutcome(blob=b"hung", content_type="text/plain")
 
         # Swap runner to hung_runner for job 3
@@ -243,10 +249,16 @@ async def test_stale_connection_and_subscriber_drop_does_not_abort_job() -> None
                 await progress_svc.emit_progress(
                     job_id="chaos_job",
                     channel_id=channel_id,
-                    frame={"type": "progress", "percent": step * 10, "stage": "processing"},
+                    frame={
+                        "type": "progress",
+                        "percent": step * 10,
+                        "stage": "processing",
+                    },
                 )
                 await asyncio.sleep(0.005)
-            return JobOutcome(blob=b"pdf-output-content", content_type="application/pdf")
+            return JobOutcome(
+                blob=b"pdf-output-content", content_type="application/pdf"
+            )
 
         queue = ctx.inject(JobQueue)
         assert isinstance(queue, InMemoryJobQueue)
@@ -262,7 +274,9 @@ async def test_stale_connection_and_subscriber_drop_does_not_abort_job() -> None
 
         # Verify artifact is stored and intact
         artifacts = ctx.inject(ArtifactStore)
-        blob = await artifacts.get(record.result_artifact_id, record.result_artifact_token)
+        blob = await artifacts.get(
+            record.result_artifact_id, record.result_artifact_token
+        )
         assert blob is not None
         assert blob.blob == b"pdf-output-content"
 
@@ -277,7 +291,9 @@ async def test_stale_connection_and_subscriber_drop_does_not_abort_job() -> None
 # -- Test 3: Runner exception / worker crash -----------------------------------
 
 
-async def test_runner_exception_worker_crash_transitions_failed_and_does_not_stall() -> None:
+async def test_runner_exception_worker_crash_transitions_failed_and_does_not_stall() -> (
+    None
+):
     """Test 3: Runner exception / worker crash.
 
     When a registered JobRunner raises an unexpected unhandled exception:
@@ -337,7 +353,10 @@ async def test_runner_exception_worker_crash_transitions_failed_and_does_not_sta
         assert record_next2.status == "complete"
 
         assert len(completed_events) == 2
-        assert [e.job_id for e in completed_events] == [handle_next1.job_id, handle_next2.job_id]
+        assert [e.job_id for e in completed_events] == [
+            handle_next1.job_id,
+            handle_next2.job_id,
+        ]
     finally:
         await ctx.dispose()
 
@@ -473,12 +492,16 @@ async def test_replay_buffer_under_rapid_event_bursts_maintains_memory_bounds() 
             if step % 15 == 0:
                 await asyncio.sleep(0.001)
         await service.record_event(
-            JobCompleted(job_id=job_id, artifact_id=f"art_{job_idx}", artifact_token="tok")
+            JobCompleted(
+                job_id=job_id, artifact_id=f"art_{job_idx}", artifact_token="tok"
+            )
         )
         return job_id
 
     # Fire bursts across all 60 jobs concurrently
-    await asyncio.gather(*(chaotic_worker_burst(i) for i in range(total_concurrent_jobs)))
+    await asyncio.gather(
+        *(chaotic_worker_burst(i) for i in range(total_concurrent_jobs))
+    )
 
     # Global memory bounds: buffer count must never exceed max_buffered_jobs
     assert len(service._event_buffers) <= max_buffered_jobs

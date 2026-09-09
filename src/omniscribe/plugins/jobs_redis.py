@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import importlib
 import json
 import logging
 import time
@@ -111,6 +110,28 @@ def _decode_str(val: Any) -> str:
     return str(val)
 
 
+# Registry of (module, qualname) -> class for generic payload reconstruction
+# (``pydantic`` and ``dataclass`` envelope types). Classes opt in via the
+# :func:`register_reconstructable` decorator. Unregistered classes are
+# returned to callers as plain dicts so unknown envelope contents cannot
+# trigger arbitrary code loading. Populating this registry explicitly — rather
+# than calling ``importlib.import_module(<envelope-supplied-name>)`` — keeps
+# the deserialization path closed to untrusted code.
+_RECONSTRUCTABLE_CLASSES: dict[tuple[str, str], type[Any]] = {}
+
+
+def register_reconstructable(cls: type[Any]) -> type[Any]:
+    """Decorator: opt a class into generic Redis payload reconstruction.
+
+    The (module, qualname) pair becomes the lookup key for envelopes that
+    carry ``__module__`` and ``__qualname__`` fields. A class is safe to
+    register only if its ``__init__`` does not perform side effects beyond
+    storing the supplied fields.
+    """
+    _RECONSTRUCTABLE_CLASSES[(cls.__module__, cls.__qualname__)] = cls
+    return cls
+
+
 def serialize_payload(payload: Any) -> str:
     """Serialize an arbitrary job payload into a JSON envelope.
 
@@ -121,54 +142,64 @@ def serialize_payload(payload: Any) -> str:
     if payload.__class__.__name__ == "_OcrPayload":
         req = getattr(payload, "request", None)
         req_dict = req.model_dump() if isinstance(req, BaseModel) else dict(req or {})
-        return json.dumps({
-            "__type__": "ocr",
-            "submission_id": getattr(payload, "submission_id", ""),
-            "input_path": str(getattr(payload, "input_path", "")),
-            "filename": getattr(payload, "filename", ""),
-            "request": req_dict,
-        })
+        return json.dumps(
+            {
+                "__type__": "ocr",
+                "submission_id": getattr(payload, "submission_id", ""),
+                "input_path": str(getattr(payload, "input_path", "")),
+                "filename": getattr(payload, "filename", ""),
+                "request": req_dict,
+            }
+        )
 
     # 2. Translation Payload
     if payload.__class__.__name__ == "_TranslatePayload":
         req = getattr(payload, "request", None)
         req_dict = req.model_dump() if isinstance(req, BaseModel) else dict(req or {})
-        return json.dumps({
-            "__type__": "translate",
-            "submission_id": getattr(payload, "submission_id", ""),
-            "request": req_dict,
-        })
+        return json.dumps(
+            {
+                "__type__": "translate",
+                "submission_id": getattr(payload, "submission_id", ""),
+                "request": req_dict,
+            }
+        )
 
     # 3. Glossary Payload
     if payload.__class__.__name__ == "_GlossaryImportPayload":
-        return json.dumps({
-            "__type__": "glossary",
-            "submission_id": getattr(payload, "submission_id", ""),
-            "format_name": getattr(payload, "format_name", ""),
-            "kwargs": getattr(payload, "kwargs", {}),
-            "display_name": getattr(payload, "display_name", ""),
-        })
+        return json.dumps(
+            {
+                "__type__": "glossary",
+                "submission_id": getattr(payload, "submission_id", ""),
+                "format_name": getattr(payload, "format_name", ""),
+                "kwargs": getattr(payload, "kwargs", {}),
+                "display_name": getattr(payload, "display_name", ""),
+            }
+        )
 
     # 4. General Pydantic Model
     if isinstance(payload, BaseModel):
-        return json.dumps({
-            "__type__": "pydantic",
-            "__module__": payload.__class__.__module__,
-            "__qualname__": payload.__class__.__qualname__,
-            "data": payload.model_dump(),
-        })
+        return json.dumps(
+            {
+                "__type__": "pydantic",
+                "__module__": payload.__class__.__module__,
+                "__qualname__": payload.__class__.__qualname__,
+                "data": payload.model_dump(),
+            }
+        )
 
     # 5. General Dataclass
     if is_dataclass(payload) and not isinstance(payload, type):
         runner_marker = getattr(type(payload), "runner_protocol", None)
         runner_marker_name = runner_marker.__name__ if runner_marker else None
-        return json.dumps({
-            "__type__": "dataclass",
-            "__module__": payload.__class__.__module__,
-            "__qualname__": payload.__class__.__qualname__,
-            "runner_protocol": runner_marker_name,
-            "data": asdict(payload),
-        })
+        return json.dumps(
+            {
+                "__type__": "dataclass",
+                "__module__": payload.__class__.__module__,
+                "__qualname__": payload.__class__.__qualname__,
+                "runner_protocol": runner_marker_name,
+                "data": asdict(payload),
+            }
+        )
 
     # 6. Raw dict or JSON-serializable structure
     return json.dumps({"__type__": "raw", "data": payload})
@@ -222,24 +253,44 @@ def deserialize_payload(raw_json: str) -> Any:
         module_name = envelope.get("__module__", "")
         qualname = envelope.get("__qualname__", "")
         data = envelope.get("data", {})
+        cls = _RECONSTRUCTABLE_CLASSES.get((module_name, qualname))
+        if cls is None:
+            _LOGGER.warning(
+                "Refusing to reconstruct unregistered Pydantic class %s.%s; returning dict",
+                module_name,
+                qualname,
+            )
+            return data
         try:
-            mod = importlib.import_module(module_name)
-            cls = getattr(mod, qualname)
             return cls(**data)
         except Exception:
-            _LOGGER.warning("Could not reconstruct Pydantic class %s.%s; returning dict", module_name, qualname)
+            _LOGGER.warning(
+                "Could not reconstruct Pydantic class %s.%s; returning dict",
+                module_name,
+                qualname,
+            )
             return data
 
     if payload_type == "dataclass":
         module_name = envelope.get("__module__", "")
         qualname = envelope.get("__qualname__", "")
         data = envelope.get("data", {})
+        cls = _RECONSTRUCTABLE_CLASSES.get((module_name, qualname))
+        if cls is None:
+            _LOGGER.warning(
+                "Refusing to reconstruct unregistered dataclass %s.%s; returning dict",
+                module_name,
+                qualname,
+            )
+            return data
         try:
-            mod = importlib.import_module(module_name)
-            cls = getattr(mod, qualname)
             return cls(**data)
         except Exception:
-            _LOGGER.warning("Could not reconstruct dataclass %s.%s; returning dict", module_name, qualname)
+            _LOGGER.warning(
+                "Could not reconstruct dataclass %s.%s; returning dict",
+                module_name,
+                qualname,
+            )
             return data
 
     if payload_type == "raw":
@@ -292,7 +343,9 @@ class RedisJobQueue:
         try:
             await self._redis.ping()
         except Exception as exc:
-            raise RuntimeError(f"Redis reachable check failed at {self._redis_url}: {exc}") from exc
+            raise RuntimeError(
+                f"Redis reachable check failed at {self._redis_url}: {exc}"
+            ) from exc
 
         # Pre-load Lua claim script
         try:
@@ -491,7 +544,9 @@ class RedisJobQueue:
                     args=[active_score, job_prefix, KEY_PAYLOAD_PREFIX],
                 )
             except Exception as exc:
-                _LOGGER.warning("Claim Lua script execution failed (%s); using fallback", exc)
+                _LOGGER.warning(
+                    "Claim Lua script execution failed (%s); using fallback", exc
+                )
                 self._claim_script = None
 
         if result is None:
@@ -507,7 +562,9 @@ class RedisJobQueue:
                     KEY_PAYLOAD_PREFIX,
                 )
             except Exception as exc:
-                _LOGGER.debug("Direct Lua eval failed in claim (%s); falling back to WATCH", exc)
+                _LOGGER.debug(
+                    "Direct Lua eval failed in claim (%s); falling back to WATCH", exc
+                )
                 return await self._claim_watch(active_score=active_score)
 
         if not result or not isinstance(result, (list, tuple)) or len(result) < 2:
@@ -542,14 +599,20 @@ class RedisJobQueue:
                     job_id = _decode_str(raw_jid)
 
                     # Check cancelled
-                    is_cancelled = bool(await self._client.sismember(KEY_CANCELLED_SET, job_id))
+                    is_cancelled = bool(
+                        await self._client.sismember(KEY_CANCELLED_SET, job_id)
+                    )
                     if not is_cancelled:
                         job_key = f"omniscribe:job:{job_id}"
                         job_raw = await self._client.get(job_key)
                         if job_raw:
                             try:
                                 job_rec = json.loads(_decode_str(job_raw))
-                                if job_rec.get("status") in ("cancelled", "complete", "error"):
+                                if job_rec.get("status") in (
+                                    "cancelled",
+                                    "complete",
+                                    "error",
+                                ):
                                     is_cancelled = True
                             except Exception:
                                 pass
@@ -562,7 +625,9 @@ class RedisJobQueue:
                         continue
 
                     # Valid uncancelled job
-                    payload_raw = await self._client.get(f"{KEY_PAYLOAD_PREFIX}{job_id}")
+                    payload_raw = await self._client.get(
+                        f"{KEY_PAYLOAD_PREFIX}{job_id}"
+                    )
 
                     pipe.multi()
                     pipe.zrem(KEY_QUEUE, raw_jid)
@@ -615,7 +680,9 @@ class RedisJobQueue:
 
         record = await self._backend.get_job(job_id)
         if record is not None and record.status not in _TERMINAL_STATUSES:
-            await self._backend.upsert_job(replace(record, status="queued", updated_at=now))
+            await self._backend.upsert_job(
+                replace(record, status="queued", updated_at=now)
+            )
 
     async def extend_visibility(self, job_id: str, extra_seconds: float) -> None:
         """Extend visibility timeout for a long-running active job."""
@@ -662,10 +729,17 @@ class RedisJobQueue:
                     await pipe.execute()
 
                 record = await self._backend.get_job(jid)
-                err_msg = f"Visibility timeout exceeded ({max_retries} attempts exhausted)"
+                err_msg = (
+                    f"Visibility timeout exceeded ({max_retries} attempts exhausted)"
+                )
                 if record is not None and record.status not in _TERMINAL_STATUSES:
                     await self._backend.upsert_job(
-                        replace(record, status="error", error=err_msg, updated_at=time.time())
+                        replace(
+                            record,
+                            status="error",
+                            error=err_msg,
+                            updated_at=time.time(),
+                        )
                     )
                 await self._ctx.emit(JobFailed(job_id=jid, error=err_msg))
                 recovered.append(jid)

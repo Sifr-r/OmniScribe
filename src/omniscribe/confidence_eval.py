@@ -325,9 +325,9 @@ def compute_levenshtein_distance(seq1: Sequence[T], seq2: Sequence[T]) -> int:
         for j, item2 in enumerate(seq2):
             cost = 0 if item1 == item2 else 1
             curr_row[j + 1] = min(
-                curr_row[j] + 1,       # insertion
-                prev_row[j + 1] + 1,   # deletion
-                prev_row[j] + cost,    # substitution
+                curr_row[j] + 1,  # insertion
+                prev_row[j + 1] + 1,  # deletion
+                prev_row[j] + cost,  # substitution
             )
         prev_row = curr_row
     return prev_row[-1]
@@ -582,9 +582,7 @@ def compute_heading_hierarchy_f1(
     return (2.0 * precision * recall) / (precision + recall)
 
 
-_MD_TABLE_SEPARATOR_RE = re.compile(
-    r"^\s*\|?(\s*:?-+:?\s*\|)+\s*:?-+:?\s*\|?\s*$"
-)
+_MD_TABLE_SEPARATOR_RE = re.compile(r"^\s*\|?(\s*:?-+:?\s*\|)+\s*:?-+:?\s*\|?\s*$")
 
 
 def extract_markdown_tables(md_text: str) -> list[list[list[str]]]:
@@ -616,17 +614,13 @@ def extract_markdown_tables(md_text: str) -> list[list[list[str]]]:
     return tables
 
 
-def _table_pair_similarity(
-    t1: list[list[str]], t2: list[list[str]]
-) -> float:
+def _table_pair_similarity(t1: list[list[str]], t2: list[list[str]]) -> float:
     """Compute structural and cell content similarity between two 2D table grids."""
     r1, c1 = len(t1), max(len(r) for r in t1)
     r2, c2 = len(t2), max(len(r) for r in t2)
 
     # Dimensional shape similarity
-    shape_sim = (1.0 - abs(r1 - r2) / max(r1, r2)) * (
-        1.0 - abs(c1 - c2) / max(c1, c2)
-    )
+    shape_sim = (1.0 - abs(r1 - r2) / max(r1, r2)) * (1.0 - abs(c1 - c2) / max(c1, c2))
 
     # Cell-by-cell content alignment
     matched_sim = 0.0
@@ -739,4 +733,3 @@ def blocks_to_markdown(
     normalized_items.sort(key=lambda item: (item[0], item[1]))
 
     return "\n\n".join(item[2] for item in normalized_items)
-

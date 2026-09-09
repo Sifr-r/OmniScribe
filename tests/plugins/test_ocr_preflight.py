@@ -157,7 +157,9 @@ async def test_preflight_check_connection_failure(
     assert response.loaded is False
     assert response.loaded_models == []
     assert response.detail == "Endpoint unreachable: Connection refused by target"
-    assert client_closed == [True], "Ephemeral client must be closed even on connection failure"
+    assert client_closed == [True], (
+        "Ephemeral client must be closed even on connection failure"
+    )
 
 
 async def test_preflight_check_custom_request_overrides(

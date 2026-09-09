@@ -154,7 +154,10 @@ async def _execute_job(
         _LOGGER.warning("Job %s failed with exception: %s", job_id, err_msg)
         current = await backend.get_job(job_id)
         if current and current.status not in TERMINAL_JOB_STATUSES:
-            is_cancelled = queue.is_cancelled(job_id) or "cancelled" in exc.__class__.__name__.lower()
+            is_cancelled = (
+                queue.is_cancelled(job_id)
+                or "cancelled" in exc.__class__.__name__.lower()
+            )
             if is_cancelled:
                 await backend.upsert_job(
                     replace(current, status="cancelled", updated_at=time.time())
@@ -251,7 +254,9 @@ async def _worker_loop(
         except asyncio.CancelledError:
             break
         except Exception as exc:
-            _LOGGER.exception("Unexpected error in job execution for %s: %s", job_id, exc)
+            _LOGGER.exception(
+                "Unexpected error in job execution for %s: %s", job_id, exc
+            )
         finally:
             active_jobs.pop(job_id, None)
 
@@ -277,6 +282,7 @@ def _setup_signal_handlers(
     loop: asyncio.AbstractEventLoop, stop_event: asyncio.Event
 ) -> None:
     """Setup graceful signal handlers across Linux/macOS and Windows."""
+
     def _trigger() -> None:
         if not stop_event.is_set():
             _LOGGER.info("Received shutdown signal; draining worker loops...")
@@ -357,7 +363,9 @@ async def run_worker(
             list(active_jobs.values()), timeout=drain_timeout
         )
         if pending:
-            _LOGGER.warning("Drain timeout expired; cancelling %d stuck jobs", len(pending))
+            _LOGGER.warning(
+                "Drain timeout expired; cancelling %d stuck jobs", len(pending)
+            )
             for task in pending:
                 task.cancel()
             # Requeue stuck jobs back to Redis queue

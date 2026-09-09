@@ -98,7 +98,6 @@ class OCRProcessor:
     # instances are constructed without __init__ (e.g., __new__ in tests; F1.9).
     # Live instances resolve settings in __init__ to reflect current env (1.11, 1.12).
 
-
     # Page-level OCR (full image): up to ~4 minutes, ~6k tokens of output.
     # Dense handwritten pages with tables can easily produce 2-3k tokens
     # of markdown, so 6k leaves headroom without enabling endless loops.

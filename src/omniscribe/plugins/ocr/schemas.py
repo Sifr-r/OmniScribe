@@ -29,6 +29,7 @@ def _is_bool_annotation(annotation: Any) -> bool:
         return any(_is_bool_annotation(arg) for arg in get_args(annotation))
     return False
 
+
 #: Frontend dense toggles ("on"/"off") are still accepted at the HTTP
 #: edge for backwards compatibility, but the aliasing now lives in
 #: the ``_parse_dense_mode`` validator below (one place, audit D14).

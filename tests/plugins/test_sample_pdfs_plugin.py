@@ -41,7 +41,10 @@ from omniscribe.plugins.sample_pdfs import (
 
 _FIXTURES_DIR = Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "pdfs"
 _RESOURCES_DIR = (
-    Path(__file__).resolve().parents[2] / "src" / "omniscribe" / "resources"
+    Path(__file__).resolve().parents[2]
+    / "src"
+    / "omniscribe"
+    / "resources"
     / "sample_pdfs"
 )
 
@@ -113,8 +116,7 @@ async def test_get_sample_pdf_returns_canonical_bytes(name: str) -> None:
         assert response.status_code == 200, response.text
         assert response.headers["content-type"] == "application/pdf"
         assert (
-            response.headers["content-disposition"]
-            == f'attachment; filename="{name}"'
+            response.headers["content-disposition"] == f'attachment; filename="{name}"'
         )
         assert response.headers["x-sample-pdf"] == name
 

@@ -126,7 +126,6 @@ async def test_migrate_all_entities(
             ),
         )
 
-
     # Create fakeredis instance
     fake = fakeredis.aioredis.FakeRedis()
 
@@ -149,6 +148,7 @@ async def test_migrate_all_entities(
 
     # Verify that migrated data is readable by RedisStateBackend
     import redis.asyncio as redis_async
+
     orig_from_url = redis_async.from_url
     redis_async.from_url = lambda *a, **kw: fake
     try:
@@ -229,9 +229,7 @@ async def test_migrate_dry_run(sqlite_test_db: tuple[Path, Path]) -> None:
         blob=b"dry-run-data",
         ttl_seconds=3600,
     )
-    await sqlite_backend.upsert_job(
-        JobRecord(job_id="job-dry", status="queued")
-    )
+    await sqlite_backend.upsert_job(JobRecord(job_id="job-dry", status="queued"))
     await sqlite_backend.put_channel(
         channel_id="chan-dry",
         session_token="sess-dry",
@@ -294,7 +292,9 @@ async def test_migrate_missing_database() -> None:
 def test_cli_execution(sqlite_test_db: tuple[Path, Path]) -> None:
     db_path, _ = sqlite_test_db
     conn = sqlite3.connect(str(db_path))
-    conn.execute("CREATE TABLE jobs (job_id TEXT PRIMARY KEY, status TEXT, request_meta TEXT, created_at REAL, updated_at REAL)")
+    conn.execute(
+        "CREATE TABLE jobs (job_id TEXT PRIMARY KEY, status TEXT, request_meta TEXT, created_at REAL, updated_at REAL)"
+    )
     conn.execute("INSERT INTO jobs VALUES ('job-cli', 'queued', '{}', 1000.0, 1000.0)")
     conn.commit()
     conn.close()

@@ -262,7 +262,9 @@ def test_dispatch_registry() -> None:
 
 
 def test_render_synthetic_pdf() -> None:
-    md = "# Overview\n\nDigital ingest produces a clean PDF.\n\n- Feature A\n- Feature B"
+    md = (
+        "# Overview\n\nDigital ingest produces a clean PDF.\n\n- Feature A\n- Feature B"
+    )
     reader = MarkdownReader()
     doc_result = reader.read(md.encode("utf-8"), filename="overview.md")
 

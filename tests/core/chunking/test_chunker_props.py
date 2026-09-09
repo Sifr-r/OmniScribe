@@ -22,6 +22,7 @@ from omniscribe.core.chunking.taxonomy import (
 
 # --- Unit Tests: Taxonomy Mapping ---
 
+
 def test_taxonomy_mapping_block_types() -> None:
     assert map_element_type(BlockType.SECTION_HEADER) == "title"
     assert map_element_type(BlockType.PARAGRAPH) == "narrative"
@@ -48,6 +49,7 @@ def test_taxonomy_mapping_string_and_metadata() -> None:
 
 # --- Unit Tests: Knob Validation ---
 
+
 def test_chunker_knob_validation() -> None:
     # max_chars must be positive
     with pytest.raises(ChunkingError, match="max_chars must be a positive integer"):
@@ -58,15 +60,21 @@ def test_chunker_knob_validation() -> None:
     # overlap_chars must be non-negative and < max_chars
     with pytest.raises(ChunkingError, match="overlap_chars must be non-negative"):
         SectionAwareChunker(max_chars=1000, overlap_chars=-1)
-    with pytest.raises(ChunkingError, match=r"overlap_chars .* strictly less than max_chars"):
+    with pytest.raises(
+        ChunkingError, match=r"overlap_chars .* strictly less than max_chars"
+    ):
         SectionAwareChunker(max_chars=1000, overlap_chars=1000)
-    with pytest.raises(ChunkingError, match=r"overlap_chars .* strictly less than max_chars"):
+    with pytest.raises(
+        ChunkingError, match=r"overlap_chars .* strictly less than max_chars"
+    ):
         SectionAwareChunker(max_chars=1000, overlap_chars=1200)
 
     # min_chars must be positive and <= max_chars
     with pytest.raises(ChunkingError, match="min_chars must be a positive integer"):
         SectionAwareChunker(max_chars=1000, min_chars=0)
-    with pytest.raises(ChunkingError, match=r"min_chars .* less than or equal to max_chars"):
+    with pytest.raises(
+        ChunkingError, match=r"min_chars .* less than or equal to max_chars"
+    ):
         SectionAwareChunker(max_chars=500, min_chars=600)
 
     # Valid configurations succeed
@@ -76,13 +84,22 @@ def test_chunker_knob_validation() -> None:
 
 # --- Unit Tests: Table Atomicity and Splitting ---
 
+
 def test_table_stays_atomic_when_small() -> None:
     tree = DocumentTree()
     page = PageTree(page_idx=0)
-    c1 = BlockNode(block_type=BlockType.TEXT, bbox=(0, 0, 0, 0), text="Col1", page_idx=0)
-    c2 = BlockNode(block_type=BlockType.TEXT, bbox=(0, 0, 0, 0), text="Col2", page_idx=0)
-    c3 = BlockNode(block_type=BlockType.TEXT, bbox=(0, 0, 0, 0), text="Val1", page_idx=0)
-    c4 = BlockNode(block_type=BlockType.TEXT, bbox=(0, 0, 0, 0), text="Val2", page_idx=0)
+    c1 = BlockNode(
+        block_type=BlockType.TEXT, bbox=(0, 0, 0, 0), text="Col1", page_idx=0
+    )
+    c2 = BlockNode(
+        block_type=BlockType.TEXT, bbox=(0, 0, 0, 0), text="Col2", page_idx=0
+    )
+    c3 = BlockNode(
+        block_type=BlockType.TEXT, bbox=(0, 0, 0, 0), text="Val1", page_idx=0
+    )
+    c4 = BlockNode(
+        block_type=BlockType.TEXT, bbox=(0, 0, 0, 0), text="Val2", page_idx=0
+    )
     table = TableNode(
         rows=2,
         cols=2,
@@ -106,14 +123,22 @@ def test_table_splits_when_oversized() -> None:
     page = PageTree(page_idx=0)
 
     # Header
-    h1 = BlockNode(block_type=BlockType.TEXT, bbox=(0, 0, 0, 0), text="Item", page_idx=0)
-    h2 = BlockNode(block_type=BlockType.TEXT, bbox=(0, 0, 0, 0), text="Description", page_idx=0)
+    h1 = BlockNode(
+        block_type=BlockType.TEXT, bbox=(0, 0, 0, 0), text="Item", page_idx=0
+    )
+    h2 = BlockNode(
+        block_type=BlockType.TEXT, bbox=(0, 0, 0, 0), text="Description", page_idx=0
+    )
     cells = [[h1, h2]]
 
     # 10 large rows
     for i in range(10):
-        d1 = BlockNode(block_type=BlockType.TEXT, bbox=(0, 0, 0, 0), text=f"Item {i}", page_idx=0)
-        d2 = BlockNode(block_type=BlockType.TEXT, bbox=(0, 0, 0, 0), text="X" * 150, page_idx=0)
+        d1 = BlockNode(
+            block_type=BlockType.TEXT, bbox=(0, 0, 0, 0), text=f"Item {i}", page_idx=0
+        )
+        d2 = BlockNode(
+            block_type=BlockType.TEXT, bbox=(0, 0, 0, 0), text="X" * 150, page_idx=0
+        )
         cells.append([d1, d2])
 
     table = TableNode(
@@ -138,8 +163,11 @@ def test_table_splits_when_oversized() -> None:
 
 # --- Hypothesis Property Tests: Invariants ---
 
+
 @st.composite
-def document_tree_strategy(draw: st.DrawFn) -> tuple[DocumentTree, dict[str, BlockNode]]:
+def document_tree_strategy(
+    draw: st.DrawFn,
+) -> tuple[DocumentTree, dict[str, BlockNode]]:
     """Generate a realistic DocumentTree with varying block types, sections, lengths, and trust scores."""
     tree = DocumentTree()
     block_registry: dict[str, BlockNode] = {}
@@ -151,12 +179,16 @@ def document_tree_strategy(draw: st.DrawFn) -> tuple[DocumentTree, dict[str, Blo
 
         for b_idx in range(num_blocks):
             # Block type selection
-            kind = draw(st.sampled_from([
-                BlockType.SECTION_HEADER,
-                BlockType.PARAGRAPH,
-                BlockType.PARAGRAPH,
-                BlockType.LIST_ITEM,
-            ]))
+            kind = draw(
+                st.sampled_from(
+                    [
+                        BlockType.SECTION_HEADER,
+                        BlockType.PARAGRAPH,
+                        BlockType.PARAGRAPH,
+                        BlockType.LIST_ITEM,
+                    ]
+                )
+            )
             if kind == BlockType.SECTION_HEADER:
                 text = f"Section {draw(st.text(min_size=3, max_size=20, alphabet=st.characters(whitelist_categories=('Lu', 'Ll', 'Nd'))))}"
                 level = draw(st.integers(min_value=1, max_value=3))
@@ -249,9 +281,7 @@ def test_chunker_invariants_hypothesis(
     # 5. Invariant: Page span consistency
     for c in chunks:
         constituent_pages = [
-            block_registry[bid].page_idx
-            for bid in c.block_ids
-            if bid in block_registry
+            block_registry[bid].page_idx for bid in c.block_ids if bid in block_registry
         ]
         if constituent_pages:
             expected_span = (min(constituent_pages), max(constituent_pages))

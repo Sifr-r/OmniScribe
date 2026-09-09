@@ -161,7 +161,9 @@ async def test_https_validate_uses_pinned_ip_transport() -> None:
 
     manager = ProviderManagerImpl(_settings(), discovery_timeout_seconds=1.0)
     fake_response = MagicMock()
-    fake_response.json.return_value = {"data": [{"id": "gpt-4o"}, {"id": "gpt-4o-mini"}]}
+    fake_response.json.return_value = {
+        "data": [{"id": "gpt-4o"}, {"id": "gpt-4o-mini"}]
+    }
     fake_response.raise_for_status = MagicMock()
 
     captured: dict[str, object] = {}
@@ -188,7 +190,9 @@ async def test_https_validate_uses_pinned_ip_transport() -> None:
         ),
         patch("httpx.AsyncClient", _FakeClient),
     ):
-        result = await manager.validate("openai", api_base="https://api.openai.com/v1", api_key="sk-test")
+        result = await manager.validate(
+            "openai", api_base="https://api.openai.com/v1", api_key="sk-test"
+        )
 
     assert result.valid is True
     assert result.model_count == 2
@@ -225,4 +229,3 @@ async def test_pinned_network_backend_redirects_target_host() -> None:
     backend._backend.connect_tcp.assert_awaited_with(
         "other.domain.com", 443, timeout=None, local_address=None, socket_options=None
     )
-

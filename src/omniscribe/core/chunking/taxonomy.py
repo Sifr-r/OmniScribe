@@ -30,74 +30,86 @@ class RAGElementCategory(StrEnum):
     LIST_ITEM = "list_item"
 
 
-_TITLE_TYPES = frozenset({
-    "title",
-    "section_header",
-    "section_heading",
-    "header",
-    "heading",
-    "sub_header",
-    "sub_heading",
-    "h1",
-    "h2",
-    "h3",
-    "h4",
-    "h5",
-    "h6",
-    "doc_title",
-})
+_TITLE_TYPES = frozenset(
+    {
+        "title",
+        "section_header",
+        "section_heading",
+        "header",
+        "heading",
+        "sub_header",
+        "sub_heading",
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+        "h5",
+        "h6",
+        "doc_title",
+    }
+)
 
-_TABLE_TYPES = frozenset({
-    "table",
-    "table_cell",
-    "table_row",
-    "grid",
-    "dataframe",
-})
+_TABLE_TYPES = frozenset(
+    {
+        "table",
+        "table_cell",
+        "table_row",
+        "grid",
+        "dataframe",
+    }
+)
 
-_FIGURE_TYPES = frozenset({
-    "figure",
-    "image",
-    "picture",
-    "photo",
-    "diagram",
-    "chart",
-    "plot",
-    "illustration",
-    "graphic",
-})
+_FIGURE_TYPES = frozenset(
+    {
+        "figure",
+        "image",
+        "picture",
+        "photo",
+        "diagram",
+        "chart",
+        "plot",
+        "illustration",
+        "graphic",
+    }
+)
 
-_FORMULA_TYPES = frozenset({
-    "formula",
-    "equation",
-    "math",
-    "latex",
-    "mathml",
-})
+_FORMULA_TYPES = frozenset(
+    {
+        "formula",
+        "equation",
+        "math",
+        "latex",
+        "mathml",
+    }
+)
 
-_LIST_TYPES = frozenset({
-    "list",
-    "list_item",
-    "bullet",
-    "bullet_point",
-    "ordered_list",
-    "unordered_list",
-})
+_LIST_TYPES = frozenset(
+    {
+        "list",
+        "list_item",
+        "bullet",
+        "bullet_point",
+        "ordered_list",
+        "unordered_list",
+    }
+)
 
-_NARRATIVE_TYPES = frozenset({
-    "narrative",
-    "paragraph",
-    "text",
-    "body",
-    "content",
-    "caption",
-    "footnote",
-    "code",
-    "key_value",
-    "page_header",
-    "page_footer",
-    "page_number",
-})
+_NARRATIVE_TYPES = frozenset(
+    {
+        "narrative",
+        "paragraph",
+        "text",
+        "body",
+        "content",
+        "caption",
+        "footnote",
+        "code",
+        "key_value",
+        "page_header",
+        "page_footer",
+        "page_number",
+    }
+)
 
 
 def map_element_type(
@@ -151,9 +163,7 @@ def map_element_type(
 
     # 3. String normalization match
     raw_str = (
-        block_type.value
-        if hasattr(block_type, "value")
-        else str(block_type or "")
+        block_type.value if hasattr(block_type, "value") else str(block_type or "")
     )
     norm = raw_str.strip().lower()
 

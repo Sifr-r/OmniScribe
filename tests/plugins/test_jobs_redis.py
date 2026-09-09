@@ -55,7 +55,9 @@ async def fake_redis() -> AsyncIterator[fakeredis.aioredis.FakeRedis]:
 
 
 @pytest.fixture
-async def harness(fake_redis: fakeredis.aioredis.FakeRedis) -> AsyncIterator[dict[str, Any]]:
+async def harness(
+    fake_redis: fakeredis.aioredis.FakeRedis,
+) -> AsyncIterator[dict[str, Any]]:
     """Construct an in-process Redis test harness context."""
     ctx = Context()
     backend = RedisStateBackend(redis_url="redis://fake:6379/0")

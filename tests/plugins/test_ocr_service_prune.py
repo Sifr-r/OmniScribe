@@ -139,7 +139,9 @@ async def test_wait_for_events_returns_immediately_on_done_jobs_no_deadlock() ->
     await asyncio.wait_for(service.wait_for_events(job_id), timeout=0.2)
 
 
-async def test_wait_for_events_returns_immediately_if_events_arrived_just_before_waiting() -> None:
+async def test_wait_for_events_returns_immediately_if_events_arrived_just_before_waiting() -> (
+    None
+):
     """Test that wait_for_events consumes events that arrived just before wait.
 
     Smell 4.18: Guard against missed wake-ups / event flapping.
@@ -177,7 +179,9 @@ async def test_wait_for_events_wakes_up_when_event_arrives_while_waiting() -> No
     assert backlog[0]["event"] == "job_started"
 
 
-async def test_wait_for_events_rapid_burst_and_terminal_event_no_missed_events() -> None:
+async def test_wait_for_events_rapid_burst_and_terminal_event_no_missed_events() -> (
+    None
+):
     """Test rapid event burst and terminal event are completely consumed without flapping."""
     service = _bare_service()
     job_id = "burst_job"

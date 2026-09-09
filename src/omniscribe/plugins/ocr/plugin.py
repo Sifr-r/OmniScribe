@@ -142,8 +142,36 @@ _SUPPORTED_FORMAT_SIGNATURES: tuple[tuple[str, Callable[[bytes], bool]], ...] = 
         ),
     ),
     ("docx", lambda head: head.startswith(b"PK\x03\x04")),
-    ("html", lambda head: head.decode("utf-8", errors="ignore").lstrip().lower().startswith(("<!doc", "<html", "<head", "<body", "<?xml", "<p", "<div", "<h1", "<h2", "<h3", "<table"))),
-    ("md", lambda head: bool(head) and head.lstrip().startswith((b"#", b"---", b"```", b">", b"- ", b"* "))),
+    (
+        "html",
+        lambda head: (
+            head.decode("utf-8", errors="ignore")
+            .lstrip()
+            .lower()
+            .startswith(
+                (
+                    "<!doc",
+                    "<html",
+                    "<head",
+                    "<body",
+                    "<?xml",
+                    "<p",
+                    "<div",
+                    "<h1",
+                    "<h2",
+                    "<h3",
+                    "<table",
+                )
+            )
+        ),
+    ),
+    (
+        "md",
+        lambda head: (
+            bool(head)
+            and head.lstrip().startswith((b"#", b"---", b"```", b">", b"- ", b"* "))
+        ),
+    ),
 )
 
 _MIME_TO_FORMAT: dict[str, str] = {

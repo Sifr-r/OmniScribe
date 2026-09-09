@@ -38,6 +38,7 @@ try:
     from selectolax.parser import (
         HTMLParser as SelectolaxParser,
     )
+
     _HAS_SELECTOLAX = True
 except ImportError:
     SelectolaxParser = None
@@ -51,16 +52,17 @@ def _format_markdown_table(rows_data: list[list[str]]) -> str:
     if not rows_data or not rows_data[0]:
         return ""
     col_count = max(len(row) for row in rows_data)
-    padded = [
-        row + [""] * (col_count - len(row))
-        for row in rows_data
-    ]
+    padded = [row + [""] * (col_count - len(row)) for row in rows_data]
     lines: list[str] = []
     header_row = padded[0]
-    lines.append("| " + " | ".join(cell.replace("\n", " ").strip() for cell in header_row) + " |")
+    lines.append(
+        "| " + " | ".join(cell.replace("\n", " ").strip() for cell in header_row) + " |"
+    )
     lines.append("| " + " | ".join(["---"] * col_count) + " |")
     for row in padded[1:]:
-        lines.append("| " + " | ".join(cell.replace("\n", " ").strip() for cell in row) + " |")
+        lines.append(
+            "| " + " | ".join(cell.replace("\n", " ").strip() for cell in row) + " |"
+        )
     return "\n".join(lines)
 
 
@@ -159,60 +161,70 @@ class _StdlibHTMLDocParser(StdlibHTMLParser):
         if tag_lower in self._HEADING_TAGS and self._active_tag == tag_lower:
             text = "".join(self._active_text).strip()
             if text:
-                self.pages[-1].append({
-                    "type": "heading",
-                    "kind": "section_header",
-                    "level": self._active_level,
-                    "text": text,
-                })
+                self.pages[-1].append(
+                    {
+                        "type": "heading",
+                        "kind": "section_header",
+                        "level": self._active_level,
+                        "text": text,
+                    }
+                )
             self._active_tag = None
             self._active_text = []
 
         elif tag_lower == "p" and self._active_tag == "p":
             text = "".join(self._active_text).strip()
             if text:
-                self.pages[-1].append({
-                    "type": "paragraph",
-                    "kind": "paragraph",
-                    "level": 0,
-                    "text": text,
-                })
+                self.pages[-1].append(
+                    {
+                        "type": "paragraph",
+                        "kind": "paragraph",
+                        "level": 0,
+                        "text": text,
+                    }
+                )
             self._active_tag = None
             self._active_text = []
 
         elif tag_lower == "li" and self._active_tag == "li":
             text = "".join(self._active_text).strip()
             if text:
-                self.pages[-1].append({
-                    "type": "list_item",
-                    "kind": "list_item",
-                    "level": 0,
-                    "text": text,
-                })
+                self.pages[-1].append(
+                    {
+                        "type": "list_item",
+                        "kind": "list_item",
+                        "level": 0,
+                        "text": text,
+                    }
+                )
             self._active_tag = None
             self._active_text = []
 
         elif tag_lower in ("pre", "code") and self._active_tag == tag_lower:
             text = "".join(self._active_text).strip()
             if text:
-                self.pages[-1].append({
-                    "type": "code",
-                    "kind": "code",
-                    "level": 0,
-                    "text": text,
-                })
+                self.pages[-1].append(
+                    {
+                        "type": "code",
+                        "kind": "code",
+                        "level": 0,
+                        "text": text,
+                    }
+                )
             self._active_tag = None
             self._active_text = []
 
         elif tag_lower == "blockquote" and self._active_tag == "blockquote":
             text = "".join(self._active_text).strip()
             if text:
-                self.pages[-1].append({
-                    "type": "paragraph",
-                    "kind": "paragraph",
-                    "level": 0,
-                    "text": text,
-                })
+                self.pages[-1].append(
+                    {
+                        "type": "paragraph",
+                        "kind": "paragraph",
+                        "level": 0,
+                        "text": text,
+                    }
+                )
             self._active_tag = None
             self._active_text = []
 
@@ -228,13 +240,15 @@ class _StdlibHTMLDocParser(StdlibHTMLParser):
         elif tag_lower == "table" and self._in_table:
             if self._table_rows and any(any(c for c in r) for r in self._table_rows):
                 table_md = _format_markdown_table(self._table_rows)
-                self.pages[-1].append({
-                    "type": "table",
-                    "kind": "table",
-                    "level": 0,
-                    "text": table_md,
-                    "rows_data": self._table_rows,
-                })
+                self.pages[-1].append(
+                    {
+                        "type": "table",
+                        "kind": "table",
+                        "level": 0,
+                        "text": table_md,
+                        "rows_data": self._table_rows,
+                    }
+                )
             self._in_table = False
             self._table_rows = []
 
@@ -267,12 +281,14 @@ class _StdlibHTMLDocParser(StdlibHTMLParser):
                 elif self._active_tag in ("pre", "code"):
                     item_type = "code"
                     kind = "code"
-                self.pages[-1].append({
-                    "type": item_type,
-                    "kind": kind,
-                    "level": self._active_level,
-                    "text": text,
-                })
+                self.pages[-1].append(
+                    {
+                        "type": item_type,
+                        "kind": kind,
+                        "level": self._active_level,
+                        "text": text,
+                    }
+                )
         self._active_tag = None
         self._active_text = []
         self._active_level = 0
@@ -313,32 +329,38 @@ def _parse_with_selectolax(html_text: str) -> list[list[dict[str, Any]]]:
                 continue
             if level == 1 and pages_raw[-1]:
                 pages_raw.append([])
-            pages_raw[-1].append({
-                "type": "heading",
-                "kind": "section_header",
-                "level": level,
-                "text": text,
-            })
+            pages_raw[-1].append(
+                {
+                    "type": "heading",
+                    "kind": "section_header",
+                    "level": level,
+                    "text": text,
+                }
+            )
 
         elif tag == "p":
             text = node.text(strip=True)
             if text:
-                pages_raw[-1].append({
-                    "type": "paragraph",
-                    "kind": "paragraph",
-                    "level": 0,
-                    "text": text,
-                })
+                pages_raw[-1].append(
+                    {
+                        "type": "paragraph",
+                        "kind": "paragraph",
+                        "level": 0,
+                        "text": text,
+                    }
+                )
 
         elif tag == "li":
             text = node.text(strip=True)
             if text:
-                pages_raw[-1].append({
-                    "type": "list_item",
-                    "kind": "list_item",
-                    "level": 0,
-                    "text": text,
-                })
+                pages_raw[-1].append(
+                    {
+                        "type": "list_item",
+                        "kind": "list_item",
+                        "level": 0,
+                        "text": text,
+                    }
+                )
 
         elif tag in ("pre", "code"):
             # Avoid duplicating pre and nested code
@@ -346,12 +368,14 @@ def _parse_with_selectolax(html_text: str) -> list[list[dict[str, Any]]]:
                 continue
             text = node.text(strip=True)
             if text:
-                pages_raw[-1].append({
-                    "type": "code",
-                    "kind": "code",
-                    "level": 0,
-                    "text": text,
-                })
+                pages_raw[-1].append(
+                    {
+                        "type": "code",
+                        "kind": "code",
+                        "level": 0,
+                        "text": text,
+                    }
+                )
 
         elif tag == "table":
             rows_data: list[list[str]] = []
@@ -360,13 +384,15 @@ def _parse_with_selectolax(html_text: str) -> list[list[dict[str, Any]]]:
                 if cells:
                     rows_data.append(cells)
             if rows_data and any(any(c for c in r) for r in rows_data):
-                pages_raw[-1].append({
-                    "type": "table",
-                    "kind": "table",
-                    "level": 0,
-                    "text": _format_markdown_table(rows_data),
-                    "rows_data": rows_data,
-                })
+                pages_raw[-1].append(
+                    {
+                        "type": "table",
+                        "kind": "table",
+                        "level": 0,
+                        "text": _format_markdown_table(rows_data),
+                        "rows_data": rows_data,
+                    }
+                )
 
     return [p for p in pages_raw if p]
 
@@ -380,7 +406,9 @@ class HtmlReader(BaseDocumentReader):
         filename: str = "",
     ) -> DocumentResult:
         raw_bytes = resolve_source_bytes(source)
-        source_name = filename or (str(source) if isinstance(source, (str, Path)) else "document.html")
+        source_name = filename or (
+            str(source) if isinstance(source, (str, Path)) else "document.html"
+        )
 
         # Decode text with fallback
         try:
@@ -411,7 +439,9 @@ class HtmlReader(BaseDocumentReader):
             return DocumentResult(
                 pages=[create_synthetic_page(0, [])],
                 source_path=source_name,
-                tree=DocumentTree(pages=[PageTree(page_idx=0)], source_path=source_name),
+                tree=DocumentTree(
+                    pages=[PageTree(page_idx=0)], source_path=source_name
+                ),
             )
 
         doc_pages: list[DocumentPage] = []
@@ -420,7 +450,10 @@ class HtmlReader(BaseDocumentReader):
         all_tables: list[TableNode] = []
 
         for page_idx, raw_items in enumerate(pages_raw):
-            spec = [(item["text"], item["kind"], {"level": item.get("level", 0)}) for item in raw_items]
+            spec = [
+                (item["text"], item["kind"], {"level": item.get("level", 0)})
+                for item in raw_items
+            ]
             doc_blocks = layout_synthetic_blocks(spec)
 
             tree_children: list[BlockNode | TableNode] = []
@@ -439,10 +472,16 @@ class HtmlReader(BaseDocumentReader):
                         row_nodes: list[BlockNode] = []
                         for c_idx, cell_text in enumerate(row):
                             cell_bbox: BBox = (
-                                bbox[0] + (c_idx / max(num_cols, 1)) * (bbox[2] - bbox[0]),
-                                bbox[1] + (r_idx / max(num_rows, 1)) * (bbox[3] - bbox[1]),
-                                bbox[0] + ((c_idx + 1) / max(num_cols, 1)) * (bbox[2] - bbox[0]),
-                                bbox[1] + ((r_idx + 1) / max(num_rows, 1)) * (bbox[3] - bbox[1]),
+                                bbox[0]
+                                + (c_idx / max(num_cols, 1)) * (bbox[2] - bbox[0]),
+                                bbox[1]
+                                + (r_idx / max(num_rows, 1)) * (bbox[3] - bbox[1]),
+                                bbox[0]
+                                + ((c_idx + 1) / max(num_cols, 1))
+                                * (bbox[2] - bbox[0]),
+                                bbox[1]
+                                + ((r_idx + 1) / max(num_rows, 1))
+                                * (bbox[3] - bbox[1]),
                             )
                             c_node = BlockNode(
                                 block_type=BlockType.TEXT,

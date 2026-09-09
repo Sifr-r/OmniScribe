@@ -308,8 +308,6 @@ async def test_table_fallback_passes_strict_pipeline_runner() -> None:
     doc.pages[0].blocks[1].kind = "table"
     doc.pages[0].blocks[1].confidence = 0.50
 
-    result = await run_document_processors(
-        doc, [TableFallbackProcessor()], strict=True
-    )
+    result = await run_document_processors(doc, [TableFallbackProcessor()], strict=True)
     assert result.tree is not None
     assert len(result.tree.tables) == 1

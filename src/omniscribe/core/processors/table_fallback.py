@@ -146,9 +146,7 @@ class TableFallbackProcessor:
 
         for page_idx, page in enumerate(document.pages):
             tree_page = (
-                tree.pages[page_idx]
-                if (tree and page_idx < len(tree.pages))
-                else None
+                tree.pages[page_idx] if (tree and page_idx < len(tree.pages)) else None
             )
 
             # 1. Refine existing low-confidence TableNodes
@@ -190,9 +188,7 @@ class TableFallbackProcessor:
             return 1.0
         return sum(cell_confs) / len(cell_confs)
 
-    def _process_table_node(
-        self, table_node: TableNode, page: DocumentPage
-    ) -> None:
+    def _process_table_node(self, table_node: TableNode, page: DocumentPage) -> None:
         """Inspect and refine a TableNode if its confidence is below threshold."""
         avg_conf = self._compute_table_confidence(table_node)
         if avg_conf >= self.confidence_threshold:
@@ -208,10 +204,7 @@ class TableFallbackProcessor:
 
         # Concatenate cell texts to inspect if cells were bunched or misaligned
         cell_texts = [
-            cell.text
-            for row in table_node.cells
-            for cell in row
-            if cell.text.strip()
+            cell.text for row in table_node.cells for cell in row if cell.text.strip()
         ]
         joined_text = "\n".join(cell_texts)
 
@@ -280,9 +273,7 @@ class TableFallbackProcessor:
         # Cluster cells by Y center
         rows: list[list[BlockNode]] = []
         row_centers: list[float] = []
-        sorted_by_y = sorted(
-            all_cells, key=lambda c: (c.bbox[1] + c.bbox[3]) / 2.0
-        )
+        sorted_by_y = sorted(all_cells, key=lambda c: (c.bbox[1] + c.bbox[3]) / 2.0)
 
         for cell in sorted_by_y:
             cy = (cell.bbox[1] + cell.bbox[3]) / 2.0

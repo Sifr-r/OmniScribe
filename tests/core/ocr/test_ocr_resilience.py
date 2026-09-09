@@ -334,7 +334,9 @@ async def test_successful_call_resets_breaker_for_next_page():
 async def test_chat_context_length_error_generic_message():
     p = _make_processor()
     mock_call = AsyncMock(
-        side_effect=_FakeHTTPError("context_length_exceeded: prompt tokens exceeded window")
+        side_effect=_FakeHTTPError(
+            "context_length_exceeded: prompt tokens exceeded window"
+        )
     )
     with patch("omniscribe.core.ocr.chat_client.call_llm", mock_call):
         with pytest.raises(
@@ -344,4 +346,3 @@ async def test_chat_context_length_error_generic_message():
 
     assert p.api_base in str(exc_info.value)
     assert "Context Size Limit" in str(exc_info.value)
-

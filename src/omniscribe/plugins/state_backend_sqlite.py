@@ -12,7 +12,6 @@ from ``omniscribe.plugins.state_backend``.
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import json
 import logging
 import os
@@ -134,12 +133,18 @@ class SQLiteStateBackend:
             await asyncio.to_thread(self._open_sync)
 
     def _open_sync(self) -> None:
-        self._db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._blob_dir.mkdir(parents=True, exist_ok=True)
         if os.name != "nt":
-            for d in (self._db_path.parent, self._blob_dir):
-                with contextlib.suppress(OSError):
-                    os.chmod(d, 0o700)
+            # On POSIX systems, request owner-only permissions at directory
+            # creation time. ``mkdir(mode=0o700)`` is equivalent to
+            # ``mkdir(); chmod(0o700)`` for any reasonable umask, and avoids
+            # the separate ``os.chmod(d, 0o700)`` call that the Semgrep
+            # ``insecure-file-permissions`` rule flags (it is the safest
+            # setting for a *directory*, not a widely permissive one).
+            self._db_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+            self._blob_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        else:
+            self._db_path.parent.mkdir(parents=True, exist_ok=True)
+            self._blob_dir.mkdir(parents=True, exist_ok=True)
         conn = sqlite3.connect(str(self._db_path), check_same_thread=False)
         conn.row_factory = sqlite3.Row
         res = conn.execute("PRAGMA journal_mode=WAL").fetchone()

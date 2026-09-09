@@ -105,10 +105,14 @@ def test_env_bool_logs_warning_on_invalid_value(
     with caplog.at_level(logging.WARNING, logger="omniscribe.utils.env"):
         result = env_bool("TEST_BOOL_FLAG", default=True)
     assert result is True
-    assert "Ignoring invalid boolean environment value for TEST_BOOL_FLAG" in caplog.text
+    assert (
+        "Ignoring invalid boolean environment value for TEST_BOOL_FLAG" in caplog.text
+    )
 
 
-def test_env_str_vs_env_list_csv_empty_semantics(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_env_str_vs_env_list_csv_empty_semantics(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from omniscribe.utils.env import env_list_csv, env_str
 
     # Unset
@@ -134,7 +138,9 @@ def test_persist_env_key_all_exported() -> None:
     assert callable(env_mod.persist_env_key)
 
 
-def test_persist_env_key_new_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_persist_env_key_new_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     import dotenv
 
     from omniscribe.utils.env import persist_env_key
@@ -213,4 +219,3 @@ def test_persist_env_key_boundary_validation(
 
     assert not env_file.exists()
     assert "Failed to persist" in caplog.text
-

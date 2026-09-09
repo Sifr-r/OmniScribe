@@ -108,7 +108,10 @@ class SectionAwareChunker:
             if isinstance(elem, BlockNode):
                 if elem.block_type == BlockType.SECTION_HEADER:
                     is_sec_header = True
-                elif elem.section_hierarchy and elem.section_hierarchy != current_section_path:
+                elif (
+                    elem.section_hierarchy
+                    and elem.section_hierarchy != current_section_path
+                ):
                     flush_accum()
                     current_section_path = list(elem.section_hierarchy)
 
@@ -150,14 +153,18 @@ class SectionAwareChunker:
             # 3. Figure handling (Atomic)
             if elem_type == "figure":
                 flush_accum()
-                fig_chunk = self._chunk_figure(cast(BlockNode, elem), current_section_path)
+                fig_chunk = self._chunk_figure(
+                    cast(BlockNode, elem), current_section_path
+                )
                 chunks.append(fig_chunk)
                 continue
 
             # 4. Formula / Equation handling (Atomic)
             if elem_type == "formula":
                 flush_accum()
-                eq_chunk = self._chunk_equation(cast(BlockNode, elem), current_section_path)
+                eq_chunk = self._chunk_equation(
+                    cast(BlockNode, elem), current_section_path
+                )
                 chunks.append(eq_chunk)
                 continue
 
@@ -192,7 +199,10 @@ class SectionAwareChunker:
                             suffix = prev_blocks[k:]
                             suffix_text = nl2.join(b.text.strip() for b in suffix)
                             if len(suffix_text) <= self.overlap_chars:
-                                if len(f"{suffix_text}{nl2}{block_text}") <= self.max_chars:
+                                if (
+                                    len(f"{suffix_text}{nl2}{block_text}")
+                                    <= self.max_chars
+                                ):
                                     overlap_seed = suffix
                                 break
 
@@ -236,7 +246,9 @@ class SectionAwareChunker:
 
         for table in tree.tables:
             t_id = getattr(table, "block_id", "")
-            if (not t_id or t_id not in rendered_table_ids) and id(table) not in rendered_table_ids:
+            if (not t_id or t_id not in rendered_table_ids) and id(
+                table
+            ) not in rendered_table_ids:
                 elements.append(table)
                 if t_id:
                     rendered_table_ids.add(t_id)
@@ -269,9 +281,7 @@ class SectionAwareChunker:
         block_ids = [b.block_id for b in blocks if getattr(b, "block_id", None)]
 
         trust_scores: list[float] = [
-            b.trust_score
-            for b in blocks
-            if b.trust_score is not None
+            b.trust_score for b in blocks if b.trust_score is not None
         ]
         min_trust = min(trust_scores) if trust_scores else None
 
@@ -411,11 +421,7 @@ class SectionAwareChunker:
                 current_data_rows.append(row_line)
             else:
                 test_text = (
-                    header_text
-                    + nl
-                    + nl.join(current_data_rows)
-                    + nl
-                    + row_line
+                    header_text + nl + nl.join(current_data_rows) + nl + row_line
                 )
                 if len(test_text) <= self.max_chars:
                     current_data_rows.append(row_line)

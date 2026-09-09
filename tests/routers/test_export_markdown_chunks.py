@@ -202,7 +202,9 @@ def test_export_chunks_knob_validation(api_client: TestClient) -> None:
     assert get_resp.json()["error"] == "bad_request"
 
 
-def test_routes_not_captured_by_parameterized_export_route(api_client: TestClient) -> None:
+def test_routes_not_captured_by_parameterized_export_route(
+    api_client: TestClient,
+) -> None:
     """Ensure GET /api/export/markdown and GET /api/export/chunks are not captured
     by GET /api/export/{artifact_id} (which requires Bearer token and returns 403).
     """

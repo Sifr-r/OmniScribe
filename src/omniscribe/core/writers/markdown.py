@@ -65,7 +65,9 @@ def render_markdown(
     # Render any unrendered tables from tree.tables
     for table in tree.tables:
         t_id = getattr(table, "block_id", "")
-        if (not t_id or t_id not in rendered_table_ids) and id(table) not in rendered_table_ids:
+        if (not t_id or t_id not in rendered_table_ids) and id(
+            table
+        ) not in rendered_table_ids:
             tbl_str = _render_table(table)
             if tbl_str:
                 out.append(tbl_str)
@@ -75,10 +77,16 @@ def render_markdown(
 
     # Also render any unrendered figures from tree.figures not yet covered
     rendered_figure_ids: set[str | int] = {
-        node.block_id for page in tree.pages for node in page.children if getattr(node, "block_id", None)
+        node.block_id
+        for page in tree.pages
+        for node in page.children
+        if getattr(node, "block_id", None)
     }
     for fig in getattr(tree, "figures", []):
-        if fig.block_id not in rendered_figure_ids and id(fig) not in rendered_figure_ids:
+        if (
+            fig.block_id not in rendered_figure_ids
+            and id(fig) not in rendered_figure_ids
+        ):
             fig_str = _render_figure_node(fig)
             if fig_str:
                 out.append(fig_str)
@@ -87,10 +95,16 @@ def render_markdown(
 
     # Also render any unrendered equations from tree.equations
     rendered_equation_ids: set[str | int] = {
-        node.block_id for page in tree.pages for node in page.children if getattr(node, "block_id", None)
+        node.block_id
+        for page in tree.pages
+        for node in page.children
+        if getattr(node, "block_id", None)
     }
     for eq in getattr(tree, "equations", []):
-        if eq.block_id not in rendered_equation_ids and id(eq) not in rendered_equation_ids:
+        if (
+            eq.block_id not in rendered_equation_ids
+            and id(eq) not in rendered_equation_ids
+        ):
             eq_str = _render_equation_node(eq)
             if eq_str:
                 out.append(eq_str)
@@ -129,7 +143,9 @@ def _render_page(
             continue
 
         bt = getattr(child, "block_type", None)
-        bt_val = bt.value if (bt is not None and hasattr(bt, "value")) else str(bt or "")
+        bt_val = (
+            bt.value if (bt is not None and hasattr(bt, "value")) else str(bt or "")
+        )
 
         if bt_val == "list_item":
             item_str = _render_block(child)
@@ -249,11 +265,15 @@ def _render_figure_node(node: FigureNode | BlockNode | Any) -> str:
     caption = getattr(node, "caption", "") or metadata.get("caption", "") or ""
     text = getattr(node, "text", "") or ""
 
-    if not caption and text and not (
-        text.startswith("http://")
-        or text.startswith("https://")
-        or text.startswith("data:")
-        or text.startswith("artifact:")
+    if (
+        not caption
+        and text
+        and not (
+            text.startswith("http://")
+            or text.startswith("https://")
+            or text.startswith("data:")
+            or text.startswith("artifact:")
+        )
     ):
         caption = text
 
@@ -306,9 +326,7 @@ def _render_table(table: TableNode | BlockNode | Any) -> str:
     for row in cells:
         if not isinstance(row, (list, tuple)):
             continue
-        row_vals = [
-            _clean_table_cell(getattr(c, "text", str(c))) for c in row
-        ]
+        row_vals = [_clean_table_cell(getattr(c, "text", str(c))) for c in row]
         if len(row_vals) > max_cols:
             max_cols = len(row_vals)
         rows.append(row_vals)

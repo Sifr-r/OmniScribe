@@ -192,7 +192,9 @@ def _job_record_from_dict(data: dict[str, Any]) -> JobRecord:
         input_path=data.get("input_path"),
         created_at=float(data["created_at"]),
         updated_at=float(data["updated_at"]),
-        started_at=(float(data["started_at"]) if data.get("started_at") is not None else None),
+        started_at=(
+            float(data["started_at"]) if data.get("started_at") is not None else None
+        ),
         error=data.get("error"),
     )
 
@@ -350,9 +352,7 @@ class RedisStateBackend:
         except KeyError:
             return None
 
-    async def list_jobs(
-        self, *, limit: int = 100, offset: int = 0
-    ) -> list[JobRecord]:
+    async def list_jobs(self, *, limit: int = 100, offset: int = 0) -> list[JobRecord]:
         if limit <= 0:
             return []
         # ZREVRANGE returns the highest-scored entries first; the
@@ -383,9 +383,7 @@ class RedisStateBackend:
         # index key) and delete them. The index key is deleted
         # separately to keep the scan's MATCH pattern clean.
         deleted = 0
-        async for key in self._redis.scan_iter(
-            match=f"{_KEY_PREFIX}job:*", count=500
-        ):
+        async for key in self._redis.scan_iter(match=f"{_KEY_PREFIX}job:*", count=500):
             if key == _job_index_key().encode("utf-8"):
                 continue
             await self._redis.delete(key)
@@ -485,7 +483,11 @@ class RedisStateBackend:
                     # Mark as consumed, preserving the existing TTL.
                     updated = dataclasses.replace(record, consumed=True)
                     pipe.multi()
-                    pipe.set(key, json.dumps(_channel_record_to_dict(updated)).encode("utf-8"), keepttl=True)
+                    pipe.set(
+                        key,
+                        json.dumps(_channel_record_to_dict(updated)).encode("utf-8"),
+                        keepttl=True,
+                    )
                     await pipe.execute()
                     return record
             except Exception:  # WATCH fired; another writer beat us. Retry.
@@ -502,9 +504,7 @@ class RedisStateBackend:
         # as the score, so ``ZRANGEBYSCORE 0 now`` returns exactly
         # the expired channel ids — no SCAN needed. The ids come
         # back as bytes; decode them for the key builders.
-        expired = await self._redis.zrangebyscore(
-            _channel_index_key(), 0, now
-        )
+        expired = await self._redis.zrangebyscore(_channel_index_key(), 0, now)
         if not expired:
             return 0
         deleted = 0

@@ -211,7 +211,9 @@ def test_set_active_falls_back_to_settings_when_template_has_no_url_or_models() 
     assert active["model"] == "custom-model-x"
 
 
-def test_set_active_resolves_active_provider_from_host_when_provider_id_omitted() -> None:
+def test_set_active_resolves_active_provider_from_host_when_provider_id_omitted() -> (
+    None
+):
     manager, _ = _manager()
     active = manager.set_active(api_base="https://api.anthropic.com")
     assert active["provider_id"] == "anthropic"
@@ -437,16 +439,12 @@ def test_provider_models_passes_resolved_key_to_discover_models() -> None:
             headers={"Authorization": "Basic dXNlcjpwYXNz"},
         )
         assert resp3.status_code == 200
-        mock_discover.assert_awaited_with(
-            "openai", api_base=None, api_key="query-key"
-        )
+        mock_discover.assert_awaited_with("openai", api_base=None, api_key="query-key")
 
         # 4. Query param used when no headers provided
         resp4 = client.get("/api/providers/openai/models?api_key=query-key")
         assert resp4.status_code == 200
-        mock_discover.assert_awaited_with(
-            "openai", api_base=None, api_key="query-key"
-        )
+        mock_discover.assert_awaited_with("openai", api_base=None, api_key="query-key")
 
 
 def test_bearer_token_helper() -> None:
@@ -550,7 +548,9 @@ def test_set_active_route_with_omitted_api_key(api_client: TestClient) -> None:
     assert manager._settings.llm_model == "different-model"
 
 
-def test_set_active_route_with_omitted_api_base_and_model(api_client: TestClient) -> None:
+def test_set_active_route_with_omitted_api_base_and_model(
+    api_client: TestClient,
+) -> None:
     response = api_client.post(
         "/api/providers/active",
         json={"providerId": "anthropic"},
@@ -680,9 +680,7 @@ async def test_discover_models_anthropic_base_with_v1_does_not_duplicate() -> No
 
 
 async def test_validate_anthropic_uses_custom_headers_and_endpoint() -> None:
-    manager, http = _manager(
-        FakeHttpClient({"data": [{"id": "claude-sonnet-4-5"}]})
-    )
+    manager, http = _manager(FakeHttpClient({"data": [{"id": "claude-sonnet-4-5"}]}))
     result = await manager.validate(
         "anthropic",
         api_base="https://api.anthropic.com",
@@ -725,7 +723,9 @@ async def test_discover_models_auto_discovers_from_env(
         for provider_id, env_var in cases:
             monkeypatch.setenv(env_var, "sk-test-val")
             manager, http = _manager(FakeHttpClient({"data": [{"id": "m1"}]}))
-            result = await manager.discover_models(provider_id, api_base="https://api.example.com/v1")
+            result = await manager.discover_models(
+                provider_id, api_base="https://api.example.com/v1"
+            )
             assert result["models"] == ["m1"]
             assert len(http.calls) == 1
             _, headers = http.calls[0]
@@ -762,7 +762,9 @@ async def test_discover_models_auto_discovers_databricks_tokens(
         # 1. DATABRICKS_TOKEN preferred
         monkeypatch.setenv("DATABRICKS_TOKEN", "dapi-tok-1")
         manager, http = _manager(FakeHttpClient({"data": [{"id": "db-1"}]}))
-        await manager.discover_models("databricks", api_base="https://dbc.cloud.databricks.com")
+        await manager.discover_models(
+            "databricks", api_base="https://dbc.cloud.databricks.com"
+        )
         assert len(http.calls) == 1
         _, headers = http.calls[0]
         assert headers.get("Authorization") == "Bearer dapi-tok-1"
@@ -771,7 +773,9 @@ async def test_discover_models_auto_discovers_databricks_tokens(
         monkeypatch.delenv("DATABRICKS_TOKEN", raising=False)
         monkeypatch.setenv("DATABRICKS_API_TOKEN", "dapi-tok-2")
         manager2, http2 = _manager(FakeHttpClient({"data": [{"id": "db-2"}]}))
-        await manager2.discover_models("databricks", api_base="https://dbc.cloud.databricks.com")
+        await manager2.discover_models(
+            "databricks", api_base="https://dbc.cloud.databricks.com"
+        )
         assert len(http2.calls) == 1
         _, headers2 = http2.calls[0]
         assert headers2.get("Authorization") == "Bearer dapi-tok-2"
@@ -837,4 +841,3 @@ async def test_auto_discover_does_not_use_settings_for_inactive_provider(
     _, headers = http.calls[0]
     assert "x-api-key" not in headers
     assert "Authorization" not in headers
-

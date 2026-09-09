@@ -49,9 +49,7 @@ async def redis_state_backend() -> AsyncIterator[RedisStateBackend]:
 
     orig_from_url = redis_async.from_url
     redis_async.from_url = lambda *a, **kw: fake
-    sbm.RedisStateBackend.__init__.__globals__[
-        "redis_async"
-    ] = redis_async
+    sbm.RedisStateBackend.__init__.__globals__["redis_async"] = redis_async
     try:
         backend = RedisStateBackend(redis_url="redis://fake:6379/0")
         await backend.open()
@@ -85,8 +83,12 @@ async def test_artifact_bad_token_returns_none(
     redis_state_backend: RedisStateBackend,
 ) -> None:
     await redis_state_backend.put_artifact(
-        id="a1", token="t1", owner_job_id="j1",
-        content_type="text/plain", blob=b"x", ttl_seconds=60,
+        id="a1",
+        token="t1",
+        owner_job_id="j1",
+        content_type="text/plain",
+        blob=b"x",
+        ttl_seconds=60,
     )
     blob = await redis_state_backend.get_artifact("a1", "wrong-token")
     assert blob is None  # auth gate
@@ -102,8 +104,12 @@ async def test_artifact_delete(
     redis_state_backend: RedisStateBackend,
 ) -> None:
     await redis_state_backend.put_artifact(
-        id="a1", token="t1", owner_job_id="j1",
-        content_type="text/plain", blob=b"x", ttl_seconds=60,
+        id="a1",
+        token="t1",
+        owner_job_id="j1",
+        content_type="text/plain",
+        blob=b"x",
+        ttl_seconds=60,
     )
     await redis_state_backend.delete_artifact("a1")
     assert await redis_state_backend.get_artifact("a1", "t1") is None
@@ -177,10 +183,7 @@ async def test_job_delete(
     await redis_state_backend.delete_job("j1")
     assert await redis_state_backend.get_job("j1") is None
     # The index entry is gone too (next list_jobs must not return it).
-    assert all(
-        j.job_id != "j1"
-        for j in await redis_state_backend.list_jobs()
-    )
+    assert all(j.job_id != "j1" for j in await redis_state_backend.list_jobs())
 
 
 async def test_clear_jobs(

@@ -36,6 +36,7 @@ from omniscribe.core.readers.base import (
 
 try:
     import mistune
+
     _HAS_MISTUNE = True
 except ImportError:
     mistune = None
@@ -54,16 +55,17 @@ def _format_markdown_table(rows_data: list[list[str]]) -> str:
     if not rows_data or not rows_data[0]:
         return ""
     col_count = max(len(row) for row in rows_data)
-    padded = [
-        row + [""] * (col_count - len(row))
-        for row in rows_data
-    ]
+    padded = [row + [""] * (col_count - len(row)) for row in rows_data]
     lines: list[str] = []
     header_row = padded[0]
-    lines.append("| " + " | ".join(cell.replace("\n", " ").strip() for cell in header_row) + " |")
+    lines.append(
+        "| " + " | ".join(cell.replace("\n", " ").strip() for cell in header_row) + " |"
+    )
     lines.append("| " + " | ".join(["---"] * col_count) + " |")
     for row in padded[1:]:
-        lines.append("| " + " | ".join(cell.replace("\n", " ").strip() for cell in row) + " |")
+        lines.append(
+            "| " + " | ".join(cell.replace("\n", " ").strip() for cell in row) + " |"
+        )
     return "\n".join(lines)
 
 
@@ -107,12 +109,14 @@ def _parse_markdown_fallback(md_text: str) -> list[list[dict[str, Any]]]:
             if i < num_lines:
                 i += 1  # consume closing fence
             code_text = "\n".join(code_lines)
-            pages_raw[-1].append({
-                "type": "code",
-                "kind": "code",
-                "level": 0,
-                "text": code_text,
-            })
+            pages_raw[-1].append(
+                {
+                    "type": "code",
+                    "kind": "code",
+                    "level": 0,
+                    "text": code_text,
+                }
+            )
             continue
 
         # ATX Heading (# Heading)
@@ -122,12 +126,14 @@ def _parse_markdown_fallback(md_text: str) -> list[list[dict[str, Any]]]:
             heading_text = atx_match.group(2).strip()
             if level == 1 and pages_raw[-1]:
                 pages_raw.append([])
-            pages_raw[-1].append({
-                "type": "heading",
-                "kind": "section_header",
-                "level": level,
-                "text": heading_text,
-            })
+            pages_raw[-1].append(
+                {
+                    "type": "heading",
+                    "kind": "section_header",
+                    "level": level,
+                    "text": heading_text,
+                }
+            )
             i += 1
             continue
 
@@ -138,22 +144,28 @@ def _parse_markdown_fallback(md_text: str) -> list[list[dict[str, Any]]]:
                 heading_text = stripped
                 if pages_raw[-1]:
                     pages_raw.append([])
-                pages_raw[-1].append({
-                    "type": "heading",
-                    "kind": "section_header",
-                    "level": 1,
-                    "text": heading_text,
-                })
+                pages_raw[-1].append(
+                    {
+                        "type": "heading",
+                        "kind": "section_header",
+                        "level": 1,
+                        "text": heading_text,
+                    }
+                )
                 i += 2
                 continue
-            if re.match(r"^-{2,}\s*$", next_line) and not _RE_TABLE_SEP.match(next_line):
+            if re.match(r"^-{2,}\s*$", next_line) and not _RE_TABLE_SEP.match(
+                next_line
+            ):
                 heading_text = stripped
-                pages_raw[-1].append({
-                    "type": "heading",
-                    "kind": "section_header",
-                    "level": 2,
-                    "text": heading_text,
-                })
+                pages_raw[-1].append(
+                    {
+                        "type": "heading",
+                        "kind": "section_header",
+                        "level": 2,
+                        "text": heading_text,
+                    }
+                )
                 i += 2
                 continue
 
@@ -165,7 +177,11 @@ def _parse_markdown_fallback(md_text: str) -> list[list[dict[str, Any]]]:
             continue
 
         # Table detection (line containing '|' followed by a table separator line)
-        if "|" in line and i + 1 < num_lines and _RE_TABLE_SEP.match(lines[i + 1].strip()):
+        if (
+            "|" in line
+            and i + 1 < num_lines
+            and _RE_TABLE_SEP.match(lines[i + 1].strip())
+        ):
             table_rows: list[list[str]] = [_split_table_row(line)]
             i += 2  # skip header and separator
             while i < num_lines:
@@ -176,13 +192,15 @@ def _parse_markdown_fallback(md_text: str) -> list[list[dict[str, Any]]]:
                 i += 1
 
             if table_rows and any(any(c for c in r) for r in table_rows):
-                pages_raw[-1].append({
-                    "type": "table",
-                    "kind": "table",
-                    "level": 0,
-                    "text": _format_markdown_table(table_rows),
-                    "rows_data": table_rows,
-                })
+                pages_raw[-1].append(
+                    {
+                        "type": "table",
+                        "kind": "table",
+                        "level": 0,
+                        "text": _format_markdown_table(table_rows),
+                        "rows_data": table_rows,
+                    }
+                )
             continue
 
         # Blockquote (> text)
@@ -193,24 +211,28 @@ def _parse_markdown_fallback(md_text: str) -> list[list[dict[str, Any]]]:
                 i += 1
             quote_text = " ".join(quote_lines).strip()
             if quote_text:
-                pages_raw[-1].append({
-                    "type": "paragraph",
-                    "kind": "paragraph",
-                    "level": 0,
-                    "text": quote_text,
-                })
+                pages_raw[-1].append(
+                    {
+                        "type": "paragraph",
+                        "kind": "paragraph",
+                        "level": 0,
+                        "text": quote_text,
+                    }
+                )
             continue
 
         # List items (- item, * item, + item, 1. item)
         list_match = _RE_LIST_ITEM.match(line)
         if list_match:
             item_text = list_match.group(3).strip()
-            pages_raw[-1].append({
-                "type": "list_item",
-                "kind": "list_item",
-                "level": len(list_match.group(1)) // 2,
-                "text": item_text,
-            })
+            pages_raw[-1].append(
+                {
+                    "type": "list_item",
+                    "kind": "list_item",
+                    "level": len(list_match.group(1)) // 2,
+                    "text": item_text,
+                }
+            )
             i += 1
             continue
 
@@ -222,23 +244,39 @@ def _parse_markdown_fallback(md_text: str) -> list[list[dict[str, Any]]]:
             c_stripped = curr.strip()
             if not c_stripped:
                 break
-            if _RE_ATX_HEADING.match(c_stripped) or c_stripped.startswith("```") or c_stripped.startswith("~~~") or _RE_THEMATIC_BREAK.match(c_stripped) or _RE_LIST_ITEM.match(curr) or c_stripped.startswith(">"):
+            if (
+                _RE_ATX_HEADING.match(c_stripped)
+                or c_stripped.startswith("```")
+                or c_stripped.startswith("~~~")
+                or _RE_THEMATIC_BREAK.match(c_stripped)
+                or _RE_LIST_ITEM.match(curr)
+                or c_stripped.startswith(">")
+            ):
                 break
-            if "|" in curr and i + 1 < num_lines and _RE_TABLE_SEP.match(lines[i + 1].strip()):
+            if (
+                "|" in curr
+                and i + 1 < num_lines
+                and _RE_TABLE_SEP.match(lines[i + 1].strip())
+            ):
                 break
-            if i + 1 < num_lines and (re.match(r"^={2,}\s*$", lines[i + 1].strip()) or re.match(r"^-{2,}\s*$", lines[i + 1].strip())):
+            if i + 1 < num_lines and (
+                re.match(r"^={2,}\s*$", lines[i + 1].strip())
+                or re.match(r"^-{2,}\s*$", lines[i + 1].strip())
+            ):
                 break
             para_lines.append(c_stripped)
             i += 1
 
         para_text = " ".join(para_lines).strip()
         if para_text:
-            pages_raw[-1].append({
-                "type": "paragraph",
-                "kind": "paragraph",
-                "level": 0,
-                "text": para_text,
-            })
+            pages_raw[-1].append(
+                {
+                    "type": "paragraph",
+                    "kind": "paragraph",
+                    "level": 0,
+                    "text": para_text,
+                }
+            )
 
     return [p for p in pages_raw if p]
 
@@ -264,30 +302,36 @@ def _parse_with_mistune(md_text: str) -> list[list[dict[str, Any]]]:
             text = "".join(c.get("text", "") for c in token.get("children", []))
             if level == 1 and pages_raw[-1]:
                 pages_raw.append([])
-            pages_raw[-1].append({
-                "type": "heading",
-                "kind": "section_header",
-                "level": level,
-                "text": text.strip(),
-            })
+            pages_raw[-1].append(
+                {
+                    "type": "heading",
+                    "kind": "section_header",
+                    "level": level,
+                    "text": text.strip(),
+                }
+            )
         elif t_type == "paragraph":
             text = "".join(c.get("text", "") for c in token.get("children", []))
             if text.strip():
-                pages_raw[-1].append({
-                    "type": "paragraph",
-                    "kind": "paragraph",
-                    "level": 0,
-                    "text": text.strip(),
-                })
+                pages_raw[-1].append(
+                    {
+                        "type": "paragraph",
+                        "kind": "paragraph",
+                        "level": 0,
+                        "text": text.strip(),
+                    }
+                )
         elif t_type == "block_code":
             code_text = token.get("text", "")
             if code_text.strip():
-                pages_raw[-1].append({
-                    "type": "code",
-                    "kind": "code",
-                    "level": 0,
-                    "text": code_text.strip(),
-                })
+                pages_raw[-1].append(
+                    {
+                        "type": "code",
+                        "kind": "code",
+                        "level": 0,
+                        "text": code_text.strip(),
+                    }
+                )
         elif t_type == "list":
             for item in token.get("children", []):
                 item_text = "".join(
@@ -295,12 +339,14 @@ def _parse_with_mistune(md_text: str) -> list[list[dict[str, Any]]]:
                     for child in item.get("children", [])
                 )
                 if item_text.strip():
-                    pages_raw[-1].append({
-                        "type": "list_item",
-                        "kind": "list_item",
-                        "level": 0,
-                        "text": item_text.strip(),
-                    })
+                    pages_raw[-1].append(
+                        {
+                            "type": "list_item",
+                            "kind": "list_item",
+                            "level": 0,
+                            "text": item_text.strip(),
+                        }
+                    )
         elif t_type == "thematic_break":
             if pages_raw[-1]:
                 pages_raw.append([])
@@ -322,7 +368,9 @@ class MarkdownReader(BaseDocumentReader):
         filename: str = "",
     ) -> DocumentResult:
         raw_bytes = resolve_source_bytes(source)
-        source_name = filename or (str(source) if isinstance(source, (str, Path)) else "document.md")
+        source_name = filename or (
+            str(source) if isinstance(source, (str, Path)) else "document.md"
+        )
 
         try:
             md_text = raw_bytes.decode("utf-8")
@@ -350,7 +398,9 @@ class MarkdownReader(BaseDocumentReader):
             return DocumentResult(
                 pages=[create_synthetic_page(0, [])],
                 source_path=source_name,
-                tree=DocumentTree(pages=[PageTree(page_idx=0)], source_path=source_name),
+                tree=DocumentTree(
+                    pages=[PageTree(page_idx=0)], source_path=source_name
+                ),
             )
 
         doc_pages: list[DocumentPage] = []
@@ -359,7 +409,10 @@ class MarkdownReader(BaseDocumentReader):
         all_tables: list[TableNode] = []
 
         for page_idx, raw_items in enumerate(pages_raw):
-            spec = [(item["text"], item["kind"], {"level": item.get("level", 0)}) for item in raw_items]
+            spec = [
+                (item["text"], item["kind"], {"level": item.get("level", 0)})
+                for item in raw_items
+            ]
             doc_blocks = layout_synthetic_blocks(spec)
 
             tree_children: list[BlockNode | TableNode] = []
@@ -378,10 +431,16 @@ class MarkdownReader(BaseDocumentReader):
                         row_nodes: list[BlockNode] = []
                         for c_idx, cell_text in enumerate(row):
                             cell_bbox: BBox = (
-                                bbox[0] + (c_idx / max(num_cols, 1)) * (bbox[2] - bbox[0]),
-                                bbox[1] + (r_idx / max(num_rows, 1)) * (bbox[3] - bbox[1]),
-                                bbox[0] + ((c_idx + 1) / max(num_cols, 1)) * (bbox[2] - bbox[0]),
-                                bbox[1] + ((r_idx + 1) / max(num_rows, 1)) * (bbox[3] - bbox[1]),
+                                bbox[0]
+                                + (c_idx / max(num_cols, 1)) * (bbox[2] - bbox[0]),
+                                bbox[1]
+                                + (r_idx / max(num_rows, 1)) * (bbox[3] - bbox[1]),
+                                bbox[0]
+                                + ((c_idx + 1) / max(num_cols, 1))
+                                * (bbox[2] - bbox[0]),
+                                bbox[1]
+                                + ((r_idx + 1) / max(num_rows, 1))
+                                * (bbox[3] - bbox[1]),
                             )
                             c_node = BlockNode(
                                 block_type=BlockType.TEXT,
