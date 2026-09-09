@@ -274,4 +274,15 @@ redis-password.txt
 /build_check*.log
 /build_sprint*.log
 
+# Sample-PDF fixtures are the canonical source-of-truth in
+# ``tests/fixtures/pdfs/`` and are copied to this directory by
+# ``make pre-build`` before wheel / PyInstaller builds, and by the
+# autouse session fixture in ``tests/conftest.py`` for the test
+# suite. The destination is therefore a build artifact, not source;
+# the directory itself stays (with a ``.gitkeep``) so the cp
+# target has somewhere to land. P5 reductive audit: this trims
+# ~15.4 MB of binary duplication from the tracked tree.
+/src/omniscribe/resources/sample_pdfs/*
+!/src/omniscribe/resources/sample_pdfs/.gitkeep
+
 

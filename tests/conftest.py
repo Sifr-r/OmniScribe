@@ -56,6 +56,40 @@ EXAMPLE_PDF_NAMES: list[str] = [
 
 FIXTURES_PDFS_DIR: Path = ROOT / "tests" / "fixtures" / "pdfs"
 
+# Bundle-side mirror of the canonical fixture set. Populated by
+# ``make pre-build`` before wheel / PyInstaller builds (so the
+# ``sample_pdfs`` plugin has the PDFs to stream in production) and
+# by the autouse session fixture below for the test suite on a
+# fresh checkout. P5 reductive audit: the destination is a build
+# artifact, not source — see the gitignore block in ``.gitignore``
+# and the matching ``make pre-build`` target in the ``Makefile``.
+SAMPLE_PDFS_RESOURCES_DIR: Path = (
+    ROOT / "src" / "omniscribe" / "resources" / "sample_pdfs"
+)
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _ensure_sample_pdfs_resources() -> None:
+    """Copy canonical fixtures into the bundle-side mirror if empty.
+
+    Idempotent: a no-op when the destination already has PDFs (the
+    common case for anyone who has run ``make bundle`` or another
+    build). Runs once per test session; copies are bit-identical to
+    the source so the existing
+    ``test_allowlist_matches_resources_dir`` lockstep test still
+    passes. A ``.gitkeep`` (also tracked) is what keeps the
+    destination directory present on a clean checkout.
+    """
+    import shutil
+
+    if SAMPLE_PDFS_RESOURCES_DIR.is_dir() and any(
+        SAMPLE_PDFS_RESOURCES_DIR.glob("*.pdf")
+    ):
+        return
+    SAMPLE_PDFS_RESOURCES_DIR.mkdir(parents=True, exist_ok=True)
+    for pdf in FIXTURES_PDFS_DIR.glob("*.pdf"):
+        shutil.copy2(pdf, SAMPLE_PDFS_RESOURCES_DIR / pdf.name)
+
 
 @pytest.fixture(scope="session")
 def examples_dir() -> Path:

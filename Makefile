@@ -1,9 +1,9 @@
 .DEFAULT_GOAL := help
 
-.PHONY: help setup run build-client bundle bundle-smoke test test-slow check lint typecheck audit security clean doctor openapi
+.PHONY: help setup run build-client bundle bundle-smoke test test-slow check lint typecheck audit security clean doctor openapi pre-build
 
 help: ## Show available developer commands
-	@uv run python -c "print('Available targets:\n  help           Show available developer commands\n  setup          Install project, web, and preprocessing dependencies\n  build-client   Build Flutter web client static assets\n  bundle         Build the PyInstaller server bundle (Windows; macOS/Linux untested)\n  bundle-smoke   Build the bundle and run a /api/health smoke test\n  run            Start the web server on port 8000\n  test           Run the fast test suite\n  test-slow      Run the slow test suite (Surya, full fixtures) -- pulls model weights on first run\n  check          Run the full fast gate (lint + typecheck + fast tests with coverage) -- same as CI\n  lint           Run Ruff lint and format checks\n  typecheck      Run mypy against production code\n  audit          Run pip-audit dependency vulnerability scan\n  security       Run Semgrep static analysis (best-effort, no CI gating)\n  clean          Remove generated caches and build artifacts\n  doctor         Report Python, uv, Redis, and model server health\n  openapi        Regenerate tests/openapi.json from the FastAPI app spec')"
+	@uv run python -c "print('Available targets:\n  help           Show available developer commands\n  setup          Install project, web, and preprocessing dependencies\n  build-client   Build Flutter web client static assets\n  bundle         Build the PyInstaller server bundle (Windows; macOS/Linux untested)\n  bundle-smoke   Build the bundle and run a /api/health smoke test\n  run            Start the web server on port 8000\n  test           Run the fast test suite\n  test-slow      Run the slow test suite (Surya, full fixtures) -- pulls model weights on first run\n  check          Run the full fast gate (lint + typecheck + fast tests with coverage) -- same as CI\n  lint           Run Ruff lint and format checks\n  typecheck      Run mypy against production code\n  audit          Run pip-audit dependency vulnerability scan\n  security       Run Semgrep static analysis (best-effort, no CI gating)\n  clean          Remove generated caches and build artifacts\n  doctor         Report Python, uv, Redis, and model server health\n  openapi        Regenerate tests/openapi.json from the FastAPI app spec\n  pre-build      Copy sample-PDF fixtures into the bundle-side mirror')"
 
 setup: ## Install project, web, and preprocessing dependencies
 	uv sync --extra web --extra preprocessing
@@ -91,12 +91,28 @@ openapi: ## Regenerate tests/openapi.json from the FastAPI app spec
 # Codesigning is intentionally out of scope (no cert budget per RFC 001
 # §Decision needed). macOS / Linux support is not exercised yet — see
 # docs/deployment/windows-bundle.md.
-bundle: ## Build the PyInstaller server bundle (Windows; macOS/Linux untested)
+bundle: pre-build ## Build the PyInstaller server bundle (Windows; macOS/Linux untested)
 	uv run python scripts/build_windows.py
 
 # Phase 4.4 smoke test: build + boot the binary + hit /api/health.
 # This is the cheapest end-to-end verification possible without a
 # real VLM endpoint. Add this to ``make check`` once a CI runner is
 # available; for now it requires a developer machine.
-bundle-smoke: ## Build the bundle and run a /api/health smoke test
+bundle-smoke: pre-build ## Build the bundle and run a /api/health smoke test
 	uv run python scripts/build_windows.py --smoke
+
+# P5 reductive audit: the bundle-side mirror of the canonical
+# sample-PDF fixtures is a build artifact (the source of truth is
+# ``tests/fixtures/pdfs/``, see the matching block in
+# ``.gitignore`` and the autouse session fixture in
+# ``tests/conftest.py``). Copying here keeps ``make bundle`` and
+# ``make bundle-smoke`` self-contained, and pairs with the
+# ``Pre-build: copy sample_pdfs`` step in ``.github/workflows/release.yml``
+# so the wheel build is also covered. The destination directory
+# ships with a ``.gitkeep`` so the cp has somewhere to land on a
+# clean checkout; running twice in a row is a no-op (``cp -u``
+# only overwrites when the source is newer).
+pre-build: ## Copy sample-PDF fixtures into the bundle-side mirror
+	@mkdir -p src/omniscribe/resources/sample_pdfs
+	cp -u tests/fixtures/pdfs/*.pdf src/omniscribe/resources/sample_pdfs/
+	@echo "pre-build: staged $$(ls src/omniscribe/resources/sample_pdfs/*.pdf 2>/dev/null | wc -l) fixture(s)"

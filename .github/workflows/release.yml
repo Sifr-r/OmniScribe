@@ -78,7 +78,19 @@ jobs:
 
       - name: Build wheel + sdist
         if: steps.ver.outputs.skip != 'true'
-        run: uv build
+        # P5 reductive audit: the sample-PDF fixtures are sourced from
+        # ``tests/fixtures/pdfs/`` (canonical) and copied to
+        # ``src/omniscribe/resources/sample_pdfs/`` (wheel payload)
+        # by the autouse session fixture in ``tests/conftest.py``
+        # during ``uv build``'s PEP 517 build-system discovery —
+        # but only if the destination is empty, which it will be on
+        # a fresh CI checkout. The explicit cp here is belt-and-
+        # braces so the wheel ships the fixtures even if the test
+        # suite is skipped in a future workflow change.
+        run: |
+          mkdir -p src/omniscribe/resources/sample_pdfs
+          cp tests/fixtures/pdfs/*.pdf src/omniscribe/resources/sample_pdfs/
+          uv build
 
       - name: Update README pin example
         if: steps.ver.outputs.skip != 'true'
