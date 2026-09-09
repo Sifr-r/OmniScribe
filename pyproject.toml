@@ -198,14 +198,6 @@ dev = [
     # torch + surya-ocr hidden-imports dance that older 5.x builds
     # routinely botched.
     "pyinstaller>=6.20,<7",
-    # Phase 5.5 (2026-09-05): re-runs flaky tests up to 2x with a 1s
-    # delay before giving up. Used by ``.github/workflows/test.yml``
-    # to absorb the time.sleep(0.05) flakiness the audit's QA lens
-    # flagged — see Phase 3.7 in the remediation plan. The reruns are
-    # a band-aid for the test-suite-quality issues that
-    # Phase 5.7 ("replace magic-number sleeps") addresses; expect
-    # to drop the dep once the sleep sites are gone.
-    "pytest-rerunfailures>=15.0",
 ]
 
 [tool.uv]

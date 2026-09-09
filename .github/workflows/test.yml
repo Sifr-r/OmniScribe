@@ -86,25 +86,25 @@ jobs:
         # the floor is 80 (the codebase is at ~82% and the 15
         # under-tested modules need heavy fixtures to bring up).
         #
-        # Phase 5.5 (2026-09-05):
-        # - ``--reruns=2 --reruns-delay=1`` re-runs a test up to 2x
-        #   with a 1s delay before failing. Band-aid for the
-        #   magic-number ``time.sleep(0.05)`` flakiness the audit
-        #   flagged; expect to drop once Phase 3.7's sleep sites
-        #   are gone.
-        # - ``--junitxml=reports/junit.xml`` produces a machine-
-        #   readable test report; the next step uploads it as a
-        #   workflow artifact so flaky runs are inspectable in
-        #   the GitHub UI.
-        run: uv run pytest -m "not slow and not slow_dataset" --cov=src/omniscribe --cov-fail-under=80 --cov-report=term-missing --cov-report=xml --junitxml=reports/junit.xml --reruns=2 --reruns-delay=1 -v
+        # P6 reductive audit (2026-09-09): the Phase 5.5
+        # ``--reruns=2 --reruns-delay=1`` band-aid is removed. The
+        # audit's five ``time.sleep`` poll sites are unchanged but
+        # worked reliably in the post-removal dry run; if a flake
+        # recurs here it will be visible in the JUnit XML instead
+        # of being silently absorbed by a re-run.
+        #
+        # ``--junitxml=reports/junit.xml`` produces a machine-
+        # readable test report; the next step uploads it as a
+        # workflow artifact so flaky runs are inspectable in
+        # the GitHub UI.
+        run: uv run pytest -m "not slow and not slow_dataset" --cov=src/omniscribe --cov-fail-under=80 --cov-report=term-missing --cov-report=xml --junitxml=reports/junit.xml -v
 
       - name: Upload JUnit test report
-        # Phase 5.5 (2026-09-05): the previous workflow had no
-        # per-test history. With pytest-rerunfailures absorbing
-        # the worst flakiness, a JUnit XML is enough for the
-        # maintainer to spot a test that's been silently rerunning
-        # for a week. The artifact is matrix-free on purpose —
-        # the report is the same content across the matrix.
+        # The workflow's per-test history; the report is the
+        # same content across the matrix so the artifact is
+        # matrix-free on purpose. With the pytest-rerunfailures
+        # band-aid gone, any flaking test now surfaces here as
+        # a failed testcase rather than a silently-rerun pass.
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
