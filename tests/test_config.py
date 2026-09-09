@@ -122,10 +122,12 @@ def test_load_settings_overrides() -> None:
 
 
 def test_max_upload_mb_invalid_value_falls_back_to_default() -> None:
-    settings = RuntimeSettings(max_upload_mb="not-a-number")
+    # Use ``model_validate`` so the constructor's ``int`` annotation is
+    # bypassed: the value flows through ``_normalize_max_upload_mb``.
+    settings = RuntimeSettings.model_validate({"max_upload_mb": "not-a-number"})
     assert settings.max_upload_mb == 1_024
 
 
 def test_max_upload_mb_valid_string_parses() -> None:
-    settings = RuntimeSettings(max_upload_mb="2048")
+    settings = RuntimeSettings.model_validate({"max_upload_mb": "2048"})
     assert settings.max_upload_mb == 2048

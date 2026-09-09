@@ -31,7 +31,7 @@ import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import redis.asyncio as redis_async
 
@@ -94,7 +94,7 @@ async def migrate(
     sqlite_path: str | Path,
     redis_url: str | None = None,
     *,
-    redis_client: Any | None = None,
+    redis_client: redis_async.Redis | None = None,
     blob_dir: Path | None = None,
     dry_run: bool = False,
     now: float | None = None,
@@ -166,7 +166,15 @@ async def migrate(
 
     # ``--batch-size`` bounds how many Redis commands queue in one
     # pipeline before an EXEC round-trip; dry-run never opens a pipe.
-    pipe = None if dry_run else client.pipeline(transaction=False)
+    # ``pipe`` is None only in the dry-run path, and every ``pipe.set`` /
+    # ``pipe.zadd`` below is gated on ``not dry_run`` so the runtime
+    # value is always a live ``Pipeline`` at those call sites.
+    pipe: redis_async.client.Pipeline | None
+    if not dry_run:
+        assert client is not None
+        pipe = client.pipeline(transaction=False)
+    else:
+        pipe = None
     queued_writes = 0
 
     async def _flush_pipeline() -> None:
@@ -214,11 +222,13 @@ async def migrate(
                 }
                 meta_key = f"{_KEY_PREFIX}artifact:{art_id}"
                 blob_key = f"{_KEY_PREFIX}artifact:blob:{art_id}"
+                assert pipe is not None
                 pipe.set(
                     meta_key,
                     json.dumps(art_data).encode("utf-8"),
                     ex=remaining_ttl,
                 )
+                assert pipe is not None
                 pipe.set(blob_key, blob_bytes, ex=remaining_ttl)
                 queued_writes += 2
                 if queued_writes >= batch_size:
@@ -257,7 +267,9 @@ async def migrate(
                 summary.jobs.migrated += 1
             else:
                 job_key = f"{_KEY_PREFIX}job:{job_id}"
+                assert pipe is not None
                 pipe.set(job_key, json.dumps(job_data).encode("utf-8"))
+                assert pipe is not None
                 pipe.zadd(f"{_KEY_PREFIX}job:index", {job_id: created_at})
                 queued_writes += 2
                 if queued_writes >= batch_size:
@@ -287,11 +299,13 @@ async def migrate(
                     "consumed": consumed,
                 }
                 ch_key = f"{_KEY_PREFIX}channel:{ch_id}"
+                assert pipe is not None
                 pipe.set(
                     ch_key,
                     json.dumps(ch_data).encode("utf-8"),
                     ex=remaining_ttl,
                 )
+                assert pipe is not None
                 pipe.zadd(
                     f"{_KEY_PREFIX}channel:index",
                     {ch_id: created_at + ttl_seconds},

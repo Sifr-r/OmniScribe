@@ -110,13 +110,15 @@ def test_build_pipeline_rejects_localhost_when_ssrf_local_disabled(
 
 def test_resolve_run_kwargs_maps_request_fields() -> None:
     settings = load_settings()
-    request = OCRRequest(
-        dense_mode="on",
-        spellcheck="en-US",
-        pages="1-3",
-        quality_target="0.9",  # type: ignore[arg-type]
-        quality_max_retries="4",  # type: ignore[arg-type]
-        deskew="true",  # type: ignore[arg-type]
+    request = OCRRequest.model_validate(
+        {
+            "dense_mode": "on",
+            "spellcheck": "en-US",
+            "pages": "1-3",
+            "quality_target": "0.9",
+            "quality_max_retries": "4",
+            "deskew": "true",
+        }
     )
     kwargs = pipeline_bridge.resolve_run_kwargs(settings, request)
     assert kwargs["dense_mode"] is DenseMode.ALWAYS

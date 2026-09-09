@@ -161,7 +161,7 @@ def deep_merge(base: list[PluginRow], patch: list[PluginRow]) -> list[PluginRow]
     return [by_id[row_id] for row_id in order]
 
 
-def resolve_plugin(use: str, *, row_id: str) -> Any:
+def resolve_plugin(use: str, *, row_id: str) -> Plugin:
     """Look up a registered Plugin by ``module:ClassName`` key.
 
     Resolution is a plain dict lookup; no dynamic import of caller-supplied
@@ -172,8 +172,8 @@ def resolve_plugin(use: str, *, row_id: str) -> Any:
         raise PluginLoadError(
             row_id=row_id, reason=f"bad 'use' path {use!r}; expected 'module:ClassName'"
         )
-    target = _PLUGIN_REGISTRY.get(use)
-    if target is None:
+    cls: type[Plugin] | None = _PLUGIN_REGISTRY.get(use)
+    if cls is None:
         raise PluginLoadError(
             row_id=row_id,
             reason=(
@@ -181,20 +181,14 @@ def resolve_plugin(use: str, *, row_id: str) -> Any:
                 "register it with omniscribe.harness.loader.register_plugin"
             ),
         )
-    if isinstance(target, type):
-        try:
-            target = target()
-        except Exception as exc:
-            raise PluginLoadError(
-                row_id=row_id,
-                reason=f"cannot instantiate plugin {use!r} (id {row_id!r}): {exc}",
-            ) from exc
-    if not isinstance(target, Plugin):
+    try:
+        instance: Plugin = cls()
+    except Exception as exc:
         raise PluginLoadError(
             row_id=row_id,
-            reason=f"{use!r} (id {row_id!r}) is not a harness Plugin",
-        )
-    return target
+            reason=f"cannot instantiate plugin {use!r} (id {row_id!r}): {exc}",
+        ) from exc
+    return instance
 
 
 def _apply_env_overrides(rows: list[PluginRow]) -> list[PluginRow]:

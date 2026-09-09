@@ -78,6 +78,8 @@ def test_from_document_result_copies_trust_fields():
     tree = from_document_result(DocumentResult(pages=[page]))
     flagged = tree.pages[0].children[0]
     clean = tree.pages[0].children[1]
+    assert isinstance(flagged, BlockNode)
+    assert isinstance(clean, BlockNode)
     assert flagged.trust_score == 0.42
     assert flagged.trust_flags == ("LOW_CALIBRATED_CONF",)
     assert clean.trust_score is None

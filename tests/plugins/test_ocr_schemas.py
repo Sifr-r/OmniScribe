@@ -51,12 +51,14 @@ def test_parses_frontend_form_data_field_set() -> None:
 def test_dense_mode_aliases_map_onto_core_spellings() -> None:
     from omniscribe.core.document import DenseMode
 
-    assert OCRRequest(dense_mode="on").dense_mode == DenseMode.ALWAYS
-    assert OCRRequest(dense_mode="off").dense_mode == DenseMode.NEVER
-    assert OCRRequest(dense_mode="auto").dense_mode == DenseMode.AUTO
-    assert OCRRequest(dense_mode="always").dense_mode == DenseMode.ALWAYS
+    # Use ``model_validate`` so the constructor's ``DenseMode`` annotation
+    # is bypassed: these values flow through the dense_mode field validator.
+    assert OCRRequest.model_validate({"dense_mode": "on"}).dense_mode == DenseMode.ALWAYS
+    assert OCRRequest.model_validate({"dense_mode": "off"}).dense_mode == DenseMode.NEVER
+    assert OCRRequest.model_validate({"dense_mode": "auto"}).dense_mode == DenseMode.AUTO
+    assert OCRRequest.model_validate({"dense_mode": "always"}).dense_mode == DenseMode.ALWAYS
     # unknown values fall back to auto rather than failing the upload
-    assert OCRRequest(dense_mode="bogus").dense_mode == DenseMode.AUTO
+    assert OCRRequest.model_validate({"dense_mode": "bogus"}).dense_mode == DenseMode.AUTO
 
 
 def test_unknown_document_processor_is_rejected() -> None:
@@ -492,16 +494,20 @@ def test_split_processors_with_sequence_and_flattening() -> None:
 
 
 def test_coerce_bool_dynamic_across_fields() -> None:
-    # All boolean fields coerced from strings
-    req = OCRRequest(
-        preprocess_pages="true",
-        orientation_detection="1",
-        deskew="false",
-        denoise="yes",
-        normalize_contrast="0",
-        crop_cleanup="no",
-        quality_loop_enabled="true",
-    )  # type: ignore[arg-type]
+    # All boolean fields coerced from strings. Use ``model_validate`` so the
+    # ``bool`` annotations are bypassed: these values flow through the bool
+    # field validators.
+    req = OCRRequest.model_validate(
+        {
+            "preprocess_pages": "true",
+            "orientation_detection": "1",
+            "deskew": "false",
+            "denoise": "yes",
+            "normalize_contrast": "0",
+            "crop_cleanup": "no",
+            "quality_loop_enabled": "true",
+        }
+    )
     assert req.preprocess_pages is True
     assert req.orientation_detection is True
     assert req.deskew is False

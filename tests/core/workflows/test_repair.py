@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from typing import cast
 from unittest.mock import AsyncMock
 
 import pytest
 
 from omniscribe.core.callbacks import BlockCallbackSet
+from omniscribe.core.ocr.processor import OCRProcessor
 from omniscribe.core.ocr.resilience import CircuitOpenError
 from omniscribe.core.workflows.repair import (
     PageRepairSummary,
@@ -251,7 +253,7 @@ class TestTextLayerAgreementRepair:
         stub_ocr = _StubOCR()
 
         class _StubEngine:
-            ocr_processor = stub_ocr
+            ocr_processor: OCRProcessor = cast(OCRProcessor, stub_ocr)
             block_callbacks = BlockCallbackSet()
 
         summaries = await run_repair_phase(
@@ -350,7 +352,7 @@ class TestRepairPhasePageDecode:
                 return "abc"
 
         class _StubEngine:
-            ocr_processor = _StubOCR()
+            ocr_processor: OCRProcessor = cast(OCRProcessor, _StubOCR())
             block_callbacks = BlockCallbackSet()
 
         summaries = await run_repair_phase(

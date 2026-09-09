@@ -20,6 +20,7 @@ These tests cover:
 from __future__ import annotations
 
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -558,7 +559,7 @@ def test_hybrid_rff_surfaces_exact_acronym(store: LanceDBLexiconStore) -> None:
     hits = store.hybrid_query(LexiconQuery(source_chunk="GDPR compliance", limit=2))
     assert hits, "expected at least one hit"
     assert hits[0].entry.source_text == "GDPR"
-    assert hits[0].keyword_score > 0.0  # type: ignore[typeddict-item]
+    assert hits[0].keyword_score > 0.0
 
 
 def test_keyword_only_match_survives_low_cosine(store: LanceDBLexiconStore) -> None:
@@ -737,9 +738,9 @@ def test_reimport_reuses_embeddings_for_unchanged_entries(tmp_path: Path) -> Non
 
     def counting_batch(texts: list[str]) -> list[list[float]]:
         calls["n"] += len(texts)
-        return real_batch(texts)
+        return cast(list[list[float]], real_batch(texts))
 
-    model.embed_batch = counting_batch  # type: ignore[method-assign]
+    model.embed_batch = counting_batch
     store.save_glossary(
         name="g",
         format="csv",

@@ -246,14 +246,14 @@ class TestHybridLayoutDetector:
         }
 
         assert detector.select_dense_pages(
-            structured, [0, 1], dense_mode="auto", dense_threshold=5
+            structured, [0, 1], dense_mode=DenseMode.AUTO, dense_threshold=5
         ) == {0}
         assert detector.select_dense_pages(
-            structured, [0, 1], dense_mode="always", dense_threshold=50
+            structured, [0, 1], dense_mode=DenseMode.ALWAYS, dense_threshold=50
         ) == {0, 1}
         assert (
             detector.select_dense_pages(
-                structured, [0, 1], dense_mode="never", dense_threshold=1
+                structured, [0, 1], dense_mode=DenseMode.NEVER, dense_threshold=1
             )
             == set()
         )

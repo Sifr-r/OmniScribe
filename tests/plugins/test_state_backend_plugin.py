@@ -65,7 +65,7 @@ async def test_redis_backend_registered(
     import redis.asyncio as redis_async
 
     orig_from_url = redis_async.from_url
-    redis_async.from_url = lambda *a, **kw: fake  # type: ignore[assignment]
+    redis_async.from_url = lambda *a, **kw: fake
     try:
         ctx = Context()
         await ctx.plugin(sb.StateBackendPlugin(), config={"backend": "redis"})
@@ -80,7 +80,7 @@ async def test_redis_backend_registered(
         # path is the manual ``dev_redis_smoke.sh`` recipe.
         await ctx.dispose()
     finally:
-        redis_async.from_url = orig_from_url  # type: ignore[assignment]
+        redis_async.from_url = orig_from_url
 
 
 async def test_empty_sqlite_path_defaults_to_artifact_dir(

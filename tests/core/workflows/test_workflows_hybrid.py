@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import pytest
 
+from omniscribe.core.document import DenseMode
 from omniscribe.core.ocr.resilience import CircuitOpenError
 from omniscribe.core.ocr_quality.routing import QualityRoutingOptions
 from omniscribe.core.workflows.hybrid import HybridEngine
@@ -493,7 +494,7 @@ class TestHybridSelectDensePages:
         result = engine._select_dense_pages(
             pages_structured=structured,  # type: ignore[arg-type]
             page_nums=[0, 1],
-            dense_mode="auto",
+            dense_mode=DenseMode.AUTO,
             dense_threshold=3,
         )
         assert result == {0}
@@ -504,7 +505,7 @@ class TestHybridSelectDensePages:
         result = engine._select_dense_pages(
             pages_structured=structured,  # type: ignore[arg-type]
             page_nums=[0, 1],
-            dense_mode="auto",
+            dense_mode=DenseMode.AUTO,
             dense_threshold=3,
         )
         assert result == set()
@@ -515,7 +516,7 @@ class TestHybridSelectDensePages:
         result = engine._select_dense_pages(
             pages_structured=structured,  # type: ignore[arg-type]
             page_nums=[0, 1],
-            dense_mode="always",
+            dense_mode=DenseMode.ALWAYS,
             dense_threshold=999,
         )
         assert result == {0, 1}

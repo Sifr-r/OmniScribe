@@ -438,7 +438,7 @@ class TestProcessorSystemPromptWiring:
             captured["system_prompt"] = system_prompt
             return "# Page"
 
-        proc._chat = fake_chat  # type: ignore[method-assign]
+        proc._chat = fake_chat  # type: ignore[assignment]
         await proc.perform_ocr(image_base64="aW1hZ2U=")
         assert captured["system_prompt"] is None
 
@@ -453,7 +453,7 @@ class TestProcessorSystemPromptWiring:
             captured["system_prompt"] = system_prompt
             return "# Page"
 
-        proc._chat = fake_chat  # type: ignore[method-assign]
+        proc._chat = fake_chat  # type: ignore[assignment]
         await proc.perform_ocr(image_base64="aW1hZ2U=")
         assert captured["system_prompt"] is HANDWRITING_OCR_SYSTEM_MESSAGE
 
@@ -467,7 +467,7 @@ class TestProcessorSystemPromptWiring:
             captured["system_prompt"] = system_prompt
             return "text"
 
-        proc._chat = fake_chat  # type: ignore[method-assign]
+        proc._chat = fake_chat  # type: ignore[assignment]
         await proc.perform_ocr_on_crop(image_base64="aW1hZ2U=")
         assert captured["system_prompt"] is OCR_SYSTEM_MESSAGE
 
@@ -665,7 +665,7 @@ class TestProcessorSystemPromptWiring:
             captured.append(system_prompt)
             return "text"
 
-        proc._chat = fake_chat  # type: ignore[method-assign]
+        proc._chat = fake_chat  # type: ignore[assignment]
         # No Tesseract available in the test env, so dual_engine is
         # effectively a no-op for the draft. The system message is
         # still set, and the call returns the result of fake_chat.
@@ -688,7 +688,7 @@ class TestProcessorSystemPromptWiring:
             captured["system_prompt"] = system_prompt
             return "# Page"
 
-        proc._chat = fake_chat  # type: ignore[method-assign]
+        proc._chat = fake_chat  # type: ignore[assignment]
         await proc.perform_ocr(image_base64="aW1hZ2U=")
         assert captured["system_prompt"] is None
 
@@ -702,7 +702,7 @@ class TestProcessorSystemPromptWiring:
             captured["system_prompt"] = system_prompt
             return "text"
 
-        proc._chat = fake_chat  # type: ignore[method-assign]
+        proc._chat = fake_chat  # type: ignore[assignment]
         await proc.perform_ocr_on_crop(image_base64="aW1hZ2U=")
         assert captured["system_prompt"] is None
 
@@ -716,7 +716,7 @@ class TestProcessorSystemPromptWiring:
             captured.append(system_prompt)
             return "text"
 
-        proc._chat = fake_chat  # type: ignore[method-assign]
+        proc._chat = fake_chat  # type: ignore[assignment]
         await proc.perform_ocr_on_crop(image_base64="aW1hZ2U=", dual_engine=True)
         assert all(sp is None for sp in captured)
         assert captured  # at least one chat call happened

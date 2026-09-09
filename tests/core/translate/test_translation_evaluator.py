@@ -113,8 +113,8 @@ class TestEvaluateFastPaths:
             result = await evaluate_node(state)
         llm.assert_not_called()
         assert result["evaluation_score"] == 1.0
-        assert result["failed"] is False  # type: ignore[typeddict-item]
-        assert result["translated_chunk"] == "Bonjour"  # type: ignore[typeddict-item]
+        assert result["failed"] is False
+        assert result["translated_chunk"] == "Bonjour"
 
     async def test_short_source_skips_llm(self) -> None:
         state = _state(source="hi", translation_="salut")
@@ -266,8 +266,8 @@ class TestEvaluateLLMPath:
         assert result["evaluation_score"] == 0.85
         assert result["feedback"] == "Solid translation overall."
         # Best-attempt tracking: first scored attempt becomes the best.
-        assert result["best_translation"] == state["translated_chunk"]  # type: ignore[typeddict-item]
-        assert result["best_score"] == 0.85  # type: ignore[typeddict-item]
+        assert result["best_translation"] == state["translated_chunk"]
+        assert result["best_score"] == 0.85
 
     async def test_falls_back_when_call_llm_raises(self) -> None:
         state = _state()
@@ -280,7 +280,7 @@ class TestEvaluateLLMPath:
         # Transient LLM outage must not trap us in a retry loop — but it
         # must not silently masquerade as a verified pass either.
         assert result["evaluation_score"] == DEFAULT_TRANSLATION_ACCEPTANCE_SCORE
-        assert result["judge_unverified"] is True  # type: ignore[typeddict-item]
+        assert result["judge_unverified"] is True
 
     async def test_falls_back_when_response_unparseable(self) -> None:
         state = _state()
@@ -292,7 +292,7 @@ class TestEvaluateLLMPath:
             result = await evaluate_node(state)
         # Unparseable judge output → acceptance_score pass, flagged unverified.
         assert result["evaluation_score"] == DEFAULT_TRANSLATION_ACCEPTANCE_SCORE
-        assert result["judge_unverified"] is True  # type: ignore[typeddict-item]
+        assert result["judge_unverified"] is True
         assert "unparseable" in result["feedback"]  # type: ignore[operator]
 
     async def test_score_below_threshold_will_route_to_refine(self) -> None:
@@ -537,14 +537,14 @@ class TestFailSafeJudgeSemantics:
         state["best_score"] = 0.9
         with patch.object(translation, "_llm_evaluate_translation", new=AsyncMock()):
             result = await evaluate_node(state)
-        assert result["translated_chunk"] == "good earlier text"  # type: ignore[typeddict-item]
+        assert result["translated_chunk"] == "good earlier text"
         assert result["evaluation_score"] == 1.0
 
     async def test_all_attempts_failed_marks_failed(self) -> None:
         state = _state(translation_="[Translation Error: boom]", attempts=3)
         with patch.object(translation, "_llm_evaluate_translation", new=AsyncMock()):
             result = await evaluate_node(state)
-        assert result["failed"] is True  # type: ignore[typeddict-item]
+        assert result["failed"] is True
         assert result["evaluation_score"] == 1.0
 
     async def test_evaluate_disabled_short_circuits(self) -> None:
@@ -568,8 +568,8 @@ class TestFailSafeJudgeSemantics:
         state["best_score"] = 0.85
         with patch.object(translation, "_llm_evaluate_translation", new=AsyncMock()):
             result = await evaluate_node(state)
-        assert result["translated_chunk"] == "better earlier attempt"  # type: ignore[typeddict-item]
-        assert result["failed"] is False  # type: ignore[typeddict-item]
+        assert result["translated_chunk"] == "better earlier attempt"
+        assert result["failed"] is False
 
 
 class TestDeterministicQualityIssues:

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import cast
+
 import pytest
 
 from omniscribe.core.block_tree import (
@@ -116,10 +118,11 @@ async def test_high_confidence_table_skips_fallback() -> None:
     assert t.rows == 2
     assert t.cols == 2
     # Metadata fallback_applied must NOT be set on skipped tables
-    assert not any(
-        t_meta.get("fallback_applied")
-        for t_meta in result.pages[0].metadata.get("tables", [])
+    tables_meta_skip: list[dict[str, object]] = cast(
+        list[dict[str, object]],
+        result.pages[0].metadata.get("tables", []),
     )
+    assert not any(t_meta.get("fallback_applied") for t_meta in tables_meta_skip)
     assert not cell1.metadata.get("fallback_refined")
 
 
@@ -185,7 +188,10 @@ async def test_low_confidence_table_executes_fallback_refinement() -> None:
             assert cell.metadata.get("fallback_refined") is True
 
     # Page metadata must record fallback execution
-    tables_meta = result.pages[0].metadata.get("tables", [])
+    tables_meta: list[dict[str, object]] = cast(
+        list[dict[str, object]],
+        result.pages[0].metadata.get("tables", []),
+    )
     assert len(tables_meta) >= 1
     assert any(m.get("fallback_applied") is True for m in tables_meta)
 

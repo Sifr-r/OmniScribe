@@ -132,7 +132,9 @@ def test_deep_merge_replaces_lists() -> None:
 
 def test_resolve_plugin_returns_attribute() -> None:
     target = resolve_plugin("tests.harness.test_loader:AlphaPlugin", row_id="a")
-    assert target is AlphaPlugin
+    # ``resolve_plugin`` instantiates the registered class; the returned
+    # object should be a Plugin subclass instance, not the class itself.
+    assert isinstance(target, AlphaPlugin)
 
 
 def test_resolve_plugin_bad_shape_fails() -> None:

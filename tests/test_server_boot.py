@@ -30,7 +30,7 @@ def boot_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_boot_serves_health_and_unknown_job_status(boot_env: None) -> None:
-    with TestClient(create_app()) as client:  # type: ignore[arg-type]
+    with TestClient(create_app()) as client:
         health = client.get("/api/health")
         assert health.status_code == 200
         assert health.json() == {"status": "ok"}
@@ -70,7 +70,7 @@ def test_lifespan_dispose_runs_effect_cleanups(
     monkeypatch.setenv("OMNISCRIBE_CORDIS_CONFIG", str(cordis_yml))
 
     assert disposed == []
-    with TestClient(create_app()):  # type: ignore[arg-type]
+    with TestClient(create_app()):
         assert disposed == []
     assert disposed == ["disposed"]
 
@@ -81,7 +81,7 @@ def test_bad_state_backend_fails_boot_loud(
     # ``redis`` is not implemented in the harness — must fail loud at boot.
     monkeypatch.setenv("OMNISCRIBE_STATE_BACKEND", "redis")
     with pytest.raises((PluginLoadError, ValidationError)):
-        with TestClient(create_app()):  # type: ignore[arg-type]
+        with TestClient(create_app()):
             pass
 
 
@@ -94,7 +94,7 @@ def test_circuit_open_error_handler(boot_env: None) -> None:
     async def _fail_circuit() -> None:
         raise CircuitOpenError(failures=5, retry_after=45.2)
 
-    with TestClient(app) as client:  # type: ignore[arg-type]
+    with TestClient(app) as client:
         res = client.get("/test-circuit-open")
         assert res.status_code == 503
         assert res.headers["retry-after"] == "46"
@@ -121,7 +121,7 @@ def test_cors_wildcard_strips_allow_credentials(
     on.
     """
     monkeypatch.setenv("OMNISCRIBE_CORS_ORIGINS", "*")
-    with TestClient(create_app()) as client:  # type: ignore[arg-type]
+    with TestClient(create_app()) as client:
         # Preflight OPTIONS from a sample origin.
         preflight = client.options(
             "/api/health",
@@ -146,7 +146,7 @@ def test_cors_explicit_origins_allow_credentials(
     working.
     """
     monkeypatch.setenv("OMNISCRIBE_CORS_ORIGINS", "http://app.example.com")
-    with TestClient(create_app()) as client:  # type: ignore[arg-type]
+    with TestClient(create_app()) as client:
         preflight = client.options(
             "/api/health",
             headers={
@@ -176,7 +176,7 @@ def test_http_exception_uses_error_envelope(boot_env: None) -> None:
     ``HTTPException`` (the OCR plugin's ``/api/process/status/{id}``
     returns 404 for unknown jobs).
     """
-    with TestClient(create_app()) as client:  # type: ignore[arg-type]
+    with TestClient(create_app()) as client:
         res = client.get("/api/process/status/unknown-job")
         assert res.status_code == 404
         body = res.json()
