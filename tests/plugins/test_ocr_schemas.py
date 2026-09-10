@@ -53,12 +53,23 @@ def test_dense_mode_aliases_map_onto_core_spellings() -> None:
 
     # Use ``model_validate`` so the constructor's ``DenseMode`` annotation
     # is bypassed: these values flow through the dense_mode field validator.
-    assert OCRRequest.model_validate({"dense_mode": "on"}).dense_mode == DenseMode.ALWAYS
-    assert OCRRequest.model_validate({"dense_mode": "off"}).dense_mode == DenseMode.NEVER
-    assert OCRRequest.model_validate({"dense_mode": "auto"}).dense_mode == DenseMode.AUTO
-    assert OCRRequest.model_validate({"dense_mode": "always"}).dense_mode == DenseMode.ALWAYS
+    assert (
+        OCRRequest.model_validate({"dense_mode": "on"}).dense_mode == DenseMode.ALWAYS
+    )
+    assert (
+        OCRRequest.model_validate({"dense_mode": "off"}).dense_mode == DenseMode.NEVER
+    )
+    assert (
+        OCRRequest.model_validate({"dense_mode": "auto"}).dense_mode == DenseMode.AUTO
+    )
+    assert (
+        OCRRequest.model_validate({"dense_mode": "always"}).dense_mode
+        == DenseMode.ALWAYS
+    )
     # unknown values fall back to auto rather than failing the upload
-    assert OCRRequest.model_validate({"dense_mode": "bogus"}).dense_mode == DenseMode.AUTO
+    assert (
+        OCRRequest.model_validate({"dense_mode": "bogus"}).dense_mode == DenseMode.AUTO
+    )
 
 
 def test_unknown_document_processor_is_rejected() -> None:
