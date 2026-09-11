@@ -90,14 +90,40 @@ WORKDIR /app
 # without draining WebSocket clients / running the FastAPI lifespan
 # shutdown. tini is ~30 KB and well-trusted; the official Debian
 # package is the simplest source. Must run as root before dropping privileges.
+#
+# H-7 audit fix: drop the system ``pip`` (and its vendored deps like
+# ``msgpack`` 1.1.2 + ``setuptools`` 70.3.0) that ships in
+# ``python:3.14-slim``. The vendored copies aren't importable by user
+# code, but trivy's pkg scanner reads the embedded ``bom.cdx.json`` and
+# reports them as installed -- producing HIGH/CRITICAL false positives
+# (GHSA-6v7p-g79w-8964, CVE-2025-47273) that have nothing to do with
+# the project's actual dependency set. The venv at ``/app/.venv`` is
+# already on PATH first and has its own ``pip`` if anything inside the
+# image needs one, so the system one is dead weight.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends tini \
- && rm -rf /var/lib/apt/lists/*
+ && rm -rf /var/lib/apt/lists/* \
+ && rm -rf /usr/local/lib/python3.14/site-packages/pip \
+          /usr/local/lib/python3.14/site-packages/pip-*.dist-info \
+          /usr/local/lib/python3.14/site-packages/pip3 \
+          /usr/local/bin/pip /usr/local/bin/pip3 /usr/local/bin/pip3.14
 
 # Copy the venv and source from the builder with non-root ownership.
 # D5-02 audit fix: using --chown=app:app directly avoids a redundant
 # RUN chown -R layer that duplicates the ~1.5GB venv in Docker storage.
 COPY --chown=app:app --from=builder /app/.venv /app/.venv
+# H-7b audit fix: also drop the venv's own ``pip`` -- it ships with a
+# vendored copy of msgpack 1.1.2 + setuptools 70.3.0 declared in its
+# ``bom.cdx.json``, which trivy reads as "installed". The runtime
+# never calls ``pip`` (the project is installed via ``uv sync`` at
+# build time and ``omniscribe-server`` runs at runtime), so removing
+# it is safe. We also drop ``pip/_vendor/*`` outright: the BOM
+# removal alone would silence the scanner but leave ~5 MB of dead
+# vendored code in the image; clearing both is the minimal clean fix.
+RUN rm -rf /app/.venv/lib/python3.14/site-packages/pip \
+         /app/.venv/lib/python3.14/site-packages/pip-*.dist-info \
+         /app/.venv/lib/python3.14/site-packages/pip3 \
+         /app/.venv/bin/pip /app/.venv/bin/pip3 /app/.venv/bin/pip3.14
 COPY --chown=app:app --from=builder /app/src ./src
 COPY --chown=app:app --from=builder /app/pyproject.toml /app/uv.lock ./
 

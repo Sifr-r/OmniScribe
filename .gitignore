@@ -286,3 +286,7 @@ redis-password.txt
 !/src/omniscribe/resources/sample_pdfs/.gitkeep
 
 
+
+# Local Trivy scan output (not for commit)
+.trivy-out/
+

@@ -90,7 +90,26 @@ def _autoregister_builtin_plugins() -> None:
         register_plugin(cls)
 
 
-_autoregister_builtin_plugins()
+# Autoregister is deferred to the first call to :func:`resolve_plugin` (see
+# :func:`_ensure_autoregistered`). Running it eagerly at module-load time
+# creates a circular-import: ``omniscribe.harness``'s ``__init__`` imports
+# this module to re-export ``Loader`` / ``PluginRow``, which then triggered
+# the autoregister, which in turn imports ``omniscribe.plugins.artifacts``,
+# which imports ``omniscribe.plugins.state_backend`` -- and any test that
+# imported ``omniscribe.plugins.state_backend`` directly (e.g. H-3
+# ``test_channel_token_compare``) blew up with
+# ``ImportError: cannot import name 'ArtifactBlob' from partially initialized
+# module 'omniscribe.plugins.state_backend'``. Deferring breaks the cycle
+# because by the time ``resolve_plugin`` is reached at app boot, every
+# plugin module has finished loading.
+_AUTOREGISTERED = False
+
+
+def _ensure_autoregistered() -> None:
+    global _AUTOREGISTERED
+    if not _AUTOREGISTERED:
+        _autoregister_builtin_plugins()
+        _AUTOREGISTERED = True
 
 
 @dataclass(frozen=True)
@@ -168,6 +187,7 @@ def resolve_plugin(use: str, *, row_id: str) -> Plugin:
     module names. Plugins that are not in the registry yield
     :class:`PluginLoadError` rather than being silently imported.
     """
+    _ensure_autoregistered()
     if not isinstance(use, str) or ":" not in use:
         raise PluginLoadError(
             row_id=row_id, reason=f"bad 'use' path {use!r}; expected 'module:ClassName'"
