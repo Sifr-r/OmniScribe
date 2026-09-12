@@ -25,10 +25,18 @@ from pathlib import Path
 from typing import Literal
 
 from pydantic import BaseModel
+from typing import TYPE_CHECKING
 
 from omniscribe.config import load_settings
-from omniscribe.harness.context import Context
 from omniscribe.harness.plugin import Plugin
+
+if TYPE_CHECKING:
+    # ``Context`` is only used as a type annotation; ``from __future__
+    # import annotations`` keeps the annotation lazy so we don't pull
+    # the harness in at module-load time (which would loop through
+    # ``harness.loader._autoregister_builtin_plugins`` and back into
+    # this module while it is still mid-import).
+    from omniscribe.harness.context import Context
 
 from .state_backend_memory import MemoryStateBackend
 

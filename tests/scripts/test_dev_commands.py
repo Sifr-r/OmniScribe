@@ -29,6 +29,7 @@ REQUIRED_TARGETS = {
     "clean",
     "doctor",
     "openapi",
+    "pre-build",
 }
 
 

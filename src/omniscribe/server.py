@@ -40,7 +40,18 @@ def _error_code_for_status(status_code: int) -> str:
     ``http.HTTPStatus`` name and falls back to ``"http_<status>"`` for
     codes that ``HTTPStatus`` doesn't know about (1xx, 2xx, 3xx
     rarely surface as errors but be safe).
+
+    A handful of statuses have stable, operator-facing names that
+    must not drift across Python versions — Python renamed
+    ``UNPROCESSABLE_ENTITY`` (RFC 4918 / 9110) to
+    ``UNPROCESSABLE_CONTENT`` in 3.13, so we hard-code the names that
+    the public error envelope contract depends on.
     """
+    _STABLE_NAMES: dict[int, str] = {
+        422: "unprocessable_entity",
+    }
+    if status_code in _STABLE_NAMES:
+        return _STABLE_NAMES[status_code]
     try:
         return http.HTTPStatus(status_code).name.lower()
     except ValueError:

@@ -65,7 +65,10 @@ from omniscribe.plugins.ocr.services import (
     seed_config,
 )
 from omniscribe.plugins.progress import ProgressFrame, ProgressService
-from omniscribe.plugins.state_backend import TERMINAL_JOB_STATUSES, JobRecord
+from omniscribe.plugins.state_backend_types import (
+    TERMINAL_JOB_STATUSES,
+    JobRecord,
+)
 from omniscribe.utils.env import persist_env_key
 from omniscribe.utils.security import check_ssrf_target_sync
 

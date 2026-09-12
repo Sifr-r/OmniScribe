@@ -307,6 +307,77 @@
         "title": "ExportBlockTreeRequest",
         "type": "object"
       },
+      "ExportChunksRequest": {
+        "additionalProperties": false,
+        "description": "Request for section-aware chunks export with tuning knobs.",
+        "properties": {
+          "max_chars": {
+            "default": 1200,
+            "exclusiveMinimum": 0.0,
+            "maximum": 100000.0,
+            "title": "Max Chars",
+            "type": "integer"
+          },
+          "metadata_artifact_id": {
+            "anyOf": [
+              {
+                "maxLength": 32,
+                "minLength": 32,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metadata Artifact Id"
+          },
+          "metadata_artifact_token": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "minLength": 32,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metadata Artifact Token"
+          },
+          "min_chars": {
+            "default": 200,
+            "exclusiveMinimum": 0.0,
+            "maximum": 100000.0,
+            "title": "Min Chars",
+            "type": "integer"
+          },
+          "overlap_chars": {
+            "default": 120,
+            "maximum": 10000.0,
+            "minimum": 0.0,
+            "title": "Overlap Chars",
+            "type": "integer"
+          },
+          "text_artifact_id": {
+            "maxLength": 32,
+            "minLength": 32,
+            "title": "Text Artifact Id",
+            "type": "string"
+          },
+          "text_artifact_token": {
+            "maxLength": 256,
+            "minLength": 32,
+            "title": "Text Artifact Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text_artifact_id",
+          "text_artifact_token"
+        ],
+        "title": "ExportChunksRequest",
+        "type": "object"
+      },
       "ExportDocxRequest": {
         "additionalProperties": false,
         "properties": {
@@ -340,6 +411,56 @@
           "text_artifact_token"
         ],
         "title": "ExportHtmlRequest",
+        "type": "object"
+      },
+      "ExportMarkdownRequest": {
+        "additionalProperties": false,
+        "description": "Request for markdown export from text/metadata artifacts.",
+        "properties": {
+          "metadata_artifact_id": {
+            "anyOf": [
+              {
+                "maxLength": 32,
+                "minLength": 32,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metadata Artifact Id"
+          },
+          "metadata_artifact_token": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "minLength": 32,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metadata Artifact Token"
+          },
+          "text_artifact_id": {
+            "maxLength": 32,
+            "minLength": 32,
+            "title": "Text Artifact Id",
+            "type": "string"
+          },
+          "text_artifact_token": {
+            "maxLength": 256,
+            "minLength": 32,
+            "title": "Text Artifact Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text_artifact_id",
+          "text_artifact_token"
+        ],
+        "title": "ExportMarkdownRequest",
         "type": "object"
       },
       "ExtractionRequest": {
@@ -709,8 +830,15 @@
         "description": "Payload for ``POST /api/providers/active``.\n\n``populate_by_name=True`` accepts both the snake_case field names\n(the Flutter client's actual payload shape \u2014 see\n``client/lib/data/models/provider_preset.dart`` ``SetActiveProviderRequest.toJson``)\nand the camelCase aliases (used by the curl smoke test and any\nnon-Flutter client). The response is always snake_case because the\nresponse model has no aliases.",
         "properties": {
           "apiBase": {
-            "title": "Apibase",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Apibase"
           },
           "apiKey": {
             "anyOf": [
@@ -724,8 +852,15 @@
             "title": "Apikey"
           },
           "model": {
-            "title": "Model",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
           },
           "providerId": {
             "title": "Providerid",
@@ -733,9 +868,7 @@
           }
         },
         "required": [
-          "providerId",
-          "apiBase",
-          "model"
+          "providerId"
         ],
         "title": "SetActiveProviderRequest",
         "type": "object"
@@ -1083,6 +1216,13 @@
           "model_count": {
             "title": "Model Count",
             "type": "integer"
+          },
+          "models": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Models",
+            "type": "array"
           },
           "valid": {
             "title": "Valid",
@@ -1451,6 +1591,154 @@
         ]
       }
     },
+    "/api/export/chunks": {
+      "get": {
+        "operationId": "export_chunks_get_api_export_chunks_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "text_artifact_id",
+            "required": true,
+            "schema": {
+              "title": "Text Artifact Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "text_artifact_token",
+            "required": true,
+            "schema": {
+              "title": "Text Artifact Token",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "metadata_artifact_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Metadata Artifact Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "metadata_artifact_token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Metadata Artifact Token"
+            }
+          },
+          {
+            "in": "query",
+            "name": "max_chars",
+            "required": false,
+            "schema": {
+              "default": 1200,
+              "title": "Max Chars",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "overlap_chars",
+            "required": false,
+            "schema": {
+              "default": 120,
+              "title": "Overlap Chars",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "min_chars",
+            "required": false,
+            "schema": {
+              "default": 200,
+              "title": "Min Chars",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Export Chunks Get",
+        "tags": [
+          "documents"
+        ]
+      },
+      "post": {
+        "operationId": "export_chunks_post_api_export_chunks_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExportChunksRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Export Chunks Post",
+        "tags": [
+          "documents"
+        ]
+      }
+    },
     "/api/export/document": {
       "post": {
         "operationId": "create_document_export_api_export_document_post",
@@ -1602,6 +1890,124 @@
           }
         },
         "summary": "Export Html",
+        "tags": [
+          "documents"
+        ]
+      }
+    },
+    "/api/export/markdown": {
+      "get": {
+        "operationId": "export_markdown_get_api_export_markdown_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "text_artifact_id",
+            "required": true,
+            "schema": {
+              "title": "Text Artifact Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "text_artifact_token",
+            "required": true,
+            "schema": {
+              "title": "Text Artifact Token",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "metadata_artifact_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Metadata Artifact Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "metadata_artifact_token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Metadata Artifact Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Export Markdown Get",
+        "tags": [
+          "documents"
+        ]
+      },
+      "post": {
+        "operationId": "export_markdown_post_api_export_markdown_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExportMarkdownRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Export Markdown Post",
         "tags": [
           "documents"
         ]
@@ -3013,6 +3419,29 @@
       }
     },
     "/api/providers/active": {
+      "get": {
+        "operationId": "get_active_api_providers_active_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Get Active Api Providers Active Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Active",
+        "tags": [
+          "providers"
+        ]
+      },
       "post": {
         "operationId": "set_active_api_providers_active_post",
         "requestBody": {

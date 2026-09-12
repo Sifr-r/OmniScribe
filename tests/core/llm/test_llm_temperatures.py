@@ -75,7 +75,6 @@ class TestCallerCoverage:
     no one adds a constant and forgets to wire it up.
     """
 
-    @classmethod
     @pytest.fixture(scope="class")
     def source_uses(cls) -> dict[str, list[str]]:
         root = Path("src")

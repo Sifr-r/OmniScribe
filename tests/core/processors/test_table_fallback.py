@@ -53,7 +53,6 @@ def test_table_fallback_registration_via_registry() -> None:
     assert processors[0].contract == ProcessorContract.MAY_DELETE
 
 
-@pytest.mark.asyncio
 async def test_high_confidence_table_skips_fallback() -> None:
     """A high-confidence table (>= 0.80) should NOT trigger fallback."""
     cell1 = BlockNode(
@@ -126,7 +125,6 @@ async def test_high_confidence_table_skips_fallback() -> None:
     assert not cell1.metadata.get("fallback_refined")
 
 
-@pytest.mark.asyncio
 async def test_low_confidence_table_executes_fallback_refinement() -> None:
     """A low-confidence table (< 0.80) triggers fallback grid reconstruction and refinement."""
     # Construct low-confidence table with combined/unsplit pipe text
@@ -196,7 +194,6 @@ async def test_low_confidence_table_executes_fallback_refinement() -> None:
     assert any(m.get("fallback_applied") is True for m in tables_meta)
 
 
-@pytest.mark.asyncio
 async def test_low_confidence_unstructured_block_converts_to_table_node() -> None:
     """An unparsed block with kind='table' and confidence < threshold is converted to TableNode."""
     table_block = DocumentBlock(
@@ -244,7 +241,6 @@ async def test_low_confidence_unstructured_block_converts_to_table_node() -> Non
     assert TableNode in child_types
 
 
-@pytest.mark.asyncio
 async def test_fail_open_on_corrupted_table() -> None:
     """A corrupted or unparseable table should fail open and leave blocks untouched."""
     corrupted_cell = BlockNode(
@@ -299,7 +295,6 @@ async def test_fail_open_on_corrupted_table() -> None:
     assert t.cells[0][0].text == "Malformed Non Table Text With Single Word"
 
 
-@pytest.mark.asyncio
 async def test_table_fallback_passes_strict_pipeline_runner() -> None:
     """Verify TableFallbackProcessor operates cleanly within run_document_processors with strict=True."""
     doc = DocumentResult.from_pages_data(

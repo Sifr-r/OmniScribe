@@ -21,7 +21,7 @@ from omniscribe.harness.context import Context
 from omniscribe.harness.events import AgentEvent, SessionEvent
 from omniscribe.harness.plugin import Plugin
 from omniscribe.plugins.artifacts import ArtifactStore
-from omniscribe.plugins.state_backend import (
+from omniscribe.plugins.state_backend_types import (
     TERMINAL_JOB_STATUSES,
     JobRecord,
     StateBackend,

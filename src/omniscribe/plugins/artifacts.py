@@ -18,7 +18,7 @@ from pydantic import BaseModel
 from omniscribe.harness.context import Context
 from omniscribe.harness.events import SessionEvent
 from omniscribe.harness.plugin import Plugin
-from omniscribe.plugins.state_backend import ArtifactBlob, StateBackend
+from omniscribe.plugins.state_backend_types import ArtifactBlob, StateBackend
 
 _LOGGER = logging.getLogger("omniscribe.plugins.artifacts")
 

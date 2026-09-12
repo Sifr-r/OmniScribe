@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import os
+import sys
 from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -35,6 +36,69 @@ _ENV_OVERRIDE_PREFIX = "OMNISCRIBE_PLUGIN_"
 # :func:`register_plugin` before the harness boots.
 _PLUGIN_REGISTRY: dict[str, type[Plugin]] = {}
 
+# ``_autoregister_builtin_plugins`` runs lazily on the first
+# :func:`resolve_plugin` call. Running it at module-load time would
+# create an import cycle: any module that imports from
+# ``omniscribe.harness`` (transitively, via the package's eager
+# ``__init__``) would trigger the autoload, which imports every
+# built-in plugin module — including ones that themselves import
+# from ``omniscribe.harness``, e.g. ``omniscribe.plugins.state_backend``
+# (which subclasses ``Plugin``). With the eager autoload in place,
+# importing ``state_backend`` for a class like ``MemoryStateBackend``
+# would deadlock on a partially-initialised module and raise
+# ``ImportError: cannot import name 'X' from partially initialized
+# module 'omniscribe.plugins.state_backend'``.
+_autoregistered = False
+
+
+def _ensure_autoregistered() -> None:
+    """Run :func:`_autoregister_builtin_plugins` exactly once.
+
+    The guard is global so repeated :func:`resolve_plugin` calls stay
+    O(1) instead of re-importing every built-in plugin module each
+    time. Third-party plugins that opt in via :func:`register_plugin`
+    are unaffected — their entries land in the registry independently
+    of when the autoload runs.
+
+    After the built-in autoload, :func:`_register_instance_aliases`
+    scans :data:`sys.modules` for any module that re-exports a
+    ``plugin = SomePlugin()`` instance (parent packages do this in
+    their ``__init__`` so cordis rows can reference the shorter
+    ``omniscribe.plugins.ocr:plugin`` form instead of the deeper
+    ``omniscribe.plugins.ocr.plugin:plugin``). Each such alias is
+    keyed under its host module, which is what the conftest and
+    shipped cordis configs use interchangeably.
+    """
+    global _autoregistered
+    if _autoregistered:
+        return
+    _autoregistered = True
+    _autoregister_builtin_plugins()
+    _register_instance_aliases()
+
+
+def _register_instance_aliases() -> None:
+    """Bind ``module:plugin`` aliases to the matching registered class.
+
+    Several plugin packages (e.g. ``omniscribe.plugins.ocr``) re-export
+    a ``plugin = OCRPlugin()`` instance from their ``__init__`` so
+    cordis rows can use the parent module path. This pass walks every
+    loaded module, looks for a ``plugin`` attribute that is an instance
+    of a Plugin subclass already in the registry, and registers a
+    ``f"{module.__name__}:plugin"`` alias for it. The alias is the
+    shorter path the operator typically wires in ``cordis.yml``; the
+    class-form key remains the source of truth for instance identity.
+    """
+    for module_name, module in list(sys.modules.items()):
+        if module is None:
+            continue
+        candidate = getattr(module, "plugin", None)
+        if candidate is None or isinstance(candidate, type):
+            continue
+        cls = type(candidate)
+        if cls in _PLUGIN_REGISTRY.values() and not isinstance(candidate, type):
+            _PLUGIN_REGISTRY[f"{module_name}:plugin"] = cls
+
 
 def register_plugin(cls: type[Plugin]) -> type[Plugin]:
     """Decorator: opt a Plugin class into the harness plugin registry.
@@ -43,9 +107,28 @@ def register_plugin(cls: type[Plugin]) -> type[Plugin]:
     equal to ``f"{cls.__module__}:{cls.__qualname__}"``. A class is safe to
     register when its constructor takes no required arguments (the harness
     will instantiate it with no parameters).
+
+    For backward compatibility with cordis configs that reference the
+    module‑level ``plugin = SomePlugin()`` instance (the lowercase form,
+    ``f"{cls.__module__}:plugin"``), the same class is also registered
+    under that key when the host module exposes an attribute named
+    ``plugin`` whose value is an instance of ``cls``. The dual entry
+    means existing ``use: omniscribe.plugins.runtime:plugin``‑style
+    references resolve through the registry without forcing callers to
+    rename the cordis row. The class‑form key is the source of truth;
+    the instance alias is a fallback so historical configs keep
+    working.
     """
     key = f"{cls.__module__}:{cls.__qualname__}"
     _PLUGIN_REGISTRY[key] = cls
+    module = sys.modules.get(cls.__module__)
+    instance_alias = getattr(module, "plugin", None) if module is not None else None
+    if isinstance(instance_alias, cls):
+        # The instance form takes precedence over the class form for the
+        # ``:plugin`` key — the harness Loader historically treats the
+        # instance as the canonical reference and re‑uses whatever the
+        # operator already wired in ``cordis.yml``.
+        _PLUGIN_REGISTRY[f"{cls.__module__}:plugin"] = cls
     return cls
 
 
@@ -90,7 +173,12 @@ def _autoregister_builtin_plugins() -> None:
         register_plugin(cls)
 
 
-_autoregister_builtin_plugins()
+# Autoregistration is now lazy — see :func:`_ensure_autoregistered`
+# above. The previous eager call to :func:`_autoregister_builtin_plugins`
+# was removed because it created a circular import that aborted
+# ``pytest`` collection on any test that imported
+# ``omniscribe.plugins.state_backend`` directly (notably
+# ``tests/api/test_channel_token_compare.py``).
 
 
 @dataclass(frozen=True)
@@ -167,12 +255,24 @@ def resolve_plugin(use: str, *, row_id: str) -> Plugin:
     Resolution is a plain dict lookup; no dynamic import of caller-supplied
     module names. Plugins that are not in the registry yield
     :class:`PluginLoadError` rather than being silently imported.
+
+    For ``use: 'module:plugin'`` references that miss the registry,
+    fall back to ``sys.modules[module]`` so tests can inject synthetic
+    probe plugins *after* the built-in autoload has run. The alias
+    walker inside ``_ensure_autoregistered`` is one-shot at module
+    import, but tests often set up their fixture mid-session. The
+    fallback only succeeds when the module is already in
+    ``sys.modules`` and exposes a ``plugin`` attribute that is an
+    instance of a Plugin class already in the registry.
     """
     if not isinstance(use, str) or ":" not in use:
         raise PluginLoadError(
             row_id=row_id, reason=f"bad 'use' path {use!r}; expected 'module:ClassName'"
         )
+    _ensure_autoregistered()
     cls: type[Plugin] | None = _PLUGIN_REGISTRY.get(use)
+    if cls is None:
+        cls = _resolve_runtime_instance_alias(use)
     if cls is None:
         raise PluginLoadError(
             row_id=row_id,
@@ -189,6 +289,33 @@ def resolve_plugin(use: str, *, row_id: str) -> Plugin:
             reason=f"cannot instantiate plugin {use!r} (id {row_id!r}): {exc}",
         ) from exc
     return instance
+
+
+def _resolve_runtime_instance_alias(use: str) -> type[Plugin] | None:
+    """Resolve ``module:plugin`` against ``sys.modules`` for late-bound plugins.
+
+    Built-ins are picked up during ``_ensure_autoregistered``; this
+    fallback handles modules injected into ``sys.modules`` *after* the
+    autoload ran (e.g. test harnesses that wire a synthetic probe). The
+    module must already be in ``sys.modules`` — we do not perform any
+    dynamic import here, matching the rest of the harness's safety
+    posture against caller-supplied module paths.
+    """
+    module_name, _, attr = use.partition(":")
+    if not module_name or attr != "plugin":
+        return None
+    module = sys.modules.get(module_name)
+    if module is None:
+        return None
+    candidate = getattr(module, "plugin", None)
+    if candidate is None or isinstance(candidate, type):
+        return None
+    cls = type(candidate)
+    if cls in _PLUGIN_REGISTRY.values():
+        # Cache for subsequent lookups in the same session.
+        _PLUGIN_REGISTRY[use] = cls
+        return cls
+    return None
 
 
 def _apply_env_overrides(rows: list[PluginRow]) -> list[PluginRow]:

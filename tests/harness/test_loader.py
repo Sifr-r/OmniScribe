@@ -16,14 +16,21 @@ from omniscribe.harness.loader import (
     PluginRow,
     deep_merge,
     parse_rows,
+    register_plugin,
     resolve_plugin,
 )
 from omniscribe.harness.plugin import Plugin
 
 # Pytest imports this module as ``harness.test_loader`` (no ``tests/__init__.py``);
-# alias it so the loader's ``tests.harness.test_loader:`` paths resolve to the
-# same module object instead of a re-imported twin.
-sys.modules.setdefault("tests.harness.test_loader", sys.modules[__name__])
+# ``cls.__module__`` is therefore ``harness.test_loader``, and the registry
+# keys are ``harness.test_loader:X``. The ``use:`` strings below match that
+# form -- do not reintroduce the ``harness.test_loader:`` prefix here.
+#
+# (The earlier ``sys.modules.setdefault`` workaround didn't actually help:
+# it made the module object reachable from the ``tests.`` path but didn't
+# change ``cls.__module__``, so the registry keys still didn't match the
+# loader's lookup keys.)
+
 
 MOUNT_ORDER: list[str] = []
 
@@ -39,6 +46,7 @@ class AlphaSchema(BaseModel):
     count: int = 1
 
 
+@register_plugin
 class AlphaPlugin(Plugin):
     Schema = AlphaSchema
 
@@ -52,6 +60,7 @@ class AlphaPlugin(Plugin):
         )
 
 
+@register_plugin
 class BetaPlugin(Plugin):
     async def apply(self, ctx: Context) -> None:
         MOUNT_ORDER.append("beta")
@@ -60,11 +69,11 @@ class BetaPlugin(Plugin):
 _BASE_YAML = """
 plugins:
   - id: alpha
-    use: tests.harness.test_loader:AlphaPlugin
+    use: harness.test_loader:AlphaPlugin
     config:
       greeting: hello
   - id: beta
-    use: tests.harness.test_loader:BetaPlugin
+    use: harness.test_loader:BetaPlugin
 """
 
 
@@ -79,7 +88,7 @@ def _clear_mount_order() -> None:
 def test_parse_rows_valid() -> None:
     rows = parse_rows(_BASE_YAML)
     assert [row.id for row in rows] == ["alpha", "beta"]
-    assert rows[0].use == "tests.harness.test_loader:AlphaPlugin"
+    assert rows[0].use == "harness.test_loader:AlphaPlugin"
     assert rows[0].config == {"greeting": "hello"}
     assert rows[1].config == {}
 
@@ -131,7 +140,7 @@ def test_deep_merge_replaces_lists() -> None:
 
 
 def test_resolve_plugin_returns_attribute() -> None:
-    target = resolve_plugin("tests.harness.test_loader:AlphaPlugin", row_id="a")
+    target = resolve_plugin("harness.test_loader:AlphaPlugin", row_id="a")
     # ``resolve_plugin`` instantiates the registered class; the returned
     # object should be a Plugin subclass instance, not the class itself.
     assert isinstance(target, AlphaPlugin)
@@ -144,7 +153,7 @@ def test_resolve_plugin_bad_shape_fails() -> None:
 
 def test_resolve_plugin_missing_attr_fails() -> None:
     with pytest.raises(PluginLoadError):
-        resolve_plugin("tests.harness.test_loader:NoSuchThing", row_id="a")
+        resolve_plugin("harness.test_loader:NoSuchThing", row_id="a")
 
 
 # -- full load -------------------------------------------------------------------
@@ -169,7 +178,7 @@ async def test_load_applies_patch_layer(tmp_path: Path) -> None:
     patch.write_text(
         "plugins:\n"
         "  - id: alpha\n"
-        "    use: tests.harness.test_loader:AlphaPlugin\n"
+        "    use: harness.test_loader:AlphaPlugin\n"
         "    config:\n"
         "      greeting: patched\n",
         encoding="utf-8",
@@ -198,7 +207,7 @@ async def test_load_invalid_schema_fails_loud(tmp_path: Path) -> None:
     config_path.write_text(
         "plugins:\n"
         "  - id: alpha\n"
-        "    use: tests.harness.test_loader:AlphaPlugin\n"
+        "    use: harness.test_loader:AlphaPlugin\n"
         "    config:\n"
         "      count: not-a-number\n",
         encoding="utf-8",
@@ -219,7 +228,7 @@ async def test_load_missing_file_fails(tmp_path: Path) -> None:
 async def test_load_plugin_raising_wraps_error(tmp_path: Path) -> None:
     config_path = tmp_path / "cordis.yml"
     config_path.write_text(
-        "plugins:\n  - id: broken\n    use: tests.harness.test_loader:BrokenPlugin\n",
+        "plugins:\n  - id: broken\n    use: harness.test_loader:BrokenPlugin\n",
         encoding="utf-8",
     )
     ctx = Context()
@@ -229,11 +238,13 @@ async def test_load_plugin_raising_wraps_error(tmp_path: Path) -> None:
     await ctx.dispose()
 
 
+@register_plugin
 class BrokenPlugin(Plugin):
     async def apply(self, ctx: Context) -> None:
         raise RuntimeError("explode")
 
 
+@register_plugin
 class FailingInitPlugin(Plugin):
     def __init__(self) -> None:
         raise ValueError("initialization blew up")
@@ -309,7 +320,7 @@ async def test_load_mounted_plugins_logs_plugin_count(
 async def test_instantiate_error_includes_use_and_id(tmp_path: Path) -> None:
     config_path = tmp_path / "cordis.yml"
     config_path.write_text(
-        "plugins:\n  - id: bad_plugin_row\n    use: tests.harness.test_loader:FailingInitPlugin\n",
+        "plugins:\n  - id: bad_plugin_row\n    use: harness.test_loader:FailingInitPlugin\n",
         encoding="utf-8",
     )
     ctx = Context()
@@ -317,6 +328,7 @@ async def test_instantiate_error_includes_use_and_id(tmp_path: Path) -> None:
         await Loader(ctx).load(config_path)
     assert excinfo.value.row_id == "bad_plugin_row"
     assert "bad_plugin_row" in excinfo.value.reason
-    assert "tests.harness.test_loader:FailingInitPlugin" in excinfo.value.reason
+    assert "harness.test_loader:FailingInitPlugin" in excinfo.value.reason
     assert "cannot instantiate plugin" in excinfo.value.reason
     await ctx.dispose()
+

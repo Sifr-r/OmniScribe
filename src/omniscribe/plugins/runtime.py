@@ -19,7 +19,7 @@ from omniscribe.config import RuntimeSettings, load_settings
 from omniscribe.harness.context import Context
 from omniscribe.harness.events import SessionEvent
 from omniscribe.harness.plugin import Plugin
-from omniscribe.plugins.state_backend import StateBackend
+from omniscribe.plugins.state_backend_types import StateBackend
 
 _LOGGER = logging.getLogger("omniscribe.plugins.runtime")
 

@@ -79,10 +79,11 @@ doctor: ## Report Python, uv, Redis, and model server health
 # Regenerate the checked-in OpenAPI snapshot the frontend contract tests
 # diff against. ``tests/routers/test_openapi_schema.py`` will fail if
 # the snapshot drifts; running this target re-syncs the file to whatever
-# ``app.openapi()`` currently returns. The redirect uses ``>`` (not ``>>``)
-# so stale content is fully replaced on each run.
-openapi: ## Regenerate tests/openapi.json from the FastAPI app spec
-	uv run python -c "from omniscribe.server import app; import json; print(json.dumps(app.openapi(), indent=2))" > tests/openapi.json
+# the booted app's ``openapi()`` returns. We boot via ``TestClient``
+# (which runs lifespan startup) because plugin routes are added during
+# the lifespan — calling ``app.openapi()`` directly returns a stub.
+openapi: ## Regenerate tests/openapi.json from the booted FastAPI app spec
+	uv run python scripts/regen_openapi.py
 
 # Phase 4.4 (RFC 001 Option A): onefile PyInstaller bundle of the
 # FastAPI server. Cold-cache build is ~5-10 minutes on Windows; warm

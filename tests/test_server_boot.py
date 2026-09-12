@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 from omniscribe.harness.errors import PluginLoadError
+from omniscribe.harness.loader import register_plugin
 from omniscribe.harness.plugin import Plugin
 from omniscribe.server import create_app
 
@@ -57,6 +58,11 @@ def test_lifespan_dispose_runs_effect_cleanups(
                 disposed.append("disposed")
 
             ctx.effect(_cleanup)  # type: ignore[attr-defined]
+
+    # The harness resolves ``use: module:plugin`` through the Plugin
+    # registry; opt this synthetic class in so the boot probe is
+    # discoverable alongside the built-ins.
+    register_plugin(ProbePlugin)
 
     probe_module = types.ModuleType("boot_probe_plugin")
     probe_module.plugin = ProbePlugin()  # type: ignore[attr-defined]

@@ -37,7 +37,7 @@ from omniscribe.config import RuntimeSettings, load_settings
 from omniscribe.harness.context import Context
 from omniscribe.harness.events import AgentEvent
 from omniscribe.harness.plugin import Plugin
-from omniscribe.plugins.state_backend import ChannelRecord, StateBackend
+from omniscribe.plugins.state_backend_types import ChannelRecord, StateBackend
 
 _LOGGER = logging.getLogger("omniscribe.plugins.progress")
 
