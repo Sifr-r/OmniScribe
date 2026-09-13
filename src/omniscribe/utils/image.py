@@ -26,10 +26,31 @@ DEFAULT_CROP_QUALITY: int = 85
 DEFAULT_CROP_MIN_DIM: int = 256
 DEFAULT_CROP_STD_THRESHOLD: float = 12.0
 
+# Iteration 3 (perf): cProfile on the OCR crop+encode path showed
+# LANCZOS upscaling consumes ~62% of wall time for dense pages whose
+# small text-line crops trigger the ``cw < min_dim`` upscale branch.
+# cProfile breakdown for 50 dense pages x 150 boxes (7500 crops):
+#   - LANCZOS resize:           5.928s  (62%)
+#   - JPEG encode (libjpeg):    1.487s  (16%)
+#   - stddev blank-check:       0.770s   (8%)
+#   - misc Python overhead:     1.336s  (14%)
+# Per-resize microbench (50x50 -> 256x256):
+#   - LANCZOS:  0.597 ms
+#   - BICUBIC:  0.386 ms   (1.55x faster)
+#   - BILINEAR: 0.276 ms   (2.16x faster)
+# BICUBIC is the standard OCR/VLM sweet spot: smooth on high-contrast
+# text edges, no LANCZOS overshoot ringing, and the VLM has its own
+# attention for sub-pixel detail. The trust scorer consumes the OCR
+# text output (not the JPEG bytes) so this change does not shift the
+# trust-score calibration. The grounded path does not resize at all,
+# so F1.17 parity with the grounded path is preserved.
+DEFAULT_CROP_RESAMPLING: Image.Resampling = Image.Resampling.BICUBIC
+
 __all__ = [
     "DEFAULT_CROP_MIN_DIM",
     "DEFAULT_CROP_PADDING",
     "DEFAULT_CROP_QUALITY",
+    "DEFAULT_CROP_RESAMPLING",
     "DEFAULT_CROP_STD_THRESHOLD",
     "crop_for_ocr_from_image",
     "crop_many_for_ocr_from_image",
@@ -45,6 +66,7 @@ def _crop_one(
     min_dim: int,
     quality: int,
     std_threshold: float,
+    resampling: Image.Resampling,
     buf: io.BytesIO,
 ) -> str | None:
     """Inner body of :func:`crop_for_ocr_from_image` — module-private
@@ -78,7 +100,7 @@ def _crop_one(
         scale = max(min_dim / max(1, cw), min_dim / max(1, ch))
         scale = min(scale, 16.0)
         crop = crop.resize(
-            (int(cw * scale), int(ch * scale)), Image.Resampling.LANCZOS
+            (int(cw * scale), int(ch * scale)), resampling
         )
 
     buf.seek(0)
@@ -95,6 +117,7 @@ def crop_for_ocr_from_image(
     min_dim: int = DEFAULT_CROP_MIN_DIM,
     quality: int = DEFAULT_CROP_QUALITY,
     std_threshold: float = DEFAULT_CROP_STD_THRESHOLD,
+    resampling: Image.Resampling = DEFAULT_CROP_RESAMPLING,
 ) -> str | None:
     """Crop a bbox region from a pre-decoded PIL Image and return the
     encoded JPEG — or ``None`` if the region is mostly uniform.
@@ -133,6 +156,7 @@ def crop_for_ocr_from_image(
         min_dim=min_dim,
         quality=quality,
         std_threshold=std_threshold,
+        resampling=resampling,
         buf=buf,
     )
 
@@ -145,6 +169,7 @@ def crop_many_for_ocr_from_image(
     min_dim: int = DEFAULT_CROP_MIN_DIM,
     quality: int = DEFAULT_CROP_QUALITY,
     std_threshold: float = DEFAULT_CROP_STD_THRESHOLD,
+    resampling: Image.Resampling = DEFAULT_CROP_RESAMPLING,
 ) -> list[str | None]:
     """Batched counterpart to :func:`crop_for_ocr_from_image`.
 
@@ -188,6 +213,7 @@ def crop_many_for_ocr_from_image(
                 min_dim=min_dim,
                 quality=quality,
                 std_threshold=std_threshold,
+                resampling=resampling,
                 buf=buf,
             )
         )
