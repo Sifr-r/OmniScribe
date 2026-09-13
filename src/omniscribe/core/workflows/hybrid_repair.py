@@ -28,6 +28,7 @@ from typing import Protocol
 from PIL import Image
 
 from omniscribe.core.callbacks import BlockCallbackSet
+from omniscribe.core.imaging.utils import decode_base64_image
 from omniscribe.core.ocr import OCRProcessor
 from omniscribe.core.ocr.resilience import CircuitOpenError
 from omniscribe.core.workflows.base import (
@@ -43,7 +44,6 @@ from omniscribe.core.workflows.repair import (
     _text_layer_mismatch,
 )
 from omniscribe.core.workflows.utils import (
-    _decode_page_image,
     _estimate_confidence,
 )
 from omniscribe.utils.image import crop_for_ocr_from_image
@@ -128,7 +128,9 @@ async def run_repair_phase(
             return decoded[page_num]
         cached = decoded_get(page_num)
         if cached is None:
-            cached = await asyncio.to_thread(_decode_page_image, images_dict[page_num])
+            cached = await asyncio.to_thread(
+                decode_base64_image, images_dict[page_num], mode="RGB"
+            )
         decoded[page_num] = cached
         return cached
 
@@ -204,7 +206,24 @@ async def repair_single_page(
     pattern is the same one the OCR quality orchestrator uses
     for ``fallback_used_box``). ``get_page_image`` is lazy so pages
     without below-target blocks never decode their image.
+
+    Iteration 2 (perf): ``loop.repair_page`` retries each below-target
+    block up to ``max_retries`` times with the same bbox. The previous
+    implementation re-cropped the same bbox on every retry
+    (``asyncio.to_thread(crop_for_ocr_from_image, ...)`` per
+    ``re_ocr`` call). The crop work is now memoized per bbox — the
+    first ``re_ocr`` for a bbox crops+JPEG-encodes and caches the
+    result; retries (and any duplicate-block retries on the same
+    page) hit the cache. ``crop_b64`` is byte-identical for retries
+    because the bbox is unchanged across attempts (only the prompt
+    ``previous_text`` changes).
+
+    The lazy-decode contract is preserved: pages where every block
+    is above-target (the common case) never call ``get_page_image``
+    and never crop, identical to the previous behaviour.
     """
+
+    crop_cache: dict[tuple[float, float, float, float], str | None] = {}
 
     async def re_ocr(
         block_idx: int,
@@ -213,10 +232,16 @@ async def repair_single_page(
         previous_text: str = "",
         attempt: int = 1,
     ) -> str:
-        page_image = await get_page_image(p_num)
-        crop_b64 = await asyncio.to_thread(
-            crop_for_ocr_from_image, page_image, list(bbox)
-        )
+        # Memoize crop by bbox. Retries within the same page share the
+        # same bbox so the cache hits. ``bbox not in crop_cache``
+        # distinguishes "cache miss" from "cached blank crop".
+        if bbox not in crop_cache:
+            page_image = await get_page_image(p_num)
+            crop_b64 = await asyncio.to_thread(
+                crop_for_ocr_from_image, page_image, list(bbox)
+            )
+            crop_cache[bbox] = crop_b64
+        crop_b64 = crop_cache[bbox]
         if crop_b64 is None:
             return ""
         hint = (
