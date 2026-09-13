@@ -109,13 +109,13 @@ def register_plugin(cls: type[Plugin]) -> type[Plugin]:
     will instantiate it with no parameters).
 
     For backward compatibility with cordis configs that reference the
-    module‑level ``plugin = SomePlugin()`` instance (the lowercase form,
+    module-level ``plugin = SomePlugin()`` instance (the lowercase form,
     ``f"{cls.__module__}:plugin"``), the same class is also registered
     under that key when the host module exposes an attribute named
     ``plugin`` whose value is an instance of ``cls``. The dual entry
-    means existing ``use: omniscribe.plugins.runtime:plugin``‑style
+    means existing ``use: omniscribe.plugins.runtime:plugin``-style
     references resolve through the registry without forcing callers to
-    rename the cordis row. The class‑form key is the source of truth;
+    rename the cordis row. The class-form key is the source of truth;
     the instance alias is a fallback so historical configs keep
     working.
     """
@@ -126,7 +126,7 @@ def register_plugin(cls: type[Plugin]) -> type[Plugin]:
     if isinstance(instance_alias, cls):
         # The instance form takes precedence over the class form for the
         # ``:plugin`` key — the harness Loader historically treats the
-        # instance as the canonical reference and re‑uses whatever the
+        # instance as the canonical reference and re-uses whatever the
         # operator already wired in ``cordis.yml``.
         _PLUGIN_REGISTRY[f"{cls.__module__}:plugin"] = cls
     return cls

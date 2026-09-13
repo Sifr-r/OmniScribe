@@ -11,8 +11,9 @@ name: Tests
 # `calibration` job). No live LLM endpoint is ever contacted in CI;
 # the `live_llm` marker was removed in Wave 14.
 #
-# Matrix: Python 3.11 (the floor in pyproject.toml) and 3.13
-# to catch version-specific regressions without quadrupling runtime.
+# Matrix: Python 3.11 (the floor in pyproject.toml), 3.13, and 3.14
+# (the Dockerfile's base image; see the F4.17 audit fix below) to
+# catch version-specific regressions without quadrupling runtime.
 
 on:
   push:
@@ -34,18 +35,22 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
-      # F4.17 audit fix (documented): the matrix intentionally
-      # covers Python 3.11 (the floor in ``pyproject.toml``) on
-      # both ubuntu + windows, plus 3.13 on ubuntu. The nightly
-      # workflow adds 3.12 to the slow tier so the production
-      # window (3.12+) gets a Surya-path regression run nightly;
-      # the fast tier stays at 3.11 + 3.13 so the matrix doesn't
-      # quadruple in size. The drift is documented here so a
-      # future "why doesn't nightly match test.yml?" question has
-      # the answer in-tree.
+      # F4.17 audit fix (documented; revised 2026-09-12): the matrix
+      # intentionally covers Python 3.11 (the floor in ``pyproject.toml``)
+      # on both ubuntu + windows, plus 3.13 and 3.14 on ubuntu. The
+      # 3.14 cell was added so the ``Dockerfile`` base
+      # (``python:3.14-slim``) is exercised in CI — ``pyproject.toml``'s
+      # classifier advertises 3.14 support but until 2026-09-12 nothing
+      # in CI ran against it. The nightly workflow adds 3.12 to the
+      # slow tier so the production window (3.12+) gets a Surya-path
+      # regression run nightly; the fast tier stays at 3.11 + 3.13 + 3.14
+      # (windows remains 3.11-only) so the matrix doesn't quadruple in
+      # size. The fast/nightly drift is documented here so a future
+      # "why doesn't nightly match test.yml?" question has the answer
+      # in-tree.
       matrix:
         os: [ubuntu-latest]
-        python: ["3.11", "3.13"]
+        python: ["3.11", "3.13", "3.14"]
         include:
           - os: windows-latest
             python: "3.11"
@@ -130,32 +135,37 @@ jobs:
           retention-days: 30
 
       - name: Run pip-audit vulnerability check
-        # Keep in sync with `make audit` (Makefile): PYSEC-2026-311 /
-        # CVE-2026-45829 (chromadb server RCE) is risk-accepted — no
-        # patched release exists yet and neither vector is reachable in
-        # OmniScribe (embedded PersistentClient only, explicit
-        # embedding_function= everywhere). See the Makefile comment; drop
-        # the flag once chromadb ships a fixed release (>1.5.9).
-        run: uv run pip-audit --ignore-vuln PYSEC-2026-311
+        # 2026-09-12 audit: dropped --ignore-vuln PYSEC-2026-311.
+        # chromadb was removed from the dep tree in the Phase 5
+        # lexicon migration (Makefile line 53, 2026-09-06;
+        # pyproject.toml line 92), so the flag is dead code in CI
+        # and ``make audit`` already runs plain ``uv run pip-audit``.
+        # Re-add the flag only if chromadb returns to the resolver
+        # AND the vector is reachable in OmniScribe's usage. If
+        # pip-audit flags chromadb in a local env, it is a stale
+        # local install, not a declared dependency.
+        run: uv run pip-audit
 
       - name: Generate CycloneDX SBOM
-        # F5-09 audit fix: only generate the SBOM when this run is
-        # part of the release path. The previous unconditional
-        # generation produced N (Python version) × M (OS) artifacts
-        # per fast-tier run, none of which the ``release.yml``
-        # workflow consumed. Gating on ``github.ref == 'refs/heads/main'``
-        # and ``github.event_name != 'pull_request'`` (the matrix
-        # also runs on PRs) keeps the single canonical SBOM that
-        # release artifacts attach to. PRs still build the project
-        # and run the test suite; they just skip the SBOM.
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        # F5-09 audit fix (revised 2026-09-12): only generate the SBOM
+        # when this run is part of the release path AND is the single
+        # canonical matrix cell. The original gate
+        # (``github.event_name == 'push' && github.ref == 'refs/heads/main'``)
+        # produced 3 byte-identical SBOMs per fast-tier push
+        # (ubuntu+3.11, ubuntu+3.13, windows+3.11), with the upload step
+        # silently overwriting the matrix-free artifact name. Adding the
+        # matrix gate restricts generation to ubuntu + 3.13, so
+        # ``release.yml`` attaches the one canonical SBOM. PRs still
+        # build the project and run the test suite; they just skip the
+        # SBOM.
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && matrix.os == 'ubuntu-latest' && matrix.python == '3.13'
         run: uv run cyclonedx-py environment --output-format json --output-file sbom.json
 
       - name: Upload CycloneDX SBOM artifact
         # Same gate as the generation step. The artifact name is
-        # matrix-free because the gated run is a single OS (ubuntu)
-        # + single Python (3.13) when the trigger is push to main.
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        # matrix-free because the matrix gate above restricts
+        # the upload to the single canonical cell (ubuntu + 3.13).
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && matrix.os == 'ubuntu-latest' && matrix.python == '3.13'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: sbom-cyclonedx.json
@@ -210,9 +220,17 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Run Trivy vulnerability scanner (HIGH,CRITICAL)
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # 0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: omniscribe:scan
+          # 2026-09-13 audit: trivy-action v0.36.0 bundles Trivy CLI v0.70.0
+          # by default. The latest Trivy CLI release is v0.74.0, so we pin
+          # the CLI here. The action release train hasn't caught up
+          # (v0.36.0 from April 2026 is still the latest action tag), so
+          # this is the only way to track CLI upstream until a new
+          # action release lands. Drop the `version` line when a newer
+          # action tag ships — the CLI will track automatically.
+          version: v0.74.0
           format: sarif
           output: trivy-results.sarif
           # Fail the build on any unfixed HIGH/CRITICAL -- a vuln with

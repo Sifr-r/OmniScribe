@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import sys
 from pathlib import Path
 
 import pytest
@@ -331,4 +330,3 @@ async def test_instantiate_error_includes_use_and_id(tmp_path: Path) -> None:
     assert "harness.test_loader:FailingInitPlugin" in excinfo.value.reason
     assert "cannot instantiate plugin" in excinfo.value.reason
     await ctx.dispose()
-

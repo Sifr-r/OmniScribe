@@ -22,10 +22,9 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel
-from typing import TYPE_CHECKING
 
 from omniscribe.config import load_settings
 from omniscribe.harness.plugin import Plugin
