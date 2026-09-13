@@ -9,6 +9,7 @@ from PIL import Image
 
 from omniscribe.core.aligner import HybridAligner
 from omniscribe.core.document import BBox
+from omniscribe.core.imaging.utils import decode_base64_image
 from omniscribe.core.ocr import OCRProcessor
 from omniscribe.core.ocr.resilience import CircuitOpenError
 from omniscribe.core.workflows.base import (
@@ -20,12 +21,11 @@ from omniscribe.core.workflows.base import (
     notify,
 )
 from omniscribe.core.workflows.utils import (
-    _decode_page_image,
     _estimate_confidence,
     _is_refinable,
     validate_bbox_coordinates,
 )
-from omniscribe.utils.image import crop_for_ocr_from_image
+from omniscribe.utils.image import crop_many_for_ocr_from_image
 
 if TYPE_CHECKING:
     from omniscribe.core.callbacks import BlockCallbackSet
@@ -179,46 +179,79 @@ class HybridOcrRunner:
         dual_engine: bool = False,
         page_image: Image.Image | None = None,
     ) -> PageBoxes:
-        """Run per-crop OCR across all boxes for a dense page."""
-        if page_image is None:
-            page_image = await asyncio.to_thread(_decode_page_image, image_b64)
+        """Run per-crop OCR across all boxes for a dense page.
 
-        async def ocr_one(idx: int, bbox: BBox) -> tuple[int, str]:
+        Iteration 1 (perf): the previous implementation submitted one
+        ``asyncio.to_thread`` call per box to crop + JPEG-encode, which
+        for a 150-box dense page paid ~7-30 ms of pure executor round-
+        trip cost on top of the JPEG encode. The crop+encode stage now
+        runs as a single batched :func:`crop_many_for_ocr_from_image`
+        call (one executor round-trip per page) and the network-bound
+        VLM calls still fan out concurrently via a TaskGroup.
+        """
+        if page_image is None:
+            page_image = await asyncio.to_thread(
+                decode_base64_image, image_b64, mode="RGB"
+            )
+
+        # Stage 1 (CPU, batched): filter refinable boxes, validate
+        # coordinates, and crop+JPEG-encode in a single thread call.
+        # ``indices[k]`` maps to the k-th crop result so the final page
+        # can be re-assembled in input order.
+        indices: list[int] = []
+        safe_bboxes: list[BBox] = []
+        for idx, (bbox, _) in enumerate(structured):
+            if not _is_refinable(bbox):
+                continue
+            indices.append(idx)
+            safe_bboxes.append(validate_bbox_coordinates(bbox, clamp=True))
+
+        if safe_bboxes:
+            crop_results = await asyncio.to_thread(
+                crop_many_for_ocr_from_image, page_image, safe_bboxes
+            )
+        else:
+            crop_results = []
+
+        # Stage 2 (network, concurrent): VLM call per non-blank crop.
+        # The VLM client owns its own concurrency limits; the ``semaphore``
+        # still bounds total in-flight VLM calls for this page so we don't
+        # overrun the local model's queue.
+        async def ocr_one(slot: int) -> tuple[int, str]:
+            idx = indices[slot]
+            crop_b64 = crop_results[slot]
+            if crop_b64 is None:
+                return idx, ""
             try:
                 async with semaphore:
-                    if not _is_refinable(bbox):
-                        return idx, ""
-                    safe_bbox = validate_bbox_coordinates(bbox, clamp=True)
-                    crop_b64 = await asyncio.to_thread(
-                        crop_for_ocr_from_image, page_image, safe_bbox
-                    )
-                    if crop_b64 is None:
-                        return idx, ""
                     text = await self.ocr_processor.perform_ocr_on_crop(
                         crop_b64,
                         self_correction=self_correction,
                         binarize=binarize,
                         dual_engine=dual_engine,
                     )
-                    return idx, text
+                return idx, text
             except CircuitOpenError:
                 raise
             except Exception as e:
                 logger.warning(
-                    "Dense OCR failed for box %s: %s: %s", idx, type(e).__name__, e
+                    "Dense OCR failed for box %s: %s: %s",
+                    idx,
+                    type(e).__name__,
+                    e,
                 )
                 return idx, ""
 
         results: dict[int, str] = {}
-        try:
-            async with asyncio.TaskGroup() as tg:
-                tasks = [
-                    tg.create_task(ocr_one(i, bbox))
-                    for i, (bbox, _) in enumerate(structured)
-                ]
-                for fut in asyncio.as_completed(tasks):
-                    idx, text = await fut
-                    results[idx] = text.strip()
-        except* CircuitOpenError as eg:
-            raise eg.exceptions[0] from None
+        if indices:
+            try:
+                async with asyncio.TaskGroup() as tg:
+                    tasks = [
+                        tg.create_task(ocr_one(k)) for k in range(len(indices))
+                    ]
+                    for fut in asyncio.as_completed(tasks):
+                        idx, text = await fut
+                        results[idx] = text.strip()
+            except* CircuitOpenError as eg:
+                raise eg.exceptions[0] from None
         return [(bbox, results.get(i, "")) for i, (bbox, _) in enumerate(structured)]
