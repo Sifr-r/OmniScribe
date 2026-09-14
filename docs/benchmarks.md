@@ -127,6 +127,12 @@ Baseline evaluations across OmniScribe standard fixtures and public evaluation p
 | MinerU | 0.039 | 0.071 | 0.90 | 0.87 | Local (GPU intensive) |
 | Unstructured.io (OSS local) | 0.065 | 0.118 | 0.82 | 0.78 | Local / Cloud hybrid |
 
+### Provenance
+
+- **OmniScribe rows**: baseline numbers from an internal run of `uv run python scripts/confidence_eval.py --score-markdown` over the bundled `examples/*.pdf` fixtures with the default hybrid/grounded model configuration. They are model- and hardware-dependent; re-run the command to reproduce against your own endpoint.
+- **Competitor rows (Marker, Docling, MinerU, Unstructured.io)**: illustrative positioning carried over from the RFC 004 gap analysis (`docs/rfcs/2026-09-competitive-gap-remediation.md`). They are **not** same-protocol measurements — each system must be re-measured with the §2 methodology on the same public datasets before these numbers are treated as published results. The OmniDocBench public-dataset run remains gated on the §5 license review.
+- **Nightly CI**: `--score-markdown` is deliberately **not** wired into the nightly workflow. `scripts/confidence_eval.py` drives the live OCR pipeline against a VLM endpoint (`--api-base`), and no live LLM is contacted in CI; the script also fail-softs per pipeline path, so a CI step would exit green with empty tables — the exact silent-no-op-gate failure mode called out by audit P3-12. Run it manually per the command above.
+
 ---
 
 ## 5. Dataset Ingestion & License Review Status

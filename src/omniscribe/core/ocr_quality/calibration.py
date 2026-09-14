@@ -39,7 +39,6 @@ _CACHE_MAX_SIZE: Final[int] = 1024
 # Cached params per model id. ``None`` is the identity sentinel —
 # ``calibrate`` returns ``raw`` unchanged without applying Platt.
 _CACHE: OrderedDict[str, tuple[float, float] | None] = OrderedDict()
-_IDENTITY_PARAMS: Final[tuple[float, float] | None] = None
 
 
 def _cache_put(model_id: str, params: tuple[float, float] | None) -> None:

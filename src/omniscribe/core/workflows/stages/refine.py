@@ -181,9 +181,7 @@ class HybridRefiner:
             async with asyncio.TaskGroup() as tg:
                 tasks = [
                     tg.create_task(
-                        refine_one(
-                            p_num, idx, bbox, page_crops[p_num][slot]
-                        )
+                        refine_one(p_num, idx, bbox, page_crops[p_num][slot])
                     )
                     for p_num, items in slot_map.items()
                     for slot, (idx, bbox, _) in enumerate(items)

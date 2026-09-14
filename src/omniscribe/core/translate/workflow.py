@@ -15,6 +15,8 @@ compatibility (tests and the API layer import these names from
 
 from __future__ import annotations
 
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
 from typing import Any, TypedDict
 
@@ -102,9 +104,24 @@ def get_translation_app() -> Any:
     return workflow.compile()
 
 
+def _invoke_app(app: Any, *args: Any, **kwargs: Any) -> Any:
+    """Drive the async-node graph through ainvoke.
+
+    LangGraph's sync ``invoke`` cannot run async node functions, so the
+    compiled app must always be awaited; when a loop is already running the
+    awaitable is bridged through a worker thread.
+    """
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(app.ainvoke(*args, **kwargs))
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        return pool.submit(asyncio.run, app.ainvoke(*args, **kwargs)).result()
+
+
 class _LazyTranslationApp:
     def invoke(self, *args: Any, **kwargs: Any) -> Any:
-        return get_translation_app().invoke(*args, **kwargs)
+        return _invoke_app(get_translation_app(), *args, **kwargs)
 
 
 translation_app = _LazyTranslationApp()
@@ -205,7 +222,7 @@ def run_translation(
             "attempts": 0,
             "settings": active_settings,
         }
-        result = app.invoke(initial_state)
+        result = _invoke_app(app, initial_state)
         if result.get("failed"):
             raise TranslationError(
                 f"Translation failed after {active_settings.max_attempts} attempts "

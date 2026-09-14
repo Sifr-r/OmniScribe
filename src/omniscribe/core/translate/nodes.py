@@ -63,13 +63,6 @@ EVALUATION_SYSTEM_MESSAGE = (
     "Respond with a single JSON object and nothing else."
 )
 
-# --- Quality thresholds ----------------------------------------------------
-# Defaults for the translate/evaluate loop. The runtime values come from
-# :class:`omniscribe.core.translate.config.TranslationSettings` (env-driven
-# via ``OMNISCRIBE_TRANSLATION_*``); see refactor §2.8.
-LEXICON_RESULT_COUNT = 3
-
-
 # ---------------------------------------------------------------------------
 # Deterministic adequacy checks
 # ---------------------------------------------------------------------------

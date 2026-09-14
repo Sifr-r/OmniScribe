@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel
-
 from omniscribe.harness.context import Context
-from omniscribe.harness.plugin import Plugin
+from omniscribe.harness.plugin import EmptySchema, Plugin
 from omniscribe.plugins.glossary.routes import build_glossary_router
 from omniscribe.plugins.glossary.service import (
     GlossaryImportService,
@@ -16,14 +14,10 @@ from omniscribe.plugins.jobs import GlossaryJobRunner, JobQueue
 from omniscribe.plugins.runtime import RuntimeService
 
 
-class GlossarySchema(BaseModel):
-    """No configurable fields."""
-
-
 class GlossaryPlugin(Plugin):
     """Client-frozen glossary surface: dual-shape imports + library."""
 
-    Schema = GlossarySchema
+    Schema = EmptySchema
 
     async def apply(self, ctx: Context) -> None:
         queue = ctx.inject(JobQueue)

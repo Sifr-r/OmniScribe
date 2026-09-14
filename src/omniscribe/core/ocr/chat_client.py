@@ -94,7 +94,7 @@ class ChatClient:
     async def chat(
         self,
         prompt: str,
-        image_base64: str,
+        image_b64: str,
         *,
         timeout: float,
         max_tokens: int,
@@ -143,7 +143,7 @@ class ChatClient:
                                 {
                                     "type": "image_url",
                                     "image_url": {
-                                        "url": f"data:image/jpeg;base64,{image_base64}"
+                                        "url": f"data:image/jpeg;base64,{image_b64}"
                                     },
                                 },
                             ],

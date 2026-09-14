@@ -123,12 +123,26 @@ class SQLiteStateBackend:
     """
 
     def __init__(self, db_path: Path | str, blob_dir: Path | str) -> None:
+        """Store ``db_path`` and ``blob_dir``; defer connection until :meth:`open`.
+
+        Construction is cheap and side-effect-free — the SQLite
+        connection is only opened (and schema-migrated) when
+        :meth:`open` is awaited, so the harness can instantiate the
+        backend before the working directory is known.
+        """
         self._db_path = Path(db_path)
         self._blob_dir = Path(blob_dir)
         self._lock = asyncio.Lock()
         self._conn: sqlite3.Connection | None = None
 
     async def open(self) -> None:
+        """Open the SQLite connection, create the schema, and migrate in place.
+
+        Enables WAL journal mode (warns if the engine refused it),
+        applies the ``CREATE TABLE IF NOT EXISTS`` schema, and runs
+        the ``ALTER TABLE`` migration that adds the ``started_at``
+        column to pre-existing databases.
+        """
         async with self._lock:
             await asyncio.to_thread(self._open_sync)
 
@@ -180,6 +194,14 @@ class SQLiteStateBackend:
         blob: bytes,
         ttl_seconds: int,
     ) -> None:
+        """Persist an artifact's blob bytes and metadata row.
+
+        Writes ``blob`` to ``<blob_dir>/<id>.bin`` and inserts (or
+        replaces) the matching metadata row. On replace, the previous
+        blob file is unlinked to avoid leaking orphan files when an
+        operator pre-populated a row whose ``blob_path`` points
+        somewhere other than the canonical location.
+        """
         async with self._lock:
 
             def _put() -> None:
@@ -220,6 +242,13 @@ class SQLiteStateBackend:
             await asyncio.to_thread(_put)
 
     async def get_artifact(self, id: str, token: str) -> ArtifactBlob | None:
+        """Return an artifact if the id+token pair matches, else ``None``.
+
+        Tokens are compared with :func:`secrets.compare_digest` so
+        timing analysis cannot be used to recover a valid token from
+        a series of failed lookups. A missing blob file on disk is
+        treated identically to a missing row.
+        """
         async with self._lock:
 
             def _get() -> ArtifactBlob | None:
@@ -240,6 +269,12 @@ class SQLiteStateBackend:
             return await asyncio.to_thread(_get)
 
     async def delete_artifact(self, id: str) -> None:
+        """Delete the artifact row and its blob file (if any).
+
+        The blob file is unlinked with ``missing_ok=True`` so a
+        previous row-only delete (no leftover file) is a no-op rather
+        than an exception.
+        """
         async with self._lock:
 
             def _delete() -> None:
@@ -255,6 +290,12 @@ class SQLiteStateBackend:
             await asyncio.to_thread(_delete)
 
     async def prune_expired_artifacts(self, now: float) -> int:
+        """Delete artifacts whose ``created_at + ttl_seconds <= now``.
+
+        Returns the number of artifacts pruned so the caller can log
+        it. Both the database rows and their blob files are removed;
+        a missing blob file is silently tolerated.
+        """
         async with self._lock:
 
             def _prune() -> int:
@@ -278,6 +319,12 @@ class SQLiteStateBackend:
     # -- jobs -----------------------------------------------------------------
 
     async def upsert_job(self, record: JobRecord) -> None:
+        """Insert or replace the row for ``record.job_id``.
+
+        ``request_meta`` is JSON-encoded because SQLite has no native
+        dict type and a JSON column is overkill for a single
+        per-job metadata blob.
+        """
         async with self._lock:
 
             def _upsert() -> None:
@@ -306,6 +353,7 @@ class SQLiteStateBackend:
             await asyncio.to_thread(_upsert)
 
     async def get_job(self, job_id: str) -> JobRecord | None:
+        """Return the job row for ``job_id`` or ``None`` if absent."""
         async with self._lock:
 
             def _get() -> JobRecord | None:
@@ -325,6 +373,7 @@ class SQLiteStateBackend:
             return await asyncio.to_thread(_get)
 
     async def list_jobs(self, *, limit: int = 100, offset: int = 0) -> list[JobRecord]:
+        """Return jobs ordered newest-first, paginated by ``limit``/``offset``."""
         async with self._lock:
 
             def _list() -> list[JobRecord]:
@@ -345,6 +394,7 @@ class SQLiteStateBackend:
             return await asyncio.to_thread(_list)
 
     async def clear_jobs(self) -> int:
+        """Delete every job row. Returns the deleted row count."""
         async with self._lock:
 
             def _clear() -> int:
@@ -356,6 +406,7 @@ class SQLiteStateBackend:
             return await asyncio.to_thread(_clear)
 
     async def delete_job(self, job_id: str) -> None:
+        """Delete the row for ``job_id`` (no-op if absent)."""
         async with self._lock:
 
             def _delete() -> None:
@@ -370,6 +421,13 @@ class SQLiteStateBackend:
     async def put_channel(
         self, channel_id: str, session_token: str, job_id: str, ttl_seconds: int
     ) -> None:
+        """Create or replace a progress channel row.
+
+        Channels are the server-side handle a client polls
+        (``GET /api/progress/{channel_id}``) to receive WebSocket
+        progress for a long-running job. ``consumed`` is reset to 0
+        on every put so the channel can be re-handed out.
+        """
         async with self._lock:
 
             def _put() -> None:
@@ -385,6 +443,7 @@ class SQLiteStateBackend:
             await asyncio.to_thread(_put)
 
     async def get_channel(self, channel_id: str) -> ChannelRecord | None:
+        """Return the channel row or ``None``. Does NOT consume."""
         async with self._lock:
 
             def _get() -> ChannelRecord | None:
@@ -404,6 +463,12 @@ class SQLiteStateBackend:
     async def consume_channel(
         self, channel_id: str, session_token: str
     ) -> ChannelRecord | None:
+        """Return + atomically mark a channel as consumed if the token matches.
+
+        A second consume (or a wrong token) returns ``None``; the
+        token comparison uses :func:`secrets.compare_digest` to
+        prevent timing attacks against a valid channel id.
+        """
         async with self._lock:
 
             def _consume() -> ChannelRecord | None:
@@ -432,6 +497,7 @@ class SQLiteStateBackend:
             return await asyncio.to_thread(_consume)
 
     async def delete_channel(self, channel_id: str) -> None:
+        """Delete the channel row (no-op if absent)."""
         async with self._lock:
 
             def _delete() -> None:
@@ -444,6 +510,7 @@ class SQLiteStateBackend:
             await asyncio.to_thread(_delete)
 
     async def prune_expired_channels(self, now: float) -> int:
+        """Delete channels whose ``created_at + ttl_seconds <= now``."""
         async with self._lock:
 
             def _prune() -> int:
@@ -458,6 +525,7 @@ class SQLiteStateBackend:
             return await asyncio.to_thread(_prune)
 
     async def aclose(self) -> None:
+        """Close the underlying SQLite connection (idempotent)."""
         async with self._lock:
             if self._conn is not None:
                 conn = self._conn

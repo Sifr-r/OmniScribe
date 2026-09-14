@@ -205,6 +205,7 @@ Protocol (`ctx.inject(JobQueue)`), never by module singleton.
 | `client/lib/presentation/workstation/canvas/document_viewport.dart` | Full-height GPU interactive document canvas with zoom, pan, spatial grid, bounding box overlays, and floating viewport controls |
 | `client/lib/presentation/workstation/workstation_screen.dart` | Primary OCR workstation screen orchestrating unified top header bar, left vertical page strip rail, viewport canvas, BBox inspector, right controls dock, and progress dock |
 | `client/lib/presentation/providers/ai_setup_wizard_modal.dart` | 3-step beginner-friendly guided AI setup wizard for local (Ollama/LM Studio) and cloud (OpenAI/Gemini/Claude/Groq) engine configuration |
+| `src/omniscribe/plugins/ocr/routes.py` | FastAPI route definitions, multipart upload parsing, preview caching, and HTTP endpoint handlers for the OCR plugin (`POST /api/process`, `POST /api/process/async`, job status/listing/cancelling/deletion, SSE event streaming, config GET/POST, preflight, and page previews) |
 | `src/omniscribe/plugins/ocr/services/` | Modular OCR service sub-components (`error_sanitization.py`, `content_sniff.py`, `config_seeding.py`) extracted from the former monolithic `service.py` to isolate concerns |
 | `scripts/build_windows.py` | PyInstaller build orchestrator generating standalone Windows server bundle with icon and spec integration |
 | `scripts/run_server.py` | Argument-parsing executable entrypoint wrapper for the server binary and source execution |
@@ -1344,16 +1345,84 @@ Hardens multi-format LLM completions, provider configuration inference, stage co
 | `tests/core/workflows/test_ocr_stage_concurrency_and_preflight.py` | Unit tests verifying loopback concurrency clamping, preflight `ensure_model_loaded` invocation, and `ModelNotLoadedError` propagation. |
 | `tests/core/llm/test_client.py` | Extended unit tests verifying provider configuration inference across all supported URL patterns and fallback to custom. |
 
+### 2026-09-13: Core Python Engine Refactor (COMP-01, COMP-02, COMP-04)
+
+Resolves high-complexity audit findings across core VLM dispatch, DOCX tree rendering, and LLM message extraction:
+
+| File | Responsibility |
+| --- | --- |
+| `src/omniscribe/core/ocr/multi_format_client.py` | Refactored `complete_vlm_prompt` using Strategy/Adapter pattern with `ProviderFormatAdapter` protocol, `OpenAIFormatAdapter`, `AnthropicFormatAdapter`, and `OllamaFormatAdapter` format registry (`_FORMAT_REGISTRY`); extracted `_execute_http_with_retry()` to cleanly isolate HTTP POST execution and exponential backoff retry loop. |
+| `src/omniscribe/core/writers/docx_tree.py` | Refactored `_render_block` to eliminate 8-branch `elif` ladder and deep nesting via module-level `_RENDER_DISPATCH` dictionary; extracted modular block renderers (`_render_section_header`, `_render_list_item`, `_render_code`, `_render_equation`, `_render_figure`, `_render_key_value`, `_render_table_block`, `_render_paragraph`, `_render_noop`) with flattened span loops. |
+| `src/omniscribe/core/llm/client.py` | Refactored `_extract_prompt_and_image` to eliminate 10-level nested indentations using guard clauses; extracted `_parse_dict_item` and `_parse_content_items` helper functions while preserving the exact `tuple[str, str | None]` return contract. |
+
+### 2026-09-13: Flutter UI & Network Refactor (COMP-03, COMP-10)
+
+Resolves high-complexity audit findings across the workstation control dock and Dio network error translation:
+
+| File | Responsibility |
+| --- | --- |
+| `client/lib/presentation/workstation/controls/right_control_dock.dart` | Clean composition widget orchestrating modular subwidgets, reducing `build()` from 646 lines to < 50 lines. |
+| `client/lib/presentation/workstation/controls/components/ai_engine_status_card.dart` | AI engine status banner, readiness badge, active provider/model indicators, and Quick Setup wizard trigger. |
+| `client/lib/presentation/workstation/controls/components/smart_preset_section.dart` | Quality preset selector chips, description tooltip integration, and fast/balanced/accuracy switches. |
+| `client/lib/presentation/workstation/controls/components/execution_options_section.dart` | Target model dropdown, whitespace recall toggle, text layer recall toggle, and advanced pipeline options accordion. |
+| `client/lib/presentation/workstation/controls/components/document_processors_card.dart` | Document processor selectors for layout enrichment, table extraction, and structure analysis checkboxes. |
+| `client/lib/presentation/workstation/controls/components/workstation_action_buttons.dart` | Primary Process Document execution CTA and dynamic job cancellation controls. |
+| `client/lib/presentation/workstation/controls/components/image_preprocessing_card.dart` | Collapsible image preprocessing controls (orientation detection, deskew, denoise, contrast normalization, crop cleanup). |
+| `client/lib/core/network/api_client.dart` | Table-driven `_statusFactories` exception translation and record-based `_extractErrorDetails()` eliminating monolithic 10-case switch statement. |
+| `client/analysis_options.yaml` | Added `avoid_unnecessary_containers` linter rule. |
+| `client/test/network_test.dart` | Comprehensive unit tests verifying table-driven error translation across all HTTP status codes (400, 401, 403, 404, 409, 413, 422, 429, 502, 503, 500, cancel). |
+
+### 2026-09-13: Route Architecture, Fallback Parsing & Preflight Refactor (COMP-05, COMP-07, COMP-09)
+
+Resolves high-complexity audit findings across route factory closures, markdown fallback parsing, and OCR model preflight:
+
+| File | Responsibility |
+| --- | --- |
+| `src/omniscribe/plugins/ocr/routes.py` | Extracted top-level endpoint handlers (`parse_multipart_upload`, `process_sync`, `process_async`, `get_job`, `get_job_events`, `list_jobs`, `clear_jobs`, `get_job_result`, `get_page_preview`, `get_document_page_preview`, `cancel_job`, `get_config`, `update_config`, `preflight`), preview cache, sniffing logic, and `build_ocr_router` from `plugin.py`. |
+| `src/omniscribe/plugins/ocr/plugin.py` | Reduced `build_ocr_router` to a concise 3-line factory delegating to `routes.build_ocr_router(service)`, re-exporting cache, format signatures, and SSE helpers for backward compatibility. |
+| `src/omniscribe/plugins/documents/routes.py` | Extracted individual route handlers into top-level functions (`handle_extract`, `handle_document_export`, `handle_export_docx_post`, `handle_export_html`, `handle_export_docx_tree`, `handle_export_blocktree`, `handle_export_markdown_post`, `handle_export_markdown_get`, `handle_export_chunks_post`, `handle_export_chunks_get`, `handle_get_document_export`, `handle_get_text`, `handle_get_document_metadata`), rendering `build_documents_router` purely declarative. |
+| `src/omniscribe/core/readers/markdown_reader.py` | Decomposed monolithic fallback parser `_parse_markdown_fallback` into discrete block consumers: `_consume_code_fence`, `_consume_table`, `_consume_blockquote`, `_consume_list`, and `_consume_paragraph`. |
+| `src/omniscribe/plugins/ocr/service.py` | Extracted `_resolve_preflight_coordinates` (4-level fallback hierarchy) and `_probe_vlm_server` (ephemeral AsyncOpenAI probing and cleanup) to isolate configuration resolution and network probing from `OCRServiceImpl.preflight_check`. |
+
+### 2026-09-13: Core Protocol Abstractions & Lexicon Store Decomposition (COMP-08, COMP-06)
+
+Resolves architectural coupling and high complexity across core background job execution and LanceDB lexicon storage:
+
+| File | Responsibility |
+| --- | --- |
+| `src/omniscribe/core/interfaces.py` | Defined abstract `@runtime_checkable` protocols `JobQueueProtocol` (`enqueue`, `get_job`, `cancel_job`, `list_jobs`) and `StateBackendProtocol` (`get`, `set`, `delete`) decoupling plugins and services from concrete queue implementations. |
+| `src/omniscribe/core/lexicon/schema.py` | Isolated `LexiconSchemaManager` managing PyArrow schemas, LanceDB table initialization, embedding dimension/model compatibility verification, column migration, and index lifecycle; defined `EmbeddingModelMismatchError`. |
+| `src/omniscribe/core/lexicon/search.py` | Implemented `HybridSearchEngine` encapsulating candidate query embedding, vector ANN retrieval, deterministic keyword scoring, reciprocal rank fusion (RRF), exact phrase lookups, and where-clause generation. |
+| `src/omniscribe/core/lexicon/lancedb_store.py` | Refactored `LanceDBLexiconStore` to orchestrate schema and search engines while preserving the complete public API contract, class constants (`INDEX_MIN_ROWS`), and backward-compatible helper methods. |
+| `src/omniscribe/plugins/jobs.py` | Implemented `JobQueueProtocol` interface across `JobQueue`, `InMemoryJobQueue`, and `RedisJobQueue`, providing bidirectional method aliases (`enqueue`/`submit`, `get_job`/`status`, `cancel_job`/`cancel`). |
+| `src/omniscribe/plugins/translate/service.py` | Updated `TranslationServiceImpl` to type against abstract `JobQueueProtocol` with resilient dispatch supporting both modern protocol methods and legacy job queue doubles. |
+| `pyproject.toml` | Activated Ruff McCabe cyclomatic complexity enforcement (`C90`, `max-complexity = 15`) with targeted ignores for legacy modules. |
+
+### 2026-09-13: WorkstationNotifier Domain Decomposition (COMP-06 remainder, roadmap P2.1)
+
+Decomposed the 1049-line `WorkstationNotifier` god-class into three single-domain notifiers behind a facade, so each concern (document data, viewport, selection, job orchestration) owns its state and lifecycle:
+
+| File | Responsibility |
+| --- | --- |
+| `client/lib/data/providers/document_viewport_notifier.dart` | `DocumentViewportNotifier` — zoom/pan matrix state with scale clamping (0.15–6.0), `zoomBy`/`fitToScreen`/`resetToActualSize`, and matrix synchronization for the canvas `InteractiveViewer`. |
+| `client/lib/data/providers/document_selection_notifier.dart` | `DocumentSelectionNotifier` — selected/hovered bounding-box state with `select`/`hover`/`replaceSelected`/`clear`. |
+| `client/lib/data/providers/job_orchestration_notifier.dart` | `JobOrchestrationNotifier` — OCR job lifecycle: sync/async dispatch, WebSocket frame routing (block frames forwarded to `WorkstationNotifier` mutators), progress-channel teardown via `ref.onDispose`, and the progress/quality/trust/artifact state surface. |
+| `client/lib/data/providers/workstation_notifier.dart` | Reduced to the document domain (~640 lines): document load/clear, previews, bounding-box mutators, page selection; action sites unchanged via facade delegates to `jobOrchestrationProvider`. |
+| `client/lib/data/providers/workstation_state.dart` | Trimmed to document-domain fields; orchestration-only fields (progress, quality, trust, artifact ids) moved to `JobOrchestrationState`; reader-dead `confidenceSummary` getter deleted. |
+| `client/lib/main.dart` | `?a11y=1` query-param debug hook calling `SemanticsBinding.ensureSemantics()` so headless browser tooling (docs screenshot capture) can drive the web semantics tree. |
+| `client/integration_test/app_workstation_test.dart` | `integration_test/` golden path against an in-process `stub_omniscribe_server.dart` (real WebSocket upgrade + streamed `block_complete` frame + artifact headers). |
+| `client/integration_test/app_real_server_test.dart` | `integration_test/` real-server variant: spawns a live `omniscribe-server` child process (`uv run`, free-port pick, `/api/health` polling, skip-guard without Python tooling), fetches the sample fixture, and asserts the server-side preview rasterization round-trip. |
+
 ## See Also
 
-- [README.md](README.md) — feature overview, install, web workspace
+- [README.md](../README.md) — feature overview, install, web workspace
 - [CHANGELOG.md](CHANGELOG.md) — version history and breaking changes
 - [DEPLOYMENT.md](DEPLOYMENT.md) — local / LAN / public-internet deployment profiles
 - [SECURITY.md](SECURITY.md) — threat model, hardening checklist, vulnerability disclosure
 - [AGENTS.md](AGENTS.md) — contributor guide and full env-var reference
-- `audits/` — historical and comprehensive domain audit logs
+- `docs/audits/` — historical and comprehensive domain audit logs
 
-_Last updated: 2026-09-07_
+_Last updated: 2026-09-13_
 
 
 

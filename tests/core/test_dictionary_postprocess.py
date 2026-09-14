@@ -250,6 +250,36 @@ def test_compile_wordlist_cleans_up_temp_on_failure(tmp_path, monkeypatch):
     assert leftovers == []
 
 
+def _probe_wordlist_target(target: Path) -> tuple[str, Exception | None]:
+    """One reader probe of the target.
+
+    Returns ``(status, exception)`` where status is ``"missing"`` (target
+    absent or ``FileNotFoundError``), ``"bad"`` (corrupt payload or failed
+    assertion, with the exception attached), ``"transient"`` (Windows
+    ``PermissionError`` while ``os.replace`` swaps the file), or ``"ok"``.
+    """
+    if not target.exists():
+        return "missing", None
+    try:
+        # Brief open + read + close. Production code does the same
+        # (SpellChecker reads the entire payload then closes).
+        with gzip.open(target, "rb") as fh:
+            raw_json = fh.read()
+        data = json.loads(raw_json.decode("utf-8"))
+        assert isinstance(data, dict)
+        assert data
+    except FileNotFoundError:
+        return "missing", None
+    except (EOFError, gzip.BadGzipFile, json.JSONDecodeError, AssertionError) as exc:
+        return "bad", exc
+    except PermissionError:
+        # Windows: ``os.replace`` momentarily denies readers while
+        # swapping the file; transient and not a partial file.
+        return "transient", None
+    else:
+        return "ok", None
+
+
 def test_concurrent_writers_never_expose_partial_file(tmp_path):
     """Concurrent writers must never leave a partial ``.json.gz`` and a reader
     polling the target must only see ``FileNotFoundError`` or a fully valid
@@ -304,31 +334,15 @@ def test_concurrent_writers_never_expose_partial_file(tmp_path):
 
     def safe_read_once() -> None:
         nonlocal successful_reads, missing_reads
-        if not target.exists():
+        status, exc = _probe_wordlist_target(target)
+        if status == "missing":
             with missing_lock:
                 missing_reads += 1
-            return
-        try:
-            # Brief open + read + close. Production code does the same
-            # (SpellChecker reads the entire payload then closes).
-            with gzip.open(target, "rb") as fh:
-                raw_json = fh.read()
-            data = json.loads(raw_json.decode("utf-8"))
-            assert isinstance(data, dict) and data
-        except FileNotFoundError:
-            with missing_lock:
-                missing_reads += 1
-        except (EOFError, gzip.BadGzipFile, json.JSONDecodeError) as exc:
+        elif status == "bad":
+            assert exc is not None
             with bad_lock:
                 bad_reads.append(exc)
-        except AssertionError as exc:
-            with bad_lock:
-                bad_reads.append(exc)
-        except PermissionError:
-            # Windows: ``os.replace`` momentarily denies readers while
-            # swapping the file; transient and not a partial file.
-            pass
-        else:
+        elif status == "ok":
             with successful_reads_lock:
                 successful_reads += 1
 

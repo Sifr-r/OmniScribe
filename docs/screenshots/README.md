@@ -8,24 +8,35 @@ for those assets.
 
 | File | What it shows | Source |
 | --- | --- | --- |
-| `workstation.png` | The Workstation screen of the Flutter client with a PDF loaded. | `client/lib/presentation/workstation/workstation_screen.dart` |
-| `settings.png` | The Settings / Advanced Configuration panel. | `client/lib/presentation/settings/settings_screen.dart` |
+| `workstation.png` | The Workstation screen of the Flutter client with the sample PDF loaded (pipeline dock visible). | `client/lib/presentation/workstation/workstation_screen.dart` |
+| `workstation-empty.png` | The Workstation upload dropzone (empty state). | `client/lib/presentation/workstation/controls/upload_dropzone.dart` |
+| `ai-setup-wizard-modal.png` | The AI Engine Setup Wizard (Choose Mode → Configure Connection → Ready). | `client/lib/presentation/providers/ai_setup_wizard_modal.dart` |
+| `ai-setup-wizard.png` | The provider configuration step (endpoint / key / model / test). | `client/lib/presentation/providers/provider_modal.dart` |
+| `ai-provider-browser.png` | The LLM provider browser with all catalogued endpoints. | `client/lib/presentation/providers/provider_modal.dart` |
+| `glossary-screen.png` | The Terminology Glossary screen (Libraries / Entries / Merged Lexicon). | `client/lib/presentation/features/glossary_screen.dart` |
+| `export-modal.png` | The Export Document modal with the searchable-PDF format selector. | `client/lib/presentation/workstation/modals/export_modal.dart` |
+| `terminal-server-up.png` | `uv run omniscribe-server` startup banner: the `state backend sqlite` line, the 14-plugin harness mount, and `Uvicorn running`. | Rendered from the real server startup log (not a screen photo); provenance note below. |
 | `drop-to-result.png` | The end-to-end flow: drop a PDF, watch OCR progress, preview the searchable result. | A 10-second screen recording; static screenshot optional. |
-| `terminal-server-up.png` | `uv run omniscribe-server --port 8000` output with the SQLite state-backend banner. | Local terminal capture. |
 
 All filenames are lowercased, hyphen-separated, no spaces. The
-`docs/README.md` install section references `workstation.png` and
-`drop-to-result.png` directly; if you add a new asset, update that
-cross-reference too.
+root `README.md` embeds `workstation.png`, `ai-setup-wizard-modal.png`,
+`glossary-screen.png`, and `export-modal.png` in a Screenshots strip
+near the top.
 
-## Status (2026-09-05)
+## Status (2026-09-13)
 
-The directory is empty. Captures need a working installation
-(`uv sync --extra web --extra preprocessing` + LM Studio + a
-downloaded vision model + the Flutter client built locally). Phase
-4 RFC 001 (Option A — PyInstaller bundle) will make the captures
-reproducible from a single CI artifact; until then, manual capture
-is the path.
+Eight of the nine assets above now exist. The seven UI captures were
+taken headlessly: real API server (`uv run omniscribe-server`) +
+Flutter web client (`flutter run -d web-server`) + Playwright against
+the app's semantics tree (booted with `?a11y=1`, which calls
+`SemanticsBinding.ensureSemantics()` from `lib/main.dart`). The
+sample document is the server's own `/api/sample-pdf/digital.pdf`
+fixture — no VLM was needed because the captures show pre-OCR
+states. `terminal-server-up.png` is rendered programmatically from
+the server's genuine startup log (Pillow over `consola.ttf`), so the
+banner lines are verbatim real output, not a screen photo. Still
+missing (needs a live VLM run + screen recording):
+`drop-to-result.png`, the 10-second OCR-pass recording.
 
 ## How to capture (manual, single-machine)
 
@@ -67,4 +78,4 @@ and the README's screenshots are no longer 404s.
 - A demo dataset for the screenshots — `examples/` already ships
   CC0 PDFs that work for the capture.
 
-_Last updated: 2026-09-05_
+_Last updated: 2026-09-13_

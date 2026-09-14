@@ -1,13 +1,9 @@
 from __future__ import annotations
 
-import base64
-import io
 import math
 import re
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
-
-from PIL import Image
 
 from omniscribe.core.pdf.page_range import (
     parse_page_range_with_total as parse_page_range,
@@ -22,7 +18,6 @@ __all__ = [
     "REFINABLE_MIN_HEIGHT",
     "REFINABLE_MIN_WIDTH",
     "WELL_FORMED_CONFIDENCE",
-    "_decode_page_image",
     "_drop_refined_duplicates",
     "_estimate_confidence",
     "_is_refinable",
@@ -115,10 +110,6 @@ REFINABLE_MIN_HEIGHT = 0.008
 # Surya layout detection is batched; this chunk size keeps memory + GPU pressure
 # predictable without dominating the detect stage wall clock.
 DETECT_CHUNK_SIZE = 10
-
-
-def _decode_page_image(image_b64: str) -> Image.Image:
-    return Image.open(io.BytesIO(base64.b64decode(image_b64))).convert("RGB")
 
 
 def _normalize_for_dedup(text: str) -> str:

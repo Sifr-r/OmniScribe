@@ -1446,6 +1446,7 @@
     },
     "/api/config/transcription": {
       "get": {
+        "description": "Return the current transcription configuration.\n\nThe config controls the active model, language hint, and any\nbackend-specific options (e.g. Whisper ``beam_size``). The\nFlutter client reads this on screen mount so the UI matches\nthe persisted state.",
         "operationId": "get_transcription_config_api_config_transcription_get",
         "responses": {
           "200": {
@@ -1463,6 +1464,7 @@
         ]
       },
       "post": {
+        "description": "Persist an updated transcription configuration.\n\nValidation failures (``TranscribeError``) propagate so the\nframework exception handler maps them to the standard error\nenvelope; successful updates echo the new config back to the\ncaller.",
         "operationId": "update_transcription_config_api_config_transcription_post",
         "requestBody": {
           "content": {
@@ -2110,6 +2112,7 @@
     },
     "/api/glossary/import": {
       "post": {
+        "description": "Import a glossary from an uploaded file or a JSON envelope.\n\nAccepts BOTH shapes (see module docstring): multipart upload\nwith a ``file`` field and an optional ``format`` override, or\nthe legacy JSON envelope. Format is inferred from the uploaded\nfilename's extension when not explicitly supplied; an unknown\nextension returns the validation_failed envelope so the client\ncan ask the user to specify the format manually.",
         "operationId": "import_glossary_api_glossary_import_post",
         "responses": {
           "200": {
@@ -2129,6 +2132,7 @@
     },
     "/api/glossary/import/url": {
       "post": {
+        "description": "Import a glossary fetched from a remote URL.\n\nAccepts BOTH the old query-parameter shape and the modern JSON\nbody (see module docstring). Format is taken from the explicit\nquery/body parameter first, then inferred from the URL's path\nsuffix. A fetch failure (DNS, timeout, non-2xx) is mapped to a\n502 with an ``ai_error`` code so the client can distinguish\n\"we could not reach the URL\" from a downstream parse failure.",
         "operationId": "import_glossary_from_url_api_glossary_import_url_post",
         "parameters": [
           {
@@ -2224,6 +2228,7 @@
     },
     "/api/glossary/library": {
       "get": {
+        "description": "List every glossary (library entry) currently stored.\n\nReturns the library metadata in display order (matches the\nuser-configured reorder). The Flutter client uses this to\npopulate the glossary management screen.",
         "operationId": "list_library_api_glossary_library_get",
         "responses": {
           "200": {
@@ -2243,6 +2248,7 @@
     },
     "/api/glossary/library/entries": {
       "get": {
+        "description": "Browse / search entries across every library glossary.\n\nSupports a free-text ``q`` query and an optional ``source_id``\nfilter; ``limit`` and ``offset`` paginate. The merged view is\nused when ``source_id`` is omitted.",
         "operationId": "get_library_entries_api_glossary_library_entries_get",
         "parameters": [
           {
@@ -2332,6 +2338,7 @@
     },
     "/api/glossary/library/merged": {
       "get": {
+        "description": "Return the merged (enabled-only) glossary for translation use.\n\nConcatenates every enabled library entry into a single response\nso the translation pipeline can consult the full vocabulary in\none round-trip instead of fetching per-source.",
         "operationId": "merged_entries_api_glossary_library_merged_get",
         "responses": {
           "200": {
@@ -2351,6 +2358,7 @@
     },
     "/api/glossary/library/preview": {
       "get": {
+        "description": "Return a small preview sample of the merged glossary.\n\nBacks the Flutter client's \"preview\" panel \u2014 typically the\nfirst few entries per language pair so the user can sanity-check\nan import without paging through the full library.",
         "operationId": "library_preview_api_glossary_library_preview_get",
         "responses": {
           "200": {
@@ -2370,6 +2378,7 @@
     },
     "/api/glossary/library/reorder": {
       "post": {
+        "description": "Persist a new display order for the glossary library.\n\nThe request body carries the full ordered id list; the service\nvalidates that every id is known and that no entry is missing\nbefore persisting the new ordering.",
         "operationId": "reorder_library_api_glossary_library_reorder_post",
         "requestBody": {
           "content": {
@@ -2409,6 +2418,7 @@
     },
     "/api/glossary/library/{glossary_id}": {
       "delete": {
+        "description": "Delete a glossary entry (and its entries) from the library.\n\nRemoves both the library metadata row and every term that was\ningested from that source; the operation is idempotent at the\nrow level (a missing id returns the standard not-found\nenvelope).",
         "operationId": "delete_library_entry_api_glossary_library__glossary_id__delete",
         "parameters": [
           {
@@ -2449,6 +2459,7 @@
     },
     "/api/glossary/library/{glossary_id}/enable": {
       "post": {
+        "description": "Set the enabled flag for a glossary entry.\n\nToggles whether the glossary is consulted during translation /\nOCR. The request body must carry the explicit ``enabled`` value\n(``true`` or ``false``) \u2014 there is no implicit-flip variant on\nthis endpoint.",
         "operationId": "toggle_library_entry_api_glossary_library__glossary_id__enable_post",
         "parameters": [
           {
@@ -2499,6 +2510,7 @@
     },
     "/api/glossary/library/{glossary_id}/entries": {
       "get": {
+        "description": "Browse entries within a single glossary.\n\nSame shape as :func:`get_library_entries` but always scoped to\nthe path-parameter glossary; ``source_id`` is unnecessary here.",
         "operationId": "library_entries_api_glossary_library__glossary_id__entries_get",
         "parameters": [
           {
@@ -2581,6 +2593,7 @@
     },
     "/api/glossary/library/{source_id}/toggle": {
       "post": {
+        "description": "Flip-or-set the enabled flag for a glossary source.\n\nWhen the body is omitted the service flips the current value\n(handy for the Flutter \"tap to toggle\" UI); when a body is\nprovided the explicit ``enabled`` value wins.",
         "operationId": "toggle_source_api_glossary_library__source_id__toggle_post",
         "parameters": [
           {
@@ -2638,6 +2651,7 @@
     },
     "/api/glossary/sources": {
       "get": {
+        "description": "List every glossary source present in the library.\n\nConvenience alias for :func:`list_library` kept around for the\nolder Flutter client contract; both endpoints return the same\npayload.",
         "operationId": "list_sources_api_glossary_sources_get",
         "responses": {
           "200": {
@@ -2657,6 +2671,7 @@
     },
     "/api/glossary/sources/{source_id}": {
       "delete": {
+        "description": "Delete a glossary source by id.\n\nConvenience alias for the library-endpoint delete; the older\n``/api/glossary/sources/{id}`` route is preserved for clients\nthat have not migrated to ``/api/glossary/library/{id}``.",
         "operationId": "delete_source_api_glossary_sources__source_id__delete",
         "parameters": [
           {
@@ -2697,6 +2712,7 @@
     },
     "/api/health": {
       "get": {
+        "description": "Liveness probe \u2014 answers 200 as soon as the process is up.",
         "operationId": "liveness_api_health_get",
         "responses": {
           "200": {
@@ -2722,6 +2738,7 @@
     },
     "/api/healthz": {
       "get": {
+        "description": "Liveness probe \u2014 answers 200 as soon as the process is up.",
         "operationId": "liveness_api_healthz_get",
         "responses": {
           "200": {
@@ -3035,6 +3052,7 @@
     },
     "/api/models/transcription": {
       "get": {
+        "description": "List transcription models available on the configured backend.\n\nUsed by the Flutter client's model picker. Discovery is\ndelegated to the service so the route stays backend-agnostic\n(works for both local Whisper.cpp and remote API providers).",
         "operationId": "get_transcription_models_api_models_transcription_get",
         "responses": {
           "200": {
@@ -3391,6 +3409,7 @@
     },
     "/api/providers": {
       "get": {
+        "description": "List every provider preset known to the manager.\n\nPowers the Flutter client's provider picker. Each entry is a\ndict with the metadata the UI needs (name, default api-base\npattern, supported model kinds).",
         "operationId": "list_providers_api_providers_get",
         "responses": {
           "200": {
@@ -3420,6 +3439,7 @@
     },
     "/api/providers/active": {
       "get": {
+        "description": "Return the currently-active provider id, api-base, and model.\n\n``{}`` is returned when no provider is active yet (fresh\ninstall or after the operator cleared it).",
         "operationId": "get_active_api_providers_active_get",
         "responses": {
           "200": {
@@ -3443,6 +3463,7 @@
         ]
       },
       "post": {
+        "description": "Persist the new active provider + api-base + model + api-key.\n\nThe api-key is only persisted if non-empty (the request can be\nused to change provider/model without rotating the key). The\nresponse echoes the resolved values back so the caller can\nconfirm what the server actually stored.",
         "operationId": "set_active_api_providers_active_post",
         "requestBody": {
           "content": {
@@ -3484,6 +3505,7 @@
     },
     "/api/providers/validate": {
       "post": {
+        "description": "Probe the provider's ``/v1/models`` endpoint without storing anything.\n\nUsed by the setup wizard to confirm the operator's api-base +\napi-key actually reach a live OpenAI-compatible server before\nthey commit the values to the active provider slot.",
         "operationId": "validate_provider_api_providers_validate_post",
         "requestBody": {
           "content": {
@@ -3525,6 +3547,7 @@
     },
     "/api/providers/{provider_id}": {
       "get": {
+        "description": "Return the full preset dict for ``provider_id``.\n\n404 when the id is unknown so the UI can distinguish a typo\nfrom a transient backend error.",
         "operationId": "provider_details_api_providers__provider_id__get",
         "parameters": [
           {
@@ -3569,6 +3592,7 @@
     },
     "/api/providers/{provider_id}/models": {
       "get": {
+        "description": "Live model-list discovery against the provider's ``/v1/models``.\n\nThe api-key resolution order is: explicit ``X-Provider-Api-Key``\nheader \u2192 standard ``Authorization: Bearer`` header \u2192 query\n``api_key`` parameter. The first non-empty wins so the Flutter\nclient can keep its secrets in the header without leaking them\nto the URL (which lands in proxy access logs).",
         "operationId": "provider_models_api_providers__provider_id__models_get",
         "parameters": [
           {
@@ -3733,6 +3757,7 @@
     },
     "/api/transcribe": {
       "post": {
+        "description": "Transcribe an uploaded audio file (multipart/form-data).\n\nReads the ``file`` part and any string-typed form fields, then\nvalidates the field-set against :class:`TranscribeRequest` so\nthe client gets the standard 422 envelope for unknown option\nkeys. Filename and content-type are forwarded to the service\nso the local backend can pick the right decoder.",
         "operationId": "transcribe_audio_api_transcribe_post",
         "responses": {
           "200": {
@@ -3752,6 +3777,7 @@
     },
     "/api/translate": {
       "post": {
+        "description": "Synchronously translate inline text or a referenced artifact.\n\nThe route accepts EITHER an inline ``text`` payload OR a\n``text_artifact_id`` + ``text_artifact_token`` pair. Both empty\nreturns the standard 400 envelope so the client sees a uniform\nerror rather than a 500 from a downstream empty-input crash.",
         "operationId": "translate_api_translate_post",
         "requestBody": {
           "content": {
@@ -3791,6 +3817,7 @@
     },
     "/api/translate/async": {
       "post": {
+        "description": "Enqueue an async translation job.\n\nThe artifact pair is optional-with-bounds on the schema, so a\nmissing pair never 422s; the route owns the 400 contract. The\nresponse is the same shape returned by the in-process\nJobQueue submit path (``job_id`` + ``status``).",
         "operationId": "translate_async_api_translate_async_post",
         "requestBody": {
           "content": {
@@ -3830,6 +3857,7 @@
     },
     "/api/translate/nllb": {
       "post": {
+        "description": "Run a one-shot NLLB-200 translation on the local model.\n\nKept as a separate route from :func:`translate` because the\nNLLB backend has a different prompt surface (no glossary\ninjection, no async queue) and is exercised by clients that\nspecifically want raw NLLB behaviour without tree-aware\npostprocessing.",
         "operationId": "translate_nllb_api_translate_nllb_post",
         "requestBody": {
           "content": {
@@ -3869,6 +3897,7 @@
     },
     "/api/translate/result/{job_id}": {
       "get": {
+        "description": "Fetch the token-bound translation result for a completed job.\n\nMissing/wrong token, unknown job, or still-running job all map\nto the same 404 (no existence leak \u2014 see C-3/H-3 semantics in\n``docs/SECURITY.md``).",
         "operationId": "translate_result_api_translate_result__job_id__get",
         "parameters": [
           {
@@ -3919,6 +3948,7 @@
     },
     "/api/translate/status/{job_id}": {
       "get": {
+        "description": "Return the current status of an async translation job.\n\nAn unknown ``job_id`` is mapped to 404 rather than 200-with-null\nso the client can treat it as a terminal failure to display.",
         "operationId": "translation_status_api_translate_status__job_id__get",
         "parameters": [
           {
@@ -3959,6 +3989,7 @@
     },
     "/ready": {
       "get": {
+        "description": "Readiness probe \u2014 answers 200 only after the runtime reports ready.",
         "operationId": "readiness_ready_get",
         "responses": {
           "200": {
@@ -3978,6 +4009,7 @@
     },
     "/readyz": {
       "get": {
+        "description": "Readiness probe \u2014 answers 200 only after the runtime reports ready.",
         "operationId": "readiness_readyz_get",
         "responses": {
           "200": {

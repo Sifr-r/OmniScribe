@@ -23,11 +23,13 @@ def build_health_router(runtime: RuntimeService) -> APIRouter:
     @router.get("/api/health")
     @router.get("/api/healthz")
     async def liveness() -> dict[str, str]:
+        """Liveness probe — answers 200 as soon as the process is up."""
         return {"status": "ok"}
 
     @router.get("/ready")
     @router.get("/readyz")
     async def readiness() -> JSONResponse:
+        """Readiness probe — answers 200 only after the runtime reports ready."""
         if runtime.ready:
             return JSONResponse({"status": "ready"}, status_code=200)
         return JSONResponse({"status": "starting"}, status_code=503)

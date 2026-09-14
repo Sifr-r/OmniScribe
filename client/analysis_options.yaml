@@ -25,6 +25,7 @@ linter:
     - avoid_relative_lib_imports
     - avoid_shadowing_type_parameters
     - avoid_types_as_parameter_names
+    - avoid_unnecessary_containers
     - await_only_futures
     - camel_case_extensions
     - camel_case_types

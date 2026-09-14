@@ -22,6 +22,7 @@ from __future__ import annotations
 import logging
 import statistics
 from dataclasses import dataclass
+from typing import ClassVar
 
 from PIL import Image
 
@@ -105,18 +106,7 @@ _STRADDLE_MIN_OVERLAP = STRADDLE_MIN_OVERLAP
 class WhitespaceRecallOptions(BaseRecallOptions):
     """Configuration options for whitespace-based secondary recall."""
 
-    @classmethod
-    def from_env(cls) -> WhitespaceRecallOptions:
-        """Seed from ``OMNISCRIBE_WHITESPACE_RECALL`` (default on).
-
-        Only explicit disable values (``0``/``false``/``no``/``off``/
-        ``n``/``disabled``, case-insensitive) turn the pass off; unset
-        or unrecognized values keep it enabled.
-
-        The env read goes through :func:`omniscribe.utils.env.env_str`
-        (audit H3) so this module no longer imports ``os``.
-        """
-        return cls._from_env(_ENV_RECALL)
+    env_var: ClassVar[str] = _ENV_RECALL
 
 
 class WhitespaceRecallBooster:

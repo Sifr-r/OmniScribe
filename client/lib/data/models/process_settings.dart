@@ -176,6 +176,8 @@ class ProcessSettings {
     this.qualityTarget,
     this.qualityMaxRetries,
     this.useAsync = false,
+    this.whitespaceRecall = true,
+    this.textLayerRecall = true,
   });
 
   final String apiBase;
@@ -209,6 +211,8 @@ class ProcessSettings {
   final double? qualityTarget;
   final int? qualityMaxRetries;
   final bool useAsync;
+  final bool whitespaceRecall;
+  final bool textLayerRecall;
 
   bool get qualityRepairEnabled => qualityLoopEnabled ?? true;
   int get maxRetries => qualityMaxRetries ?? 2;
@@ -246,6 +250,8 @@ class ProcessSettings {
       qualityTarget: 0.85,
       qualityMaxRetries: 2,
       useAsync: false,
+      whitespaceRecall: true,
+      textLayerRecall: true,
     );
   }
 
@@ -283,6 +289,8 @@ class ProcessSettings {
     int? qualityMaxRetries,
     int? maxRetries,
     bool? useAsync,
+    bool? whitespaceRecall,
+    bool? textLayerRecall,
   }) {
     return ProcessSettings(
       apiBase: apiBase ?? this.apiBase,
@@ -316,6 +324,8 @@ class ProcessSettings {
       qualityTarget: qualityTarget ?? this.qualityTarget,
       qualityMaxRetries: maxRetries ?? (qualityMaxRetries ?? this.qualityMaxRetries),
       useAsync: useAsync ?? this.useAsync,
+      whitespaceRecall: whitespaceRecall ?? this.whitespaceRecall,
+      textLayerRecall: textLayerRecall ?? this.textLayerRecall,
     );
   }
 
@@ -361,6 +371,8 @@ class ProcessSettings {
       qualityTarget: (json['quality_target'] as num?)?.toDouble(),
       qualityMaxRetries: (json['quality_max_retries'] as num?)?.toInt(),
       useAsync: json['use_async'] as bool? ?? false,
+      whitespaceRecall: json['whitespace_recall'] as bool? ?? true,
+      textLayerRecall: json['text_layer_recall'] as bool? ?? true,
     );
   }
 
@@ -390,6 +402,8 @@ class ProcessSettings {
       'quality_routing': qualityRouting,
       'document_processors': documentProcessors.map((p) => p.value).toList(),
       'use_async': useAsync,
+      'whitespace_recall': whitespaceRecall,
+      'text_layer_recall': textLayerRecall,
     };
     if (pages != null) map['pages'] = pages;
     if (handwritingHint != null) map['handwriting_hint'] = handwritingHint;

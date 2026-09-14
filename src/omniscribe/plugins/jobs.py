@@ -17,6 +17,7 @@ from typing import Any, NamedTuple, Protocol, cast, runtime_checkable
 
 from pydantic import BaseModel
 
+from omniscribe.core.interfaces import JobQueueProtocol
 from omniscribe.harness.context import Context
 from omniscribe.harness.events import AgentEvent, SessionEvent
 from omniscribe.harness.plugin import Plugin
@@ -145,7 +146,7 @@ class JobHandle(NamedTuple):
 
 
 @runtime_checkable
-class JobQueue(Protocol):
+class JobQueue(JobQueueProtocol, Protocol):
     """Async OCR job queue seam."""
 
     async def submit(
@@ -168,6 +169,19 @@ class JobQueue(Protocol):
 
     async def clear(self) -> int: ...
 
+    # JobQueueProtocol methods
+    async def enqueue(
+        self,
+        request: Any,
+        *,
+        request_meta: dict[str, Any] | None = None,
+        input_path: str | None = None,
+    ) -> Any: ...
+
+    async def get_job(self, job_id: str) -> Any: ...
+
+    async def cancel_job(self, job_id: str) -> bool: ...
+
 
 class InMemoryJobQueue:
     """One ``asyncio.Queue`` drained by a single worker task.
@@ -185,6 +199,15 @@ class InMemoryJobQueue:
         *,
         runner: JobRunner | None = None,
     ) -> None:
+        """Store dependencies; do not start the worker until :meth:`start` is called.
+
+        The worker task is intentionally NOT created in ``__init__`` so
+        the queue can be built during plugin ``apply`` before the
+        asyncio loop is the canonical loop (a defensive choice — the
+        current plugin ordering already gives us a running loop, but
+        this avoids implicit-loop coupling for tests that build a
+        queue manually).
+        """
         self._ctx = ctx
         self._backend = backend
         self._artifacts = artifacts
@@ -221,9 +244,17 @@ class InMemoryJobQueue:
         return JobHandle(job_id=job_id, status_url=f"/api/process/status/{job_id}")
 
     async def status(self, job_id: str) -> JobRecord | None:
+        """Return the current :class:`JobRecord` or ``None`` if unknown."""
         return await self._backend.get_job(job_id)
 
     async def cancel(self, job_id: str) -> bool:
+        """Mark ``job_id`` cancelled; ``False`` if missing or already terminal.
+
+        Queued jobs flip immediately; running jobs rely on the runner
+        polling :meth:`is_cancelled` at a block boundary (cooperative
+        cancel — the runner is the only place that can interrupt a
+        running VLM call without losing the artifact slot).
+        """
         record = await self._backend.get_job(job_id)
         if record is None or record.status in _TERMINAL_STATUSES:
             return False
@@ -236,26 +267,44 @@ class InMemoryJobQueue:
         return True
 
     def is_cancelled(self, job_id: str) -> bool:
+        """Return ``True`` if :meth:`cancel` has been called for ``job_id``."""
         return job_id in self._cancelled
 
     async def list_jobs(self, *, limit: int = 100, offset: int = 0) -> list[JobRecord]:
+        """Return job records newest-first, paginated by ``limit``/``offset``."""
         return await self._backend.list_jobs(limit=limit, offset=offset)
 
     async def clear(self) -> int:
+        """Erase every job row + in-memory payload cache.
+
+        Does NOT touch running jobs (the worker keeps going on the
+        current payload). Used by the test harness for setup/teardown.
+        """
         count = await self._backend.clear_jobs()
         self._payloads.clear()
         self._cancelled.clear()
         return count
 
+    # -- JobQueueProtocol aliases ----------------------------------------------
+    enqueue = submit
+    get_job = status
+    cancel_job = cancel
+
     # -- worker lifecycle ------------------------------------------------------
 
     def start(self) -> None:
+        """Spawn the worker task on the running loop (idempotent).
+
+        Idempotent: a second call is a no-op so the plugin ``apply``
+        can call this safely even if the queue was already started.
+        """
         if self._worker is None:
             self._worker = asyncio.get_running_loop().create_task(
                 self._run(), name="omniscribe-job-worker"
             )
 
     async def shutdown(self) -> None:
+        """Cancel the worker and mark any remaining queued rows ``cancelled``."""
         if self._worker is not None:
             self._worker.cancel()
             with contextlib.suppress(asyncio.CancelledError):
@@ -486,6 +535,7 @@ __all__ = [
     "JobOutcome",
     "JobPayload",
     "JobQueue",
+    "JobQueueProtocol",
     "JobQueued",
     "JobRunner",
     "JobStarted",

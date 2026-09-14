@@ -9,7 +9,7 @@ This is the v0.2.0 release of OmniScribe — the closing release of the
 **2026-09-04 Five-Lens Audit** remediation workstream. Six weeks
 of work across six phases, shipped behind a single annotated git
 tag. The full spec is the [Five-Lens Audit](audits/2026-09-04-five-lens-audit.md)
-and the [Remediation Plan](audits/2026-09-04-remediation-plan.md);
+and the Remediation Plan;
 this report is the user-facing summary.
 
 ---

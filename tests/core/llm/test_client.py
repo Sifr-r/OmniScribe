@@ -169,7 +169,7 @@ class TestExtractPromptAndImage:
         p, img = _extract_prompt_and_image(
             messages=None,
             prompt="Transcribe this text",
-            image_base64="aW1hZ2VkYXRh",
+            image_b64="aW1hZ2VkYXRh",
         )
         assert p == "Transcribe this text"
         assert img == "aW1hZ2VkYXRh"
@@ -300,9 +300,7 @@ class TestExtractPromptAndImage:
                 ],
             }
         ]
-        _, img = _extract_prompt_and_image(
-            messages=messages, image_base64="from_explicit"
-        )
+        _, img = _extract_prompt_and_image(messages=messages, image_b64="from_explicit")
         assert img == "from_explicit"
 
 
@@ -317,7 +315,7 @@ class TestCallVlm:
         ) as mock_complete:
             result = await call_vlm(
                 prompt="Read this crop",
-                image_base64="b64data",
+                image_b64="b64data",
                 api_base="http://localhost:1234/v1",
                 api_key="key-123",
                 model="qwen-vl",
@@ -331,7 +329,7 @@ class TestCallVlm:
             mock_complete.assert_awaited_once()
             call_kwargs = mock_complete.await_args.kwargs  # type: ignore[union-attr]
             assert call_kwargs["prompt"] == "Read this crop"
-            assert call_kwargs["image_base64"] == "b64data"
+            assert call_kwargs["image_b64"] == "b64data"
             assert call_kwargs["model"] == "qwen-vl"
             assert call_kwargs["temperature"] == 0.0
             assert call_kwargs["max_tokens"] == 2048
@@ -398,7 +396,7 @@ class TestCallLlm:
             mock_complete.assert_awaited_once()
             call_kwargs = mock_complete.await_args.kwargs  # type: ignore[union-attr]
             assert call_kwargs["prompt"] == "Translate this sentence"
-            assert call_kwargs["image_base64"] is None
+            assert call_kwargs["image_b64"] is None
             assert call_kwargs["model"] == "llama-3.1-8b"
             assert call_kwargs["temperature"] == 0.1
             assert call_kwargs["max_tokens"] == 4096  # default fallback
@@ -412,7 +410,7 @@ class TestCallLlm:
         ) as mock_complete:
             result = await call_llm(
                 prompt="Describe image",
-                image_base64="img123",
+                image_b64="img123",
                 api_base="http://localhost:1234/v1",
                 max_tokens=1024,
                 timeout=15.0,
@@ -421,7 +419,7 @@ class TestCallLlm:
             assert result == "Vision response"
             call_kwargs = mock_complete.await_args.kwargs  # type: ignore[union-attr]
             assert call_kwargs["prompt"] == "Describe image"
-            assert call_kwargs["image_base64"] == "img123"
+            assert call_kwargs["image_b64"] == "img123"
             assert call_kwargs["max_tokens"] == 1024
             assert call_kwargs["timeout"] == 15.0
 

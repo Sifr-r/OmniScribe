@@ -11,6 +11,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:omniscribe_client/data/models/bbox_item.dart';
 import 'package:omniscribe_client/data/models/process_settings.dart';
+import 'package:omniscribe_client/data/providers/document_selection_notifier.dart';
 import 'package:omniscribe_client/data/providers/repository_providers.dart';
 import 'package:omniscribe_client/data/providers/workstation_notifier.dart';
 import 'package:omniscribe_client/data/repositories/ocr_repository.dart';
@@ -188,7 +189,9 @@ void main() {
           tester.element(find.byType(WorkstationScreen)));
       final notifier = container.read(workstationProvider.notifier);
       _loadDocumentWithBBox(notifier);
-      notifier.selectBBox(_invoiceBBox);
+      container
+          .read(documentSelectionProvider.notifier)
+          .select(_invoiceBBox);
 
       await tester.pumpAndSettle();
 

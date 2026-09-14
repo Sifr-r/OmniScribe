@@ -12,6 +12,7 @@ from PIL import Image
 
 from omniscribe.core.aligner import HybridAligner
 from omniscribe.core.document import BBox, DenseMode
+from omniscribe.core.imaging.utils import decode_base64_image
 from omniscribe.core.workflows.base import (
     PageBoxes,
     PagesData,
@@ -20,7 +21,6 @@ from omniscribe.core.workflows.base import (
 )
 from omniscribe.core.workflows.utils import (
     DETECT_CHUNK_SIZE,
-    _decode_page_image,
     validate_bbox_coordinates,
 )
 
@@ -192,7 +192,7 @@ class HybridLayoutDetector:
                 image = decoded_get(p_num) if decoded_get is not None else None
                 if image is None:
                     image = await asyncio.to_thread(
-                        _decode_page_image, images_dict[p_num]
+                        decode_base64_image, images_dict[p_num], mode="RGB"
                     )
                     if decoded_put is not None:
                         decoded_put(p_num, image)

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from difflib import SequenceMatcher
-from typing import Any
 
 from omniscribe.core.document import DocumentResult
 
@@ -14,15 +13,6 @@ class EvaluationMetrics:
     invalid_bbox_count: int
     reading_order_coverage: float
     table_count: int
-
-    def to_report(self) -> dict[str, Any]:
-        return {
-            "text_similarity": self.text_similarity,
-            "block_count": self.block_count,
-            "invalid_bbox_count": self.invalid_bbox_count,
-            "reading_order_coverage": self.reading_order_coverage,
-            "table_count": self.table_count,
-        }
 
 
 def evaluate_document(

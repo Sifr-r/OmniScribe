@@ -116,14 +116,22 @@ async def test_two_handlers_run_concurrently() -> None:
     ctx = Context()
     order: list[str] = []
 
+    slow_started = asyncio.Event()
+    release_slow = asyncio.Event()
+
     async def slow(_ev: Event) -> None:
         order.append("slow-start")
-        await asyncio.sleep(0.02)
+        slow_started.set()
+        # Deterministic interleaving via events instead of wall-clock
+        # sleeps: ``fast`` may only run once ``slow`` has started, and
+        # ``slow`` may only finish once ``fast`` has recorded its run.
+        await asyncio.wait_for(release_slow.wait(), timeout=5.0)
         order.append("slow-end")
 
     async def fast(_ev: Event) -> None:
-        await asyncio.sleep(0.01)
+        await asyncio.wait_for(slow_started.wait(), timeout=5.0)
         order.append("fast")
+        release_slow.set()
 
     ctx.on(Ping, slow)
     ctx.on(Ping, fast)

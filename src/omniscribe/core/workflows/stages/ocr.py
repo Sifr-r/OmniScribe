@@ -246,9 +246,7 @@ class HybridOcrRunner:
         if indices:
             try:
                 async with asyncio.TaskGroup() as tg:
-                    tasks = [
-                        tg.create_task(ocr_one(k)) for k in range(len(indices))
-                    ]
+                    tasks = [tg.create_task(ocr_one(k)) for k in range(len(indices))]
                     for fut in asyncio.as_completed(tasks):
                         idx, text = await fut
                         results[idx] = text.strip()

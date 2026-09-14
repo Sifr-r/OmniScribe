@@ -16,7 +16,7 @@ from __future__ import annotations
 from enum import StrEnum
 from typing import Any
 
-from omniscribe.core.block_tree import BlockType
+from omniscribe.core.block_tree import BlockType, block_type_str
 
 
 class RAGElementCategory(StrEnum):
@@ -162,9 +162,7 @@ def map_element_type(
         return RAGElementCategory.NARRATIVE.value
 
     # 3. String normalization match
-    raw_str = (
-        block_type.value if hasattr(block_type, "value") else str(block_type or "")
-    )
+    raw_str = block_type_str(block_type)
     norm = raw_str.strip().lower()
 
     if norm in _TITLE_TYPES:

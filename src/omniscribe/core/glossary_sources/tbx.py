@@ -2,20 +2,51 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+
+from ._base import XmlGlossaryParser
 from ._common import (
     XmlElement,
-    decode_source,
     entry_dict,
-    finalize,
     iter_text,
     language_matches,
     local_name,
-    require_bytes,
-    safe_xml_root,
 )
 from .summary import GlossaryImportSummary
 
 _XML_LANG = "{http://www.w3.org/XML/1998/namespace}lang"
+
+
+class TbxParser(XmlGlossaryParser):
+    """TBX term-entry parser (format_name = "tbx")."""
+
+    format_name = "tbx"
+
+    def _extract_entries(
+        self, root: XmlElement, source_lang: str
+    ) -> Iterable[dict[str, object]]:
+        entries: list[dict[str, object]] = []
+        for term_entry in root.iter():
+            if local_name(term_entry.tag) != "termentry":
+                continue
+            language_terms = _language_terms(term_entry)
+            source_terms: list[str] = []
+            target_terms: list[str] = []
+            for language, terms in language_terms:
+                if language_matches(language, source_lang):
+                    source_terms.extend(terms)
+                elif terms:
+                    target_terms.extend(terms)
+            if not source_terms and len(language_terms) >= 2:
+                source_terms = language_terms[0][1]
+                target_terms = language_terms[1][1]
+            if not source_terms or not target_terms:
+                continue
+            for source in source_terms:
+                item = entry_dict(source, target_terms[0])
+                if item is not None:
+                    entries.append(item)
+        return entries
 
 
 def parse_tbx(
@@ -25,40 +56,7 @@ def parse_tbx(
     source_lang: str = "en",
 ) -> GlossaryImportSummary:
     """Parse TBX term entries into source/target term pairs."""
-    raw = require_bytes(data)
-    _text, used_encoding, warnings = decode_source(raw, encoding)
-    root = safe_xml_root(raw)
-    entries: list[dict[str, object]] = []
-
-    for term_entry in root.iter():
-        if local_name(term_entry.tag) != "termentry":
-            continue
-        language_terms = _language_terms(term_entry)
-        source_terms: list[str] = []
-        target_terms: list[str] = []
-        for language, terms in language_terms:
-            if language_matches(language, source_lang):
-                source_terms.extend(terms)
-            elif terms:
-                target_terms.extend(terms)
-        if not source_terms and len(language_terms) >= 2:
-            source_terms = language_terms[0][1]
-            target_terms = language_terms[1][1]
-        if not source_terms or not target_terms:
-            continue
-        for source in source_terms:
-            item = entry_dict(source, target_terms[0])
-            if item is not None:
-                entries.append(item)
-
-    if not entries:
-        raise ValueError("TBX source contains no bilingual term entries.")
-    return finalize(
-        entries,
-        format_name="tbx",
-        encoding=used_encoding,
-        warnings=warnings,
-    )
+    return TbxParser().parse(data, encoding=encoding, source_lang=source_lang)
 
 
 def _language_terms(

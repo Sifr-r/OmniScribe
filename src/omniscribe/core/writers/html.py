@@ -19,7 +19,8 @@ import html
 from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any, cast
 
-from omniscribe.core.block_tree import TableNode
+from omniscribe.core.block_tree import TableNode, block_type_str
+from omniscribe.core.writers._guard import TableDedup
 from omniscribe.core.writers.exporter_base import BaseDocumentExporter
 
 if TYPE_CHECKING:
@@ -57,20 +58,16 @@ def render_html(tree: DocumentTree) -> str:
     out.append(f"<title>{html.escape(title)}</title>")
     out.append(_embedded_css())
     out.append("</head><body>")
-    rendered_table_ids: set[str | int] = set()
+    rendered_table_ids = TableDedup()
     for i, page in enumerate(tree.pages):
         if i > 0:
             out.append("<!-- PageBreak -->")
         out.append(_render_page(page, rendered_table_ids))
     for table in tree.tables:
-        t_id = getattr(table, "block_id", "")
-        if (t_id and t_id not in rendered_table_ids) and id(
-            table
-        ) not in rendered_table_ids:
-            out.append(_render_table(table))
-            if t_id:
-                rendered_table_ids.add(t_id)
-            rendered_table_ids.add(id(table))
+        if table in rendered_table_ids:
+            continue
+        out.append(_render_table(table))
+        rendered_table_ids.add(table)
     out.append("</body></html>")
     return "\n".join(out)
 
@@ -95,9 +92,7 @@ def _embedded_css() -> str:
     )
 
 
-def _render_page(
-    page: PageTree, rendered_table_ids: set[str | int] | None = None
-) -> str:
+def _render_page(page: PageTree, rendered_table_ids: TableDedup | None = None) -> str:
     parts: list[str] = []
     parts.append(f'<section data-page-idx="{page.page_idx}">')
     current_list: list[str] = []
@@ -113,25 +108,19 @@ def _render_page(
         if isinstance(child, TableNode):
             flush_list()
             if rendered_table_ids is not None:
-                if child.block_id:
-                    rendered_table_ids.add(child.block_id)
-                rendered_table_ids.add(id(child))
+                rendered_table_ids.add(child)
             parts.append(_render_table(child))
             continue
 
         bt = getattr(child, "block_type", None)
-        bt_val = (
-            bt.value if (bt is not None and hasattr(bt, "value")) else str(bt or "")
-        )
+        bt_val = block_type_str(bt)
         if bt_val == "list_item":
             current_list.append(_render_block(child))
         else:
             flush_list()
             if bt_val == "table":
                 if rendered_table_ids is not None:
-                    if getattr(child, "block_id", None):
-                        rendered_table_ids.add(child.block_id)
-                    rendered_table_ids.add(id(child))
+                    rendered_table_ids.add(child)
                 if hasattr(child, "cells") and getattr(child, "cells", None):
                     parts.append(_render_table(cast("TableNode", child)))
                 elif getattr(child, "text", ""):
@@ -147,11 +136,7 @@ def _render_page(
 def _render_block(node: BlockNode | TableNode | Any) -> str:
     if isinstance(node, TableNode):
         return _render_table(node)
-    bt = (
-        node.block_type.value
-        if hasattr(node.block_type, "value")
-        else str(node.block_type)
-    )
+    bt = block_type_str(node.block_type)
     if bt == "table":
         if hasattr(node, "cells") and getattr(node, "cells", None):
             return _render_table(cast("TableNode", node))

@@ -110,28 +110,6 @@ def _decode_str(val: Any) -> str:
     return str(val)
 
 
-# Registry of (module, qualname) -> class for generic payload reconstruction
-# (``pydantic`` and ``dataclass`` envelope types). Classes opt in via the
-# :func:`register_reconstructable` decorator. Unregistered classes are
-# returned to callers as plain dicts so unknown envelope contents cannot
-# trigger arbitrary code loading. Populating this registry explicitly — rather
-# than calling ``importlib.import_module(<envelope-supplied-name>)`` — keeps
-# the deserialization path closed to untrusted code.
-_RECONSTRUCTABLE_CLASSES: dict[tuple[str, str], type[Any]] = {}
-
-
-def register_reconstructable(cls: type[Any]) -> type[Any]:
-    """Decorator: opt a class into generic Redis payload reconstruction.
-
-    The (module, qualname) pair becomes the lookup key for envelopes that
-    carry ``__module__`` and ``__qualname__`` fields. A class is safe to
-    register only if its ``__init__`` does not perform side effects beyond
-    storing the supplied fields.
-    """
-    _RECONSTRUCTABLE_CLASSES[(cls.__module__, cls.__qualname__)] = cls
-    return cls
-
-
 def serialize_payload(payload: Any) -> str:
     """Serialize an arbitrary job payload into a JSON envelope.
 
@@ -249,49 +227,19 @@ def deserialize_payload(raw_json: str) -> Any:
             display_name=envelope.get("display_name", ""),
         )
 
-    if payload_type == "pydantic":
+    if payload_type in ("pydantic", "dataclass"):
+        # Allowlist reconstruction was never populated; keep the closed
+        # deserialization path (no envelope-driven class instantiation)
+        # and hand back the raw payload dict.
         module_name = envelope.get("__module__", "")
         qualname = envelope.get("__qualname__", "")
-        data = envelope.get("data", {})
-        cls = _RECONSTRUCTABLE_CLASSES.get((module_name, qualname))
-        if cls is None:
-            _LOGGER.warning(
-                "Refusing to reconstruct unregistered Pydantic class %s.%s; returning dict",
-                module_name,
-                qualname,
-            )
-            return data
-        try:
-            return cls(**data)
-        except Exception:
-            _LOGGER.warning(
-                "Could not reconstruct Pydantic class %s.%s; returning dict",
-                module_name,
-                qualname,
-            )
-            return data
-
-    if payload_type == "dataclass":
-        module_name = envelope.get("__module__", "")
-        qualname = envelope.get("__qualname__", "")
-        data = envelope.get("data", {})
-        cls = _RECONSTRUCTABLE_CLASSES.get((module_name, qualname))
-        if cls is None:
-            _LOGGER.warning(
-                "Refusing to reconstruct unregistered dataclass %s.%s; returning dict",
-                module_name,
-                qualname,
-            )
-            return data
-        try:
-            return cls(**data)
-        except Exception:
-            _LOGGER.warning(
-                "Could not reconstruct dataclass %s.%s; returning dict",
-                module_name,
-                qualname,
-            )
-            return data
+        _LOGGER.warning(
+            "Refusing to reconstruct %s payload %s.%s; returning dict",
+            payload_type,
+            module_name,
+            qualname,
+        )
+        return envelope.get("data", {})
 
     if payload_type == "raw":
         return envelope.get("data")
@@ -506,6 +454,11 @@ class RedisJobQueue:
         self._cancelled.clear()
         return count
 
+    # -- JobQueueProtocol aliases ----------------------------------------------
+    enqueue = submit
+    get_job = status
+    cancel_job = cancel
+
     # -- Distributed Claim & Recovery Operations ------------------------------
 
     async def claim(
@@ -683,13 +636,6 @@ class RedisJobQueue:
             await self._backend.upsert_job(
                 replace(record, status="queued", updated_at=now)
             )
-
-    async def extend_visibility(self, job_id: str, extra_seconds: float) -> None:
-        """Extend visibility timeout for a long-running active job."""
-        if self._redis is None:
-            return
-        new_score = time.time() + extra_seconds
-        await self._client.zadd(KEY_ACTIVE, {job_id: new_score}, xx=True)
 
     async def heartbeat(self, worker_id: str, ttl_seconds: int = 30) -> None:
         """Publish worker liveness heartbeat to Redis with TTL."""

@@ -81,6 +81,120 @@ def _split_table_row(row_str: str) -> list[str]:
     return [p.strip().replace(r"\|", "|") for p in parts]
 
 
+def _consume_code_fence(lines: list[str], i: int) -> tuple[dict[str, Any], int]:
+    fence = lines[i].strip()[:3]
+    code_lines: list[str] = []
+    i += 1
+    num_lines = len(lines)
+    while i < num_lines and not lines[i].strip().startswith(fence):
+        code_lines.append(lines[i])
+        i += 1
+    if i < num_lines:
+        i += 1  # consume closing fence
+    code_text = "\n".join(code_lines)
+    return {
+        "type": "code",
+        "kind": "code",
+        "level": 0,
+        "text": code_text,
+    }, i
+
+
+def _consume_table(lines: list[str], i: int) -> tuple[dict[str, Any] | None, int]:
+    num_lines = len(lines)
+    table_rows: list[list[str]] = [_split_table_row(lines[i])]
+    i += 2  # skip header and separator
+    while i < num_lines:
+        curr = lines[i].strip()
+        if not curr or "|" not in curr:
+            break
+        table_rows.append(_split_table_row(curr))
+        i += 1
+
+    if table_rows and any(any(c for c in r) for r in table_rows):
+        return {
+            "type": "table",
+            "kind": "table",
+            "level": 0,
+            "text": _format_markdown_table(table_rows),
+            "rows_data": table_rows,
+        }, i
+    return None, i
+
+
+def _consume_blockquote(lines: list[str], i: int) -> tuple[dict[str, Any] | None, int]:
+    num_lines = len(lines)
+    quote_lines: list[str] = []
+    while i < num_lines and lines[i].strip().startswith(">"):
+        quote_lines.append(re.sub(r"^>\s?", "", lines[i].strip()))
+        i += 1
+    quote_text = " ".join(quote_lines).strip()
+    if quote_text:
+        return {
+            "type": "paragraph",
+            "kind": "paragraph",
+            "level": 0,
+            "text": quote_text,
+        }, i
+    return None, i
+
+
+def _consume_list(lines: list[str], i: int) -> tuple[dict[str, Any] | None, int]:
+    list_match = _RE_LIST_ITEM.match(lines[i])
+    if not list_match:
+        return None, i + 1
+    item_text = list_match.group(3).strip()
+    return {
+        "type": "list_item",
+        "kind": "list_item",
+        "level": len(list_match.group(1)) // 2,
+        "text": item_text,
+    }, i + 1
+
+
+def _consume_paragraph(lines: list[str], i: int) -> tuple[dict[str, Any] | None, int]:
+    num_lines = len(lines)
+    para_lines: list[str] = [lines[i].strip()]
+    i += 1
+    while i < num_lines:
+        curr = lines[i]
+        c_stripped = curr.strip()
+        if not c_stripped:
+            break
+        if (
+            _RE_ATX_HEADING.match(c_stripped)
+            or c_stripped.startswith("```")
+            or c_stripped.startswith("~~~")
+            or _RE_THEMATIC_BREAK.match(c_stripped)
+            or _RE_LIST_ITEM.match(curr)
+            or c_stripped.startswith(">")
+        ):
+            break
+        if (
+            "|" in curr
+            and i + 1 < num_lines
+            and _RE_TABLE_SEP.match(lines[i + 1].strip())
+        ):
+            break
+        if i + 1 < num_lines and (
+            re.match(r"^={2,}\s*$", lines[i + 1].strip())
+            or re.match(r"^-{2,}\s*$", lines[i + 1].strip())
+        ):
+            break
+        para_lines.append(c_stripped)
+        i += 1
+
+    para_text = " ".join(para_lines).strip()
+    if para_text:
+        return {
+            "type": "paragraph",
+            "kind": "paragraph",
+            "level": 0,
+            "text": para_text,
+        }, i
+    return None, i
+
+
 def _parse_markdown_fallback(md_text: str) -> list[list[dict[str, Any]]]:
     """Line-based fallback parser for Markdown documents."""
     lines = md_text.splitlines()
@@ -88,6 +202,9 @@ def _parse_markdown_fallback(md_text: str) -> list[list[dict[str, Any]]]:
 
     i = 0
     num_lines = len(lines)
+    # Block consumers after the fence branch yield ``dict | None`` (no block
+    # consumed), so ``item`` must carry the union from the start.
+    item: dict[str, Any] | None
 
     while i < num_lines:
         line = lines[i]
@@ -100,23 +217,8 @@ def _parse_markdown_fallback(md_text: str) -> list[list[dict[str, Any]]]:
 
         # Code fence (``` or ~~~)
         if stripped.startswith("```") or stripped.startswith("~~~"):
-            fence = stripped[:3]
-            code_lines: list[str] = []
-            i += 1
-            while i < num_lines and not lines[i].strip().startswith(fence):
-                code_lines.append(lines[i])
-                i += 1
-            if i < num_lines:
-                i += 1  # consume closing fence
-            code_text = "\n".join(code_lines)
-            pages_raw[-1].append(
-                {
-                    "type": "code",
-                    "kind": "code",
-                    "level": 0,
-                    "text": code_text,
-                }
-            )
+            item, i = _consume_code_fence(lines, i)
+            pages_raw[-1].append(item)
             continue
 
         # ATX Heading (# Heading)
@@ -182,101 +284,29 @@ def _parse_markdown_fallback(md_text: str) -> list[list[dict[str, Any]]]:
             and i + 1 < num_lines
             and _RE_TABLE_SEP.match(lines[i + 1].strip())
         ):
-            table_rows: list[list[str]] = [_split_table_row(line)]
-            i += 2  # skip header and separator
-            while i < num_lines:
-                curr = lines[i].strip()
-                if not curr or "|" not in curr:
-                    break
-                table_rows.append(_split_table_row(curr))
-                i += 1
-
-            if table_rows and any(any(c for c in r) for r in table_rows):
-                pages_raw[-1].append(
-                    {
-                        "type": "table",
-                        "kind": "table",
-                        "level": 0,
-                        "text": _format_markdown_table(table_rows),
-                        "rows_data": table_rows,
-                    }
-                )
+            item, i = _consume_table(lines, i)
+            if item is not None:
+                pages_raw[-1].append(item)
             continue
 
         # Blockquote (> text)
         if stripped.startswith(">"):
-            quote_lines: list[str] = []
-            while i < num_lines and lines[i].strip().startswith(">"):
-                quote_lines.append(re.sub(r"^>\s?", "", lines[i].strip()))
-                i += 1
-            quote_text = " ".join(quote_lines).strip()
-            if quote_text:
-                pages_raw[-1].append(
-                    {
-                        "type": "paragraph",
-                        "kind": "paragraph",
-                        "level": 0,
-                        "text": quote_text,
-                    }
-                )
+            item, i = _consume_blockquote(lines, i)
+            if item is not None:
+                pages_raw[-1].append(item)
             continue
 
         # List items (- item, * item, + item, 1. item)
-        list_match = _RE_LIST_ITEM.match(line)
-        if list_match:
-            item_text = list_match.group(3).strip()
-            pages_raw[-1].append(
-                {
-                    "type": "list_item",
-                    "kind": "list_item",
-                    "level": len(list_match.group(1)) // 2,
-                    "text": item_text,
-                }
-            )
-            i += 1
+        if _RE_LIST_ITEM.match(line):
+            item, i = _consume_list(lines, i)
+            if item is not None:
+                pages_raw[-1].append(item)
             continue
 
         # Regular paragraph: accumulate non-blank lines until blank, heading, table, or fence
-        para_lines: list[str] = [stripped]
-        i += 1
-        while i < num_lines:
-            curr = lines[i]
-            c_stripped = curr.strip()
-            if not c_stripped:
-                break
-            if (
-                _RE_ATX_HEADING.match(c_stripped)
-                or c_stripped.startswith("```")
-                or c_stripped.startswith("~~~")
-                or _RE_THEMATIC_BREAK.match(c_stripped)
-                or _RE_LIST_ITEM.match(curr)
-                or c_stripped.startswith(">")
-            ):
-                break
-            if (
-                "|" in curr
-                and i + 1 < num_lines
-                and _RE_TABLE_SEP.match(lines[i + 1].strip())
-            ):
-                break
-            if i + 1 < num_lines and (
-                re.match(r"^={2,}\s*$", lines[i + 1].strip())
-                or re.match(r"^-{2,}\s*$", lines[i + 1].strip())
-            ):
-                break
-            para_lines.append(c_stripped)
-            i += 1
-
-        para_text = " ".join(para_lines).strip()
-        if para_text:
-            pages_raw[-1].append(
-                {
-                    "type": "paragraph",
-                    "kind": "paragraph",
-                    "level": 0,
-                    "text": para_text,
-                }
-            )
+        item, i = _consume_paragraph(lines, i)
+        if item is not None:
+            pages_raw[-1].append(item)
 
     return [p for p in pages_raw if p]
 

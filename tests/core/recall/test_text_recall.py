@@ -729,10 +729,12 @@ class TestHybridWhitespaceRecallGuardRails:
             recall_booster=_FixedBooster(),  # type: ignore[arg-type]
         )
         assert engine._decoded_cache == {}
-        merged, touched, added = await engine._apply_recall(
+        merged, touched, added = await engine.layout_detector.apply_recall(
             chunk_pages=[0],
             images_dict={0: _make_tiny_b64_image()},
             chunk_boxes=[[(0.1, 0.1, 0.9, 0.2)]],
+            decoded_get=engine._decoded_get,
+            decoded_put=engine._decoded_put,
         )
         assert (touched, added) == (1, 1)
         assert len(merged[0]) == 2
@@ -798,10 +800,12 @@ class TestHybridWhitespaceRecallGuardRails:
         # T6: the if-guard degrades to the Surya boxes instead of asserting.
         engine = _engine()
         chunk_boxes = [[(0.1, 0.1, 0.9, 0.2)]]
-        merged, touched, added = await engine._apply_recall(
+        merged, touched, added = await engine.layout_detector.apply_recall(
             chunk_pages=[0],
             images_dict={0: _make_tiny_b64_image()},
             chunk_boxes=chunk_boxes,
+            decoded_get=engine._decoded_get,
+            decoded_put=engine._decoded_put,
         )
         assert merged is chunk_boxes
         assert (touched, added) == (0, 0)

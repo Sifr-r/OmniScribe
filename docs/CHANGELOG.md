@@ -12,6 +12,34 @@ _See [v0.3.0](#030--2026-09-06) for the most recent release and
 [docs/RELEASE-NOTES-v0.3.0.md](RELEASE-NOTES-v0.3.0.md) for the
 full v0.3.0 release report._
 
+- **2026-09-13 — Remediation wave (roadmap P1.1–P4.5,
+  [`docs/audits/2026-09-13-remediation-roadmap.md`](audits/2026-09-13-remediation-roadmap.md)).**
+  - **Fix (translation):** async LangGraph translation crashed with
+    `"No synchronous function provided"` when driven from a context with a
+    running event loop; `run_translation` / `_LazyTranslationApp.invoke` now
+    route through `ainvoke` with an asyncio/ThreadPool bridge.
+  - **Fix (OCR reliability):** `extract_json` hardened against pathological
+    model output — string-aware bounded bracket scanning, `RecursionError`
+    containment, and attempt caps; covered by new unit + property tests.
+  - **Client architecture:** 1049-line `WorkstationNotifier` decomposed into
+    `DocumentViewportNotifier`, `DocumentSelectionNotifier`, and
+    `JobOrchestrationNotifier` behind a facade (action sites unchanged).
+    Behavioral note: the progress `channelId` now survives job teardown
+    (it is only replaced by the next job).
+  - **Flutter integration tests:** `client/integration_test/` boots the
+    real app against an in-process stub server (real WebSocket upgrade,
+    streamed `block_complete` frame) and — in
+    `app_real_server_test.dart` — against a live spawned
+    `omniscribe-server` (health polling, sample-fixture fetch, real
+    server-side preview rasterization); run with
+    `flutter test integration_test/app_workstation_test.dart -d windows`.
+  - **CI:** nightly pytest steps absorb rare slow-tier flakes via
+    `pytest-rerunfailures` (`--reruns 1`); the merge gate stays strict.
+  - **Docs:** README Screenshots strip + Performance expectations section
+    (measured local-stage timings), `docs/benchmarks.md` provenance
+    subsection, eight captured assets in `docs/screenshots/`, and a
+    `?a11y=1` debug hook (`SemanticsBinding.ensureSemantics()`) enabling
+    headless UI capture.
 - **2026-09-07 — RFC 004: Competitive Gap Remediation (All 5 Workstreams Shipped).**
   Closes the competitive feature gap against Docling and Unstructured.io
   ([`docs/rfcs/2026-09-competitive-gap-remediation.md`](rfcs/2026-09-competitive-gap-remediation.md))
@@ -62,7 +90,7 @@ full v0.3.0 release report._
   returns 404. See the new `## "I just installed this — does
   it work?" (no PDF handy)` entry in
   [`docs/TROUBLESHOOTING.md`](TROUBLESHOOTING.md) and
-  [`docs/rfcs/2026-09-v0.3.0-scope.md`](rfcs/2026-09-v0.3.0-scope.md)
+  `docs/rfcs/2026-09-v0.3.0-scope.md`
   §4 for the product call.
 
 ### Maintenance
@@ -142,7 +170,7 @@ full v0.3.0 release report._
 > failure is at
 > [docs/rfcs/2026-09-bundle-sprint-1-findings.md](rfcs/2026-09-bundle-sprint-1-findings.md).
 > The v0.3.0 plan is at
-> [docs/rfcs/2026-09-v0.3.0-scope.md](rfcs/2026-09-v0.3.0-scope.md).
+> `docs/rfcs/2026-09-v0.3.0-scope.md`.
 
 ### Bundle & Distribution (Phase 4 — closed)
 
@@ -241,7 +269,7 @@ full v0.3.0 release report._
   `close()` — 3 of the 10 `type: ignore` lines turned out to be
   unused and were removed, leaving 9 active. Final tally: 0 errors
   in 56 source files. See
-  [`pyproject.toml`](pyproject.toml) §`[tool.mypy.overrides]`.
+  [`pyproject.toml`](../pyproject.toml) §`[tool.mypy.overrides]`.
 - **2026-09-06 — Q9 calibration script determinism test.** New test
   `test_seed_actually_controls_the_platt_split` in
   `tests/scripts/test_calibrate_model_script.py` pins the
@@ -262,7 +290,7 @@ full v0.3.0 release report._
 > [docs/RELEASE-NOTES-v0.2.0.md](RELEASE-NOTES-v0.2.0.md). The
 > audit + plan that drove this work are at
 > [docs/audits/2026-09-04-five-lens-audit.md](audits/2026-09-04-five-lens-audit.md)
-> and [docs/audits/2026-09-04-remediation-plan.md](audits/2026-09-04-remediation-plan.md).
+> and `docs/audits/2026-09-04-remediation-plan.md`.
 
 ### Audit & Remediation (2026-09-05 Five-Lens Audit Wave)
 

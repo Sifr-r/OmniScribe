@@ -18,10 +18,6 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger("omniscribe.plugins.glossary")
 
-LEXICON_INSTALL_HINT = (
-    "Lexicon store is not available. Install with: uv sync --extra lexicon"
-)
-
 
 class LexiconProvider:
     """Constructs the LanceDB store on first use; caches the result."""

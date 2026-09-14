@@ -140,3 +140,44 @@ def test_malformed_syntax_handled_gracefully(
     text = f"{corrupt_prefix}{corrupt_body}{corrupt_suffix}"
     result = extract_json(text)
     assert result is None or isinstance(result, (dict, list))
+
+
+@settings(max_examples=100, deadline=None)
+@given(
+    data=_json_composite,
+    junk=st.lists(st.sampled_from(["}", "]", "text", '"quote"', ":"]), max_size=12),
+)
+def test_json_with_leading_closer_junk(
+    data: dict[str, Any] | list[Any], junk: list[str]
+) -> None:
+    """Junk without openers before the payload never hides it."""
+    text = " ".join(junk) + " " + json.dumps(data)
+    assert extract_json(text) == data
+
+
+@settings(max_examples=100, deadline=None)
+@given(
+    data=_json_composite,
+    words=st.lists(st.text(alphabet="abc :,", max_size=8), max_size=6),
+)
+def test_json_after_unclosed_quote(
+    data: dict[str, Any] | list[Any], words: list[str]
+) -> None:
+    """An unbalanced prose quote before the payload still yields the payload."""
+    text = '"unclosed ' + " ".join(words) + " " + json.dumps(data)
+    assert extract_json(text) == data
+
+
+@settings(max_examples=100, deadline=None)
+@given(
+    data=_json_composite,
+    junk=st.lists(
+        st.sampled_from(['{"a":', "[", "}", "]", "text", '"q"']), max_size=12
+    ),
+)
+def test_json_with_trailing_junk(
+    data: dict[str, Any] | list[Any], junk: list[str]
+) -> None:
+    """Trailing junk after the payload never changes the extraction."""
+    text = json.dumps(data) + " " + " ".join(junk)
+    assert extract_json(text) == data

@@ -10,6 +10,8 @@ import 'package:omniscribe_client/data/models/document_result.dart';
 import 'package:omniscribe_client/data/models/job_record.dart';
 import 'package:omniscribe_client/data/models/process_settings.dart';
 import 'package:omniscribe_client/data/models/ws_frames.dart';
+import 'package:omniscribe_client/data/providers/document_selection_notifier.dart';
+import 'package:omniscribe_client/data/providers/job_orchestration_notifier.dart';
 import 'package:omniscribe_client/data/providers/repository_providers.dart';
 import 'package:omniscribe_client/data/providers/workstation_notifier.dart';
 import 'package:omniscribe_client/data/repositories/ocr_repository.dart';
@@ -20,6 +22,10 @@ class _MockOcrRepository extends Mock implements OcrRepository {}
 class _MockWsClient extends Mock implements WsClient {}
 
 class _MockSamplePdfRepository extends Mock implements SamplePdfRepository {}
+
+
+JobOrchestrationState _job(ProviderContainer container) =>
+    container.read(jobOrchestrationProvider);
 
 void main() {
   late _MockOcrRepository ocrRepo;
@@ -72,9 +78,9 @@ void main() {
       final state = container.read(workstationProvider);
 
       expect(state.hasDocument, isFalse);
-      expect(state.isProcessing, isFalse);
+      expect(_job(container).isProcessing, isFalse);
       expect(state.pages, isEmpty);
-      expect(state.error, isNull);
+      expect(_job(container).error, isNull);
     });
   });
 
@@ -93,8 +99,6 @@ void main() {
       expect(state.pageCount, 3);
       expect(state.pages.length, 3);
       expect(state.selectedPageIndex, 0);
-      expect(state.zoomScale, 1.0);
-      expect(state.panOffset, Offset.zero);
       expect(state.showBBoxes, isTrue);
       expect(state.showHeatmap, isTrue);
     });
@@ -103,16 +107,17 @@ void main() {
       final container = makeContainer();
       addTearDown(container.dispose);
       final notifier = container.read(workstationProvider.notifier);
+      final selection = container.read(documentSelectionProvider.notifier);
 
       notifier.loadDocument(Uint8List(0), 'sample.pdf', pageCount: 3);
-      notifier.selectBBox(const BBoxItem(
+      selection.select(const BBoxItem(
         blockId: 'b1',
         page: 0,
         block: 0,
         bbox: [0, 0, 1, 1],
         text: 'text',
       ));
-      notifier.hoverBBox(const BBoxItem(
+      selection.hover(const BBoxItem(
         blockId: 'b2',
         page: 0,
         block: 1,
@@ -123,9 +128,10 @@ void main() {
       notifier.selectPage(1);
 
       final state = container.read(workstationProvider);
+      final selectionState = container.read(documentSelectionProvider);
       expect(state.selectedPageIndex, 1);
-      expect(state.selectedBBox, isNull);
-      expect(state.hoveredBBox, isNull);
+      expect(selectionState.selectedBBox, isNull);
+      expect(selectionState.hoveredBBox, isNull);
     });
 
     test('setBBoxes and addOrUpdateBBox update page elements', () {
@@ -178,30 +184,16 @@ void main() {
       expect(state.pages[0].bboxes.length, 2);
     });
 
-    test('viewport modifiers (zoom, pan, reset, toggle) work as expected', () {
+    test('layer toggle modifiers work as expected', () {
       final container = makeContainer();
       addTearDown(container.dispose);
       final notifier = container.read(workstationProvider.notifier);
-
-      notifier.setZoomScale(2.5);
-      expect(container.read(workstationProvider).zoomScale, 2.5);
-
-      notifier.setPanOffset(const Offset(100, 200));
-      expect(
-        container.read(workstationProvider).panOffset,
-        const Offset(100, 200),
-      );
 
       notifier.toggleBBoxes(false);
       expect(container.read(workstationProvider).showBBoxes, isFalse);
 
       notifier.toggleHeatmap(false);
       expect(container.read(workstationProvider).showHeatmap, isFalse);
-
-      notifier.resetViewport();
-      final state = container.read(workstationProvider);
-      expect(state.zoomScale, 1.0);
-      expect(state.panOffset, Offset.zero);
     });
 
     test('clearDocument resets to empty state', () async {
@@ -318,11 +310,10 @@ void main() {
         stage: 'Detection',
       ));
 
-      final state = container.read(workstationProvider);
-      expect(state.percent, 30);
-      expect(state.stage, 'Detection');
-      expect(state.statusMessage, 'Detecting layout...');
-      expect(state.warnings, isEmpty);
+      expect(_job(container).percent, 30);
+      expect(_job(container).stage, 'Detection');
+      expect(_job(container).statusMessage, 'Detecting layout...');
+      expect(_job(container).warnings, isEmpty);
     });
 
     test('handleWsFrame records warnings from ProgressFrame', () {
@@ -337,8 +328,7 @@ void main() {
         warning: true,
       ));
 
-      final state = container.read(workstationProvider);
-      expect(state.warnings, contains('Low contrast on page 1'));
+      expect(_job(container).warnings, contains('Low contrast on page 1'));
     });
 
     test('handleWsFrame processes BlockCompleteFrame, BlockRetryFrame, BlockRevisedFrame', () {
@@ -359,8 +349,8 @@ void main() {
       ));
 
       var state = container.read(workstationProvider);
-      expect(state.processedBlocks, 1);
-      expect(state.avgConfidence, 0.50);
+      expect(_job(container).processedBlocks, 1);
+      expect(_job(container).avgConfidence, 0.50);
       expect(state.pages[0].bboxes.length, 1);
 
       // 2. Block retry
@@ -373,8 +363,8 @@ void main() {
       ));
 
       state = container.read(workstationProvider);
-      expect(state.blockRetryCounts['p0_b0'], 1);
-      expect(state.stage, 'Refine / Quality Repair');
+      expect(_job(container).blockRetryCounts['p0_b0'], 1);
+      expect(_job(container).stage, 'Refine / Quality Repair');
 
       // 3. Block revised
       notifier.handleWsFrame(const BlockRevisedFrame(
@@ -406,20 +396,18 @@ void main() {
         belowTargetCount: 0,
       ));
 
-      var state = container.read(workstationProvider);
-      expect(state.qualitySummary, isNotNull);
-      expect(state.qualitySummary!.repairedCount, 2);
-      expect(state.avgConfidence, 0.94);
+      expect(_job(container).qualitySummary, isNotNull);
+      expect(_job(container).qualitySummary!.repairedCount, 2);
+      expect(_job(container).avgConfidence, 0.94);
 
       notifier.handleWsFrame(const CancelledFrame(
         status: 'Cancelled by server',
         percent: 50,
       ));
 
-      state = container.read(workstationProvider);
-      expect(state.isProcessing, isFalse);
-      expect(state.stage, 'Cancelled');
-      expect(state.statusMessage, 'Cancelled by server');
+      expect(_job(container).isProcessing, isFalse);
+      expect(_job(container).stage, 'Cancelled');
+      expect(_job(container).statusMessage, 'Cancelled by server');
     });
 
     test('BlockCompleteFrame with null confidence does not bias avg', () {
@@ -439,10 +427,9 @@ void main() {
         confidence: 1.0,
       ));
 
-      var state = container.read(workstationProvider);
-      expect(state.processedBlocks, 1);
-      expect(state.scoredBlocks, 1);
-      expect(state.avgConfidence, 1.0);
+      expect(_job(container).processedBlocks, 1);
+      expect(_job(container).scoredBlocks, 1);
+      expect(_job(container).avgConfidence, 1.0);
 
       // Block 1: null confidence -> avg unchanged, scoredBlocks unchanged
       notifier.handleWsFrame(const BlockCompleteFrame(
@@ -454,10 +441,9 @@ void main() {
         confidence: null,
       ));
 
-      state = container.read(workstationProvider);
-      expect(state.processedBlocks, 2);
-      expect(state.scoredBlocks, 1);
-      expect(state.avgConfidence, 1.0);
+      expect(_job(container).processedBlocks, 2);
+      expect(_job(container).scoredBlocks, 1);
+      expect(_job(container).avgConfidence, 1.0);
 
       // Block 2: null confidence -> still avg=1.0
       notifier.handleWsFrame(const BlockCompleteFrame(
@@ -469,10 +455,9 @@ void main() {
         confidence: null,
       ));
 
-      state = container.read(workstationProvider);
-      expect(state.processedBlocks, 3);
-      expect(state.scoredBlocks, 1);
-      expect(state.avgConfidence, 1.0);
+      expect(_job(container).processedBlocks, 3);
+      expect(_job(container).scoredBlocks, 1);
+      expect(_job(container).avgConfidence, 1.0);
     });
 
     test('interleaved scored and unscored blocks compute correct average', () {
@@ -525,10 +510,9 @@ void main() {
         confidence: null,
       ));
 
-      final state = container.read(workstationProvider);
-      expect(state.processedBlocks, 5);
-      expect(state.scoredBlocks, 2);
-      expect(state.avgConfidence, closeTo(0.7, 1e-9));
+      expect(_job(container).processedBlocks, 5);
+      expect(_job(container).scoredBlocks, 2);
+      expect(_job(container).avgConfidence, closeTo(0.7, 1e-9));
     });
   });
 
@@ -569,12 +553,12 @@ void main() {
       await notifier.processOcrSync();
 
       final state = container.read(workstationProvider);
-      expect(state.isProcessing, isFalse);
-      expect(state.percent, 100);
-      expect(state.stage, 'Complete');
+      expect(_job(container).isProcessing, isFalse);
+      expect(_job(container).percent, 100);
+      expect(_job(container).stage, 'Complete');
       expect(state.loadedBytes, outputBytes);
-      expect(state.trustSummary?.average, 0.98);
-      expect(state.error, isNull);
+      expect(_job(container).trustSummary?.average, 0.98);
+      expect(_job(container).error, isNull);
     });
 
     test('processOcrSync populates error on failure', () async {
@@ -601,10 +585,9 @@ void main() {
         throwsA(isA<Exception>()),
       );
 
-      final state = container.read(workstationProvider);
-      expect(state.isProcessing, isFalse);
-      expect(state.stage, 'Error');
-      expect(state.error, contains('OCR server crashed'));
+      expect(_job(container).isProcessing, isFalse);
+      expect(_job(container).stage, 'Error');
+      expect(_job(container).error, contains('OCR server crashed'));
     });
 
     test('processOcrAsync opens session and submits async job', () async {
@@ -634,10 +617,9 @@ void main() {
 
       await notifier.processOcrAsync();
 
-      final state = container.read(workstationProvider);
-      expect(state.activeJobId, 'job-999');
-      expect(state.channelId, 'ch-async');
-      expect(state.error, isNull);
+      expect(_job(container).activeJobId, 'job-999');
+      expect(_job(container).channelId, 'ch-async');
+      expect(_job(container).error, isNull);
     });
 
     test('cancelOcr cancels active progress and job', () async {
@@ -659,7 +641,8 @@ void main() {
       // provider since ``Notifier.state`` is no longer exposed as a getter
       // on the notifier instance — only the setter is reachable from inside
       // a method body, which is fine for ``notifier.state = ...``.
-      notifier.state = container.read(workstationProvider).copyWith(
+      container.read(jobOrchestrationProvider.notifier).state =
+          JobOrchestrationState(
         channelId: 'ch-1',
         activeJobId: 'job-1',
         isProcessing: true,
@@ -667,9 +650,8 @@ void main() {
 
       await notifier.cancelOcr();
 
-      final state = container.read(workstationProvider);
-      expect(state.isProcessing, isFalse);
-      expect(state.stage, 'Cancelled');
+      expect(_job(container).isProcessing, isFalse);
+      expect(_job(container).stage, 'Cancelled');
       verify(() => wsClient.cancelChannel()).called(1);
     });
 
@@ -771,10 +753,9 @@ void main() {
 
       await notifier.processOcrAsync();
 
-      final state = container.read(workstationProvider);
-      expect(state.isProcessing, isTrue);
-      expect(state.stage, 'Queued');
-      expect(state.activeJobId, 'job-async-ok');
+      expect(_job(container).isProcessing, isTrue);
+      expect(_job(container).stage, 'Queued');
+      expect(_job(container).activeJobId, 'job-async-ok');
     });
 
     test(
@@ -816,7 +797,7 @@ void main() {
       final container = makeContainer();
       final notifier = container.read(workstationProvider.notifier);
 
-      // Set channelId via ConnectedFrame; state.channelId will be non-null
+      // Set channelId via ConnectedFrame; _job(container).channelId will be non-null
       notifier.handleWsFrame(const ConnectedFrame(channelId: 'ch-dispose'));
 
       // Explicit dispose triggers ref.onDispose -> _cleanup (async, fire-and-forget)
@@ -859,9 +840,8 @@ void main() {
           ));
 
       await notifier.processOcrAsync();
-      var state = container.read(workstationProvider);
-      expect(state.activeJobId, 'job-stale');
-      expect(state.channelId, 'ch-stale');
+      expect(_job(container).activeJobId, 'job-stale');
+      expect(_job(container).channelId, 'ch-stale');
 
       // ---- 2. Sync run must clear stale activeJobId/channelId/trustSummary ----
       when(() => ocrRepo.openProgressSession(clientId: any(named: 'clientId')))
@@ -889,10 +869,9 @@ void main() {
 
       await notifier.processOcrSync();
 
-      state = container.read(workstationProvider);
-      expect(state.activeJobId, isNull);
-      expect(state.channelId, 'ch-fresh');
-      expect(state.trustSummary?.average, 0.95);
+      expect(_job(container).activeJobId, isNull);
+      expect(_job(container).channelId, 'ch-fresh');
+      expect(_job(container).trustSummary?.average, 0.95);
     });
 
     test(
@@ -929,9 +908,8 @@ void main() {
           ));
 
       await notifier.processOcrSync();
-      var state = container.read(workstationProvider);
-      expect(state.channelId, 'ch-stale-sync');
-      expect(state.trustSummary?.average, 0.85);
+      expect(_job(container).channelId, 'ch-stale-sync');
+      expect(_job(container).trustSummary?.average, 0.85);
 
       // ---- 2. Async run must clear stale channelId/trustSummary ----
       when(() => ocrRepo.openProgressSession(clientId: any(named: 'clientId')))
@@ -953,11 +931,10 @@ void main() {
 
       await notifier.processOcrAsync();
 
-      state = container.read(workstationProvider);
       // trustSummary is cleared (replaced by null), channelId is the new session's
-      expect(state.trustSummary, isNull);
-      expect(state.channelId, 'ch-fresh-async');
-      expect(state.activeJobId, 'job-fresh');
+      expect(_job(container).trustSummary, isNull);
+      expect(_job(container).channelId, 'ch-fresh-async');
+      expect(_job(container).activeJobId, 'job-fresh');
     });
 
     group('WebSocket Closure Handling (_handleWsClosed)', () {
@@ -986,7 +963,7 @@ void main() {
             ));
 
         await notifier.processOcrAsync();
-        expect(container.read(workstationProvider).isProcessing, isTrue);
+        expect(container.read(jobOrchestrationProvider).isProcessing, isTrue);
 
         final expectedBytes = Uint8List.fromList([99, 100, 101]);
         when(() => ocrRepo.getJobStatus('job-done-1')).thenAnswer(
@@ -1004,11 +981,11 @@ void main() {
         await notifier.handleWsClosed();
 
         final state = container.read(workstationProvider);
-        expect(state.isProcessing, isFalse);
-        expect(state.stage, 'Complete');
-        expect(state.percent, 100);
+        expect(_job(container).isProcessing, isFalse);
+        expect(_job(container).stage, 'Complete');
+        expect(_job(container).percent, 100);
         expect(state.loadedBytes, expectedBytes);
-        expect(state.textArtifactId, 'art-xyz');
+        expect(_job(container).textArtifactId, 'art-xyz');
       });
 
       test('when job is cancelled, updates state to cancelled', () async {
@@ -1048,10 +1025,9 @@ void main() {
 
         await notifier.handleWsClosed();
 
-        final state = container.read(workstationProvider);
-        expect(state.isProcessing, isFalse);
-        expect(state.stage, 'Cancelled');
-        expect(state.statusMessage, 'Job was cancelled');
+        expect(_job(container).isProcessing, isFalse);
+        expect(_job(container).stage, 'Cancelled');
+        expect(_job(container).statusMessage, 'Job was cancelled');
       });
 
       test('when job is error, updates state to error with message', () async {
@@ -1092,11 +1068,10 @@ void main() {
 
         await notifier.handleWsClosed();
 
-        final state = container.read(workstationProvider);
-        expect(state.isProcessing, isFalse);
-        expect(state.stage, 'Error');
-        expect(state.error, 'Out of VRAM');
-        expect(state.statusMessage, 'Out of VRAM');
+        expect(_job(container).isProcessing, isFalse);
+        expect(_job(container).stage, 'Error');
+        expect(_job(container).error, 'Out of VRAM');
+        expect(_job(container).statusMessage, 'Out of VRAM');
       });
 
       test('does nothing if not actively processing or activeJobId is null', () async {
@@ -1135,9 +1110,10 @@ void main() {
       // The "Try sample PDF" download itself doesn't run OCR — it
       // just stages the document so the existing Run OCR button
       // (or Ctrl+Enter) processes it.
-      expect(after.isProcessing, isFalse);
-      expect(after.stage, 'Ready');
-      expect(after.error, isNull);
+      final jobAfter = container.read(jobOrchestrationProvider);
+      expect(jobAfter.isProcessing, isFalse);
+      expect(jobAfter.stage, 'Ready');
+      expect(jobAfter.error, isNull);
     });
 
     test('fetches an explicit fixture name (not the default)', () async {
@@ -1169,12 +1145,12 @@ void main() {
 
       await notifier.tryWithSamplePdf();
 
-      final after = container.read(workstationProvider);
-      expect(after.isProcessing, isFalse);
-      expect(after.stage, 'Error');
-      expect(after.error, contains('404'));
+      final jobAfter = container.read(jobOrchestrationProvider);
+      expect(jobAfter.isProcessing, isFalse);
+      expect(jobAfter.stage, 'Error');
+      expect(jobAfter.error, contains('404'));
       // The previously-loaded document (if any) is left intact.
-      expect(after.hasDocument, isFalse);
+      expect(container.read(workstationProvider).hasDocument, isFalse);
     });
 
     test('an in-flight OCR job is not interrupted by a sample-PDF click',
@@ -1183,12 +1159,12 @@ void main() {
       final container = makeContainer();
       addTearDown(container.dispose);
       final notifier = container.read(workstationProvider.notifier);
-      container.read(workstationProvider.notifier).state =
-          container.read(workstationProvider).copyWith(
-                isProcessing: true,
-                stage: 'Conversion',
-                statusMessage: 'mid-OCR run',
-              );
+      container.read(jobOrchestrationProvider.notifier).state =
+          JobOrchestrationState(
+        isProcessing: true,
+        stage: 'Conversion',
+        statusMessage: 'mid-OCR run',
+      );
 
       await notifier.tryWithSamplePdf();
 

@@ -488,10 +488,96 @@ class ApiClient {
     return result;
   }
 
-  ApiException _translateDioError(DioException error) {
-    if (error.type == DioExceptionType.connectionTimeout ||
+  static final Map<int, ApiException Function(String message, String? error, dynamic detail)>
+      _statusFactories = {
+    400: (message, error, detail) => ValidationException(
+          message: message,
+          statusCode: 400,
+          error: error ?? 'bad_request',
+          detail: detail,
+        ),
+    401: (message, error, detail) => UnauthorizedException(
+          message: message,
+          error: error ?? 'unauthorized',
+          detail: detail,
+        ),
+    403: (message, error, detail) => ForbiddenException(
+          message: message,
+          error: error ?? 'forbidden',
+          detail: detail,
+        ),
+    404: (message, error, detail) => NotFoundException(
+          message: message,
+          error: error ?? 'not_found',
+          detail: detail,
+        ),
+    409: (message, error, detail) => ConflictException(
+          message: message,
+          error: error ?? 'conflict',
+          detail: detail,
+        ),
+    413: (message, error, detail) => PayloadTooLargeException(
+          message: message,
+          error: error ?? 'payload_too_large',
+          detail: detail,
+        ),
+    422: (message, error, detail) => ValidationException(
+          message: message,
+          statusCode: 422,
+          error: error ?? 'validation_error',
+          detail: detail,
+        ),
+    429: (message, error, detail) => RateLimitException(
+          message: message,
+          error: error ?? 'rate_limited',
+          detail: detail,
+        ),
+    502: (message, error, detail) => ServerException(
+          message: message,
+          statusCode: 502,
+          error: error ?? 'llm_call_failed',
+          detail: detail,
+        ),
+    503: (message, error, detail) {
+      if (error == 'circuit_open') {
+        return CircuitOpenException(
+          message: message,
+          error: error,
+          detail: detail,
+        );
+      }
+      return ServiceUnavailableException(
+        message: message,
+        error: error ?? 'service_unavailable',
+        detail: detail,
+      );
+    },
+  };
+
+  static bool _isTimeout(DioException error) {
+    return error.type == DioExceptionType.connectionTimeout ||
         error.type == DioExceptionType.sendTimeout ||
-        error.type == DioExceptionType.receiveTimeout) {
+        error.type == DioExceptionType.receiveTimeout;
+  }
+
+  static (String? errorType, String? detailMessage, dynamic rawDetail)
+      _extractErrorDetails(dynamic data) {
+    if (data is Map) {
+      final errorType = data['error']?.toString();
+      final rawDetail = data['detail'];
+      final detailMessage = rawDetail is String
+          ? rawDetail
+          : (rawDetail != null ? jsonEncode(rawDetail) : null);
+      return (errorType, detailMessage, rawDetail);
+    }
+    if (data is String) {
+      return (null, data, null);
+    }
+    return (null, null, null);
+  }
+
+  ApiException _translateDioError(DioException error) {
+    if (_isTimeout(error)) {
       return NetworkException(
         message: 'Request timed out: ${error.message}',
         isTimeout: true,
@@ -520,100 +606,19 @@ class ApiClient {
     }
 
     final statusCode = response.statusCode ?? 500;
-    final dynamic data = response.data;
-
-    String? errorType;
-    String? detailMessage;
-    dynamic rawDetail;
-
-    if (data is Map<String, dynamic>) {
-      errorType = data['error']?.toString();
-      rawDetail = data['detail'];
-      detailMessage = rawDetail is String ? rawDetail : jsonEncode(rawDetail);
-    } else if (data is String) {
-      detailMessage = data;
-    }
+    final (errorType, detailMessage, rawDetail) =
+        _extractErrorDetails(response.data);
 
     final message = detailMessage ?? error.message ?? 'HTTP $statusCode Error';
 
-    switch (statusCode) {
-      case 400:
-        return ValidationException(
-          message: message,
-          statusCode: 400,
-          error: errorType ?? 'bad_request',
-          detail: rawDetail,
-        );
-      case 401:
-        return UnauthorizedException(
-          message: message,
-          error: errorType ?? 'unauthorized',
-          detail: rawDetail,
-        );
-      case 403:
-        return ForbiddenException(
-          message: message,
-          error: errorType ?? 'forbidden',
-          detail: rawDetail,
-        );
-      case 404:
-        return NotFoundException(
-          message: message,
-          error: errorType ?? 'not_found',
-          detail: rawDetail,
-        );
-      case 409:
-        return ConflictException(
-          message: message,
-          error: errorType ?? 'conflict',
-          detail: rawDetail,
-        );
-      case 413:
-        return PayloadTooLargeException(
-          message: message,
-          error: errorType ?? 'payload_too_large',
-          detail: rawDetail,
-        );
-      case 422:
-        return ValidationException(
-          message: message,
-          statusCode: 422,
-          error: errorType ?? 'validation_error',
-          detail: rawDetail,
-        );
-      case 429:
-        return RateLimitException(
-          message: message,
-          error: errorType ?? 'rate_limited',
-          detail: rawDetail,
-        );
-      case 502:
-        return ServerException(
-          message: message,
-          statusCode: 502,
-          error: errorType ?? 'llm_call_failed',
-          detail: rawDetail,
-        );
-      case 503:
-        if (errorType == 'circuit_open') {
-          return CircuitOpenException(
-            message: message,
-            error: errorType,
-            detail: rawDetail,
-          );
-        }
-        return ServiceUnavailableException(
-          message: message,
-          error: errorType ?? 'service_unavailable',
-          detail: rawDetail,
-        );
-      default:
-        return ServerException(
-          message: message,
-          statusCode: statusCode,
-          error: errorType ?? 'server_error',
-          detail: rawDetail,
-        );
-    }
+    final factory = _statusFactories[statusCode] ??
+        (msg, err, det) => ServerException(
+              message: msg,
+              statusCode: statusCode,
+              error: err ?? 'server_error',
+              detail: det,
+            );
+
+    return factory(message, errorType, rawDetail);
   }
 }

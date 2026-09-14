@@ -5,6 +5,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:omniscribe_client/core/theme/app_colors.dart';
 import 'package:omniscribe_client/core/theme/app_typography.dart';
 import 'package:omniscribe_client/data/models/process_settings.dart';
+import 'package:omniscribe_client/data/providers/document_selection_notifier.dart';
+import 'package:omniscribe_client/data/providers/job_orchestration_notifier.dart';
 import 'package:omniscribe_client/data/providers/settings_notifier.dart';
 import 'package:omniscribe_client/data/providers/settings_state.dart';
 import 'package:omniscribe_client/data/providers/workstation_notifier.dart';
@@ -104,10 +106,12 @@ class _WorkstationScreenState extends ConsumerState<WorkstationScreen> {
 
     final colors = context.colors;
     final wsState = ref.watch(workstationProvider);
+    final jobState = ref.watch(jobOrchestrationProvider);
     final notifier = ref.read(workstationProvider.notifier);
 
     final hasDoc = wsState.hasDocument;
-    final selectedBBox = wsState.selectedBBox;
+    final selectionNotifier = ref.read(documentSelectionProvider.notifier);
+    final selectedBBox = ref.watch(documentSelectionProvider).selectedBBox;
 
     return Container(
       color: colors.background,
@@ -156,7 +160,7 @@ class _WorkstationScreenState extends ConsumerState<WorkstationScreen> {
                               Expanded(
                                 child: DocumentViewport(
                                   onBBoxSelected: (box) =>
-                                      notifier.selectBBox(box),
+                                      selectionNotifier.select(box),
                                 ),
                               ),
                               // Side BBox Inspector (if a box is selected)
@@ -166,7 +170,7 @@ class _WorkstationScreenState extends ConsumerState<WorkstationScreen> {
                                   width: inspectorWidth,
                                   child: BBoxInspector(
                                     bbox: selectedBBox,
-                                    onClose: () => notifier.selectBBox(null),
+                                    onClose: () => selectionNotifier.select(null),
                                   ),
                                 ),
                               ],
@@ -194,14 +198,14 @@ class _WorkstationScreenState extends ConsumerState<WorkstationScreen> {
                                       360.0, constraints.maxHeight * 0.5),
                                   child: DocumentViewport(
                                     onBBoxSelected: (box) =>
-                                        notifier.selectBBox(box),
+                                        selectionNotifier.select(box),
                                   ),
                                 ),
                                 if (selectedBBox != null) ...[
                                   const SizedBox(height: 12),
                                   BBoxInspector(
                                     bbox: selectedBBox,
-                                    onClose: () => notifier.selectBBox(null),
+                                    onClose: () => selectionNotifier.select(null),
                                   ),
                                 ],
                                 if (wsState.pageCount > 1) ...[
@@ -226,7 +230,7 @@ class _WorkstationScreenState extends ConsumerState<WorkstationScreen> {
           ),
 
           // Live Bottom Progress Dock
-          if (hasDoc || wsState.isProcessing) const BottomProgressDock(),
+          if (hasDoc || jobState.isProcessing) const BottomProgressDock(),
         ],
       ),
     );

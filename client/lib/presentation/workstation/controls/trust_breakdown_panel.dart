@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:omniscribe_client/core/theme/app_colors.dart';
 import 'package:omniscribe_client/core/theme/app_typography.dart';
+import 'package:omniscribe_client/data/providers/job_orchestration_notifier.dart';
 import 'package:omniscribe_client/data/providers/workstation_notifier.dart';
 import 'package:omniscribe_client/presentation/common/app_badge.dart';
 import 'package:omniscribe_client/presentation/common/app_card.dart';
@@ -18,8 +19,9 @@ class TrustBreakdownPanel extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final colors = context.colors;
     final wsState = ref.watch(workstationProvider);
-    final trust = wsState.trustSummary;
-    final quality = wsState.qualitySummary;
+    final job = ref.watch(jobOrchestrationProvider);
+    final trust = job.trustSummary;
+    final quality = job.qualitySummary;
 
     if (trust == null && quality == null && wsState.allBBoxes.isEmpty) {
       return AppCard(
@@ -43,8 +45,9 @@ class TrustBreakdownPanel extends ConsumerWidget {
 
     final int totalBlocks = trust?.blockCount ?? wsState.allBBoxes.length;
     final int flaggedBlocks = trust?.flaggedCount ?? 0;
-    final int repairedBlocks = wsState.repairedCount;
-    final int totalRetries = wsState.totalRetriesAttempted;
+    final int repairedBlocks =
+        job.repairedCount(wsState.documentRevisedCount);
+    final int totalRetries = job.totalRetriesAttempted;
 
     final AppBadgeVariant trustVariant = avgConfidence >= 0.85
         ? AppBadgeVariant.success

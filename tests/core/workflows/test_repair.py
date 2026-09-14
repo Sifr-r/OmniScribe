@@ -238,8 +238,10 @@ class TestTextLayerAgreementRepair:
         from omniscribe.core.workflows.hybrid_repair import run_repair_phase
 
         monkeypatch.setattr(
-            "omniscribe.core.workflows.hybrid_repair._decode_page_image",
-            lambda image_b64: Image.effect_noise((64, 64), 64).convert("RGB"),
+            "omniscribe.core.workflows.hybrid_repair.decode_base64_image",
+            lambda image_b64, mode=None: Image.effect_noise((64, 64), 64).convert(
+                "RGB"
+            ),
         )
 
         class _StubOCR:
@@ -336,14 +338,14 @@ class TestRepairPhasePageDecode:
 
         decode_calls: list[object] = []
 
-        def fake_decode(image_b64: object) -> Image.Image:
+        def fake_decode(image_b64: object, mode: str | None = None) -> Image.Image:
             decode_calls.append(image_b64)
             # Noisy texture: crop_for_ocr_from_image returns None for
             # mostly-uniform regions, which would skip the re-OCR call.
             return Image.effect_noise((64, 64), 64).convert("RGB")
 
         monkeypatch.setattr(
-            "omniscribe.core.workflows.hybrid_repair._decode_page_image",
+            "omniscribe.core.workflows.hybrid_repair.decode_base64_image",
             fake_decode,
         )
 

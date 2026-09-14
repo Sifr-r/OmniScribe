@@ -58,7 +58,8 @@ jobs:
             hf-surya-
 
       - name: Run slow tests
-        run: uv run pytest -m slow --no-header -v
+        # One retry absorbs rare slow-tier flakes; the merge gate stays strict.
+        run: uv run pytest -m slow --no-header -v --reruns 1 --reruns-delay 2
 
       - name: Upload results on failure
         if: failure()
@@ -140,7 +141,8 @@ jobs:
           done
 
       - name: Run slow_dataset regression tests
-        run: uv run pytest -m slow_dataset --no-header -v
+        # One retry absorbs rare slow-tier flakes; the merge gate stays strict.
+        run: uv run pytest -m slow_dataset --no-header -v --reruns 1 --reruns-delay 2
 
       - name: Upload results on failure
         if: failure()

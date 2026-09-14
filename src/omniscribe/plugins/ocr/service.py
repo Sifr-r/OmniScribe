@@ -113,6 +113,95 @@ class _OcrPayload:
     request: OCRRequest
 
 
+def _resolve_preflight_coordinates(
+    request: PreflightRequest | None,
+    settings_obj: Any,
+    config: Mapping[str, Any] | None = None,
+) -> tuple[str, str, str]:
+    """Resolve target API base, API key, and model from request overrides, settings, or config.
+
+    Hierarchy:
+    1. Explicit request override
+    2. settings.api_base / settings.llm_api_base
+    3. config["api_base"]
+    4. Empty string fallback
+    """
+    req_base = (
+        request.api_base.strip()
+        if request and request.api_base and request.api_base.strip()
+        else None
+    )
+    req_key = (
+        request.api_key.strip()
+        if request and request.api_key and request.api_key.strip()
+        else None
+    )
+    req_model = (
+        request.model.strip()
+        if request and request.model and request.model.strip()
+        else None
+    )
+
+    def _get_setting_str(attr: str) -> str:
+        val = getattr(settings_obj, attr, None)
+        if isinstance(val, str) and val.strip():
+            return val.strip()
+        return ""
+
+    cfg = config if config is not None else {}
+
+    target_api_base = (
+        req_base
+        or _get_setting_str("api_base")
+        or _get_setting_str("llm_api_base")
+        or cfg.get("api_base", "")
+    )
+    target_api_base = (
+        target_api_base.strip() if isinstance(target_api_base, str) else ""
+    )
+
+    target_api_key = (
+        req_key
+        or _get_setting_str("api_key")
+        or _get_setting_str("llm_api_key")
+        or cfg.get("api_key", "")
+    )
+    target_api_key = target_api_key.strip() if isinstance(target_api_key, str) else ""
+
+    target_model = (
+        req_model
+        or _get_setting_str("model")
+        or _get_setting_str("llm_model")
+        or cfg.get("model", "")
+    )
+    target_model = target_model.strip() if isinstance(target_model, str) else ""
+
+    return target_api_base, target_api_key, target_model
+
+
+async def _probe_vlm_server(
+    api_base: str,
+    api_key: str,
+) -> list[str]:
+    """Construct ephemeral AsyncOpenAI client, probe loaded models, and ensure client closure."""
+    import openai
+
+    from omniscribe.core.ocr.client import _list_loaded_model_ids
+
+    client = openai.AsyncOpenAI(
+        base_url=api_base,
+        api_key=api_key or "lm-studio",
+    )
+    try:
+        return await _list_loaded_model_ids(client, api_base)
+    finally:
+        close_method = getattr(client, "close", None)
+        if callable(close_method):
+            res = close_method()
+            if asyncio.iscoroutine(res):
+                await res
+
+
 class OCRServiceImpl:
     """Concrete OCRService: bridges HTTP onto ``OCRPipeline``."""
 
@@ -642,61 +731,13 @@ class OCRServiceImpl:
         if request is None and (api_base or api_key or model):
             request = PreflightRequest(api_base=api_base, api_key=api_key, model=model)
 
-        req_base = (
-            request.api_base.strip()
-            if request and request.api_base and request.api_base.strip()
-            else None
-        )
-        req_key = (
-            request.api_key.strip()
-            if request and request.api_key and request.api_key.strip()
-            else None
-        )
-        req_model = (
-            request.model.strip()
-            if request and request.model and request.model.strip()
-            else None
-        )
-
         settings_obj = getattr(self, "settings", None) or getattr(
             self, "_settings", None
         )
-
-        def _get_setting_str(attr: str) -> str:
-            val = getattr(settings_obj, attr, None)
-            if isinstance(val, str) and val.strip():
-                return val.strip()
-            return ""
-
-        target_api_base = (
-            req_base
-            or _get_setting_str("api_base")
-            or _get_setting_str("llm_api_base")
-            or (self._config.get("api_base", "") if hasattr(self, "_config") else "")
+        config = self._config if hasattr(self, "_config") else None
+        target_api_base, target_api_key, target_model = _resolve_preflight_coordinates(
+            request, settings_obj, config
         )
-        if isinstance(target_api_base, str):
-            target_api_base = target_api_base.strip()
-        else:
-            target_api_base = ""
-
-        target_api_key = (
-            req_key
-            or _get_setting_str("api_key")
-            or _get_setting_str("llm_api_key")
-            or (self._config.get("api_key", "") if hasattr(self, "_config") else "")
-        )
-        if isinstance(target_api_key, str):
-            target_api_key = target_api_key.strip()
-        else:
-            target_api_key = ""
-
-        target_model = (
-            req_model
-            or _get_setting_str("model")
-            or _get_setting_str("llm_model")
-            or (self._config.get("model", "") if hasattr(self, "_config") else "")
-        )
-        target_model = target_model.strip() if isinstance(target_model, str) else ""
 
         if not target_api_base or not target_model:
             return PreflightResponse(
@@ -720,16 +761,10 @@ class OCRServiceImpl:
                     detail=f"SSRF blocked: {check.reason}",
                 )
 
-        from openai import AsyncOpenAI
+        from omniscribe.core.ocr.client import _model_in_loaded
 
-        from omniscribe.core.ocr.client import _list_loaded_model_ids, _model_in_loaded
-
-        client = AsyncOpenAI(
-            base_url=target_api_base,
-            api_key=target_api_key or "lm-studio",
-        )
         try:
-            loaded = await _list_loaded_model_ids(client, target_api_base)
+            loaded = await _probe_vlm_server(target_api_base, target_api_key)
             if _model_in_loaded(target_model, loaded):
                 return PreflightResponse(
                     loaded=True,
@@ -753,12 +788,6 @@ class OCRServiceImpl:
                 loaded_models=[],
                 detail=f"Endpoint unreachable: {exc}",
             )
-        finally:
-            close_method = getattr(client, "close", None)
-            if callable(close_method):
-                res = close_method()
-                if asyncio.iscoroutine(res):
-                    await res
 
     def update_config(self, updates: Mapping[str, Any]) -> dict[str, Any]:
         """Update runtime service configuration and LLM provider coordinates.
@@ -934,11 +963,8 @@ def event_entry(event: Event) -> dict[str, Any]:
     }
 
 
-OCRService = OCRServiceImpl
-
 __all__ = [
     "SSE_KEEPALIVE_SECONDS",
-    "OCRService",
     "OCRServiceImpl",
     "event_entry",
 ]

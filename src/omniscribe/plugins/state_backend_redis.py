@@ -65,13 +65,6 @@ _LOGGER = logging.getLogger("omniscribe.plugins.state_backend_redis")
 #: if the same Redis instance is shared with other apps.
 _KEY_PREFIX = "omniscribe:"
 
-#: Score offset for the channel index. We want to expire by
-#: ``created_at + ttl_seconds`` (not just ``created_at``), so we
-#: add the TTL at ``ZADD`` time. The score is the expiration
-#: epoch, which lets ``prune_expired_channels`` do
-#: ``ZRANGEBYSCORE 0 now``.
-_CHANNEL_EXPIRY_SCORE: float = 0.0  # score == expiry epoch; placeholder
-
 #: Lua script for the atomic ``consume_channel`` operation. The
 #: script does a single round-trip; server-side atomicity means
 #: two concurrent ``consume_channel`` calls are guaranteed to see
@@ -236,6 +229,14 @@ class RedisStateBackend:
     """
 
     def __init__(self, redis_url: str, redis_tls: bool = False) -> None:
+        """Construct the backend and register the ``consume_channel`` Lua script.
+
+        The redis-py client (and connection pool) are built up front so
+        a misconfigured URL surfaces the parse error here rather than
+        at the first :meth:`open` ping. ``redis_tls`` is auto-detected
+        from a ``rediss://`` URL so callers only have to set it
+        explicitly when fronting Redis with an SSL-terminating proxy.
+        """
         self._redis_url = redis_url
         self._redis_tls = redis_tls or redis_url.startswith("rediss://")
         # Imported lazily so test environments without the redis
@@ -521,6 +522,12 @@ class RedisStateBackend:
         return deleted
 
     async def delete_artifact(self, id: str) -> None:
+        """Delete both the metadata and blob keys for ``id`` in one round-trip.
+
+        Either or both keys may be missing (the TTL might have already
+        expired one of them); ``DELETE`` on a missing key is a no-op
+        on the Redis side.
+        """
         await self._redis.delete(_meta_key(id), _blob_key(id))
 
     async def prune_expired_artifacts(self, now: float) -> int:
@@ -536,6 +543,7 @@ class RedisStateBackend:
     # -- Lifecycle ----------------------------------------------------------
 
     async def aclose(self) -> None:
+        """Close the Redis connection pool (idempotent one-shot close)."""
         # ``redis.asyncio.Redis`` from ``from_url`` owns a
         # connection pool. ``aclose`` closes the pool. The next
         # call on the client would raise; the Plugin's

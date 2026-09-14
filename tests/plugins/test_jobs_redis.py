@@ -136,6 +136,9 @@ async def test_job_queue_list_and_pagination(harness: dict[str, Any]) -> None:
     for i in range(5):
         h = await queue.submit({"index": i})
         job_ids.append(h.job_id)
+        # Windows ``time.time()`` resolution is ~15 ms (see the Phase 3.7
+        # note in test_jobs_plugin): this pause keeps consecutive
+        # ``created_at`` values distinct so list ordering is deterministic.
         await asyncio.sleep(0.01)
 
     # Page 1: limit 3
@@ -196,6 +199,9 @@ async def test_atomic_claim_fifo_order(harness: dict[str, Any]) -> None:
     queue: RedisJobQueue = harness["queue"]
 
     h1 = await queue.submit({"order": 1})
+    # Windows clock resolution (~15 ms, see the Phase 3.7 note in
+    # test_jobs_plugin): ensure h1's created_at < h2's so FIFO claim
+    # order is deterministic.
     await asyncio.sleep(0.01)
     h2 = await queue.submit({"order": 2})
 
@@ -410,8 +416,11 @@ async def test_progress_pubsub_cross_pod_fanout(harness: dict[str, Any]) -> None
         json.dumps(frame),
     )
 
-    # Allow pubsub listener task to process
-    await asyncio.sleep(0.05)
+    # Wait (bounded) for the pubsub listener task to forward the frame.
+    deadline = time.monotonic() + 5.0
+    while not mock_ws.sent_frames and time.monotonic() < deadline:
+        await asyncio.sleep(0.01)
+    assert mock_ws.sent_frames, "pubsub frame was never forwarded to the websocket"
 
     # Verify frame was received and forwarded to mock WebSocket
     assert len(mock_ws.sent_frames) == 1

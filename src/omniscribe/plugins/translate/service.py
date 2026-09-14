@@ -21,6 +21,7 @@ from typing import Any, ClassVar, Protocol
 
 from omniscribe.config import RuntimeSettings
 from omniscribe.core.block_tree import BlockNode
+from omniscribe.core.interfaces import JobQueueProtocol
 from omniscribe.core.llm.client import call_llm
 from omniscribe.core.llm.temperatures import (
     TEMPERATURE_EVALUATION,
@@ -332,7 +333,7 @@ class TranslationServiceImpl:
     def __init__(
         self,
         settings: RuntimeSettings,
-        queue: Any,
+        queue: JobQueueProtocol,
         store: Any,
         *,
         max_buffered_jobs: int = 500,
@@ -359,7 +360,12 @@ class TranslationServiceImpl:
             raise TranslateError(404, "not_found", "text artifact not found")
 
         submission_id = secrets.token_hex(16)
-        handle = await self._queue.submit(
+        enqueue_fn = getattr(self._queue, "enqueue", None) or getattr(
+            self._queue, "submit", None
+        )
+        if enqueue_fn is None:
+            raise RuntimeError("Job queue must implement enqueue or submit")
+        handle = await enqueue_fn(
             _TranslatePayload(submission_id=submission_id, request=request),
             request_meta={
                 "submission_id": submission_id,
@@ -498,7 +504,12 @@ class TranslationServiceImpl:
         return body
 
     async def job_status(self, job_id: str) -> dict[str, Any] | None:
-        record = await self._queue.status(job_id)
+        get_job_fn = getattr(self._queue, "get_job", None) or getattr(
+            self._queue, "status", None
+        )
+        if get_job_fn is None:
+            raise RuntimeError("Job queue must implement get_job or status")
+        record = await get_job_fn(job_id)
         if record is None:
             return None
         body = self.job_status_sync(record)
@@ -520,7 +531,12 @@ class TranslationServiceImpl:
 
     async def result(self, job_id: str, token: str) -> dict[str, Any] | None:
         """Token-redeeming async result fetch (ride-along; audit C-3/H-3)."""
-        record = await self._queue.status(job_id)
+        get_job_fn = getattr(self._queue, "get_job", None) or getattr(
+            self._queue, "status", None
+        )
+        if get_job_fn is None:
+            raise RuntimeError("Job queue must implement get_job or status")
+        record = await get_job_fn(job_id)
         if (
             record is None
             or record.status != "complete"

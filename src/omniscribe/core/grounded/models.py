@@ -85,7 +85,7 @@ class RepairableGroundedBackend(Protocol):
     per-crop mode) do NOT need to match this Protocol; the grounded
     engine falls back to a no-op repair path.
 
-    `image_base64` is the base64-encoded cropped image, exactly the
+    `image_b64` is the base64-encoded cropped image, exactly the
     shape the hybrid path uses for ``OCRProcessor.perform_ocr_on_crop``
     — backends that delegate to the same VLM client can pass the
     bytes through unchanged. `bbox` is normalized ``[x0, y0, x1, y1]``

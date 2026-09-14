@@ -31,6 +31,12 @@ class MemoryStateBackend:
     """Default in-process backend; blobs capped per artifact for safety."""
 
     def __init__(self) -> None:
+        """Initialize empty in-process dicts; safe to construct any time.
+
+        The backend is intentionally lock-free on construction: the
+        asyncio.Lock is created here so it binds to the running loop
+        that first awaits a method, but no other state is touched.
+        """
         self._lock = asyncio.Lock()
         self._artifacts: dict[str, ArtifactRecord] = {}
         self._blobs: dict[str, bytes] = {}
@@ -49,6 +55,12 @@ class MemoryStateBackend:
         blob: bytes,
         ttl_seconds: int,
     ) -> None:
+        """Store an artifact in process memory.
+
+        Raises ``ValueError`` if the blob exceeds the per-artifact
+        memory cap (256 MiB by default). The cap protects the process
+        from a runaway client uploading a multi-GB blob to RAM.
+        """
         if len(blob) > _MEMORY_BLOB_CAP_BYTES:
             raise ValueError(
                 f"artifact {id!r} exceeds the {_MEMORY_BLOB_CAP_BYTES}-byte "
@@ -66,6 +78,7 @@ class MemoryStateBackend:
             self._blobs[id] = blob
 
     async def get_artifact(self, id: str, token: str) -> ArtifactBlob | None:
+        """Return an artifact if the id+token pair matches, else ``None``."""
         async with self._lock:
             record = self._artifacts.get(id)
             if record is None or not secrets.compare_digest(record.token, token):
@@ -73,11 +86,13 @@ class MemoryStateBackend:
             return ArtifactBlob(record=record, blob=self._blobs[id])
 
     async def delete_artifact(self, id: str) -> None:
+        """Remove the artifact metadata and blob from memory (no-op if absent)."""
         async with self._lock:
             self._artifacts.pop(id, None)
             self._blobs.pop(id, None)
 
     async def prune_expired_artifacts(self, now: float) -> int:
+        """Drop artifacts whose TTL has elapsed. Returns the count pruned."""
         async with self._lock:
             expired = [
                 artifact_id
@@ -92,14 +107,17 @@ class MemoryStateBackend:
     # -- jobs -----------------------------------------------------------------
 
     async def upsert_job(self, record: JobRecord) -> None:
+        """Insert or replace the in-memory job record keyed by ``record.job_id``."""
         async with self._lock:
             self._jobs[record.job_id] = record
 
     async def get_job(self, job_id: str) -> JobRecord | None:
+        """Return the job record for ``job_id`` or ``None`` if absent."""
         async with self._lock:
             return self._jobs.get(job_id)
 
     async def list_jobs(self, *, limit: int = 100, offset: int = 0) -> list[JobRecord]:
+        """Return jobs newest-first, paginated by ``limit``/``offset``."""
         async with self._lock:
             ordered = sorted(
                 self._jobs.values(), key=lambda r: r.created_at, reverse=True
@@ -107,12 +125,14 @@ class MemoryStateBackend:
             return ordered[offset : offset + limit]
 
     async def clear_jobs(self) -> int:
+        """Remove every in-memory job record. Returns the count removed."""
         async with self._lock:
             count = len(self._jobs)
             self._jobs.clear()
             return count
 
     async def delete_job(self, job_id: str) -> None:
+        """Remove a single job record (no-op if absent)."""
         async with self._lock:
             self._jobs.pop(job_id, None)
 
@@ -121,6 +141,7 @@ class MemoryStateBackend:
     async def put_channel(
         self, channel_id: str, session_token: str, job_id: str, ttl_seconds: int
     ) -> None:
+        """Create or replace a progress channel record (consumed=False)."""
         async with self._lock:
             self._channels[channel_id] = ChannelRecord(
                 channel_id=channel_id,
@@ -131,12 +152,14 @@ class MemoryStateBackend:
             )
 
     async def get_channel(self, channel_id: str) -> ChannelRecord | None:
+        """Return the channel record or ``None``. Does NOT consume."""
         async with self._lock:
             return self._channels.get(channel_id)
 
     async def consume_channel(
         self, channel_id: str, session_token: str
     ) -> ChannelRecord | None:
+        """Return + atomically mark the channel as consumed if the token matches."""
         async with self._lock:
             record = self._channels.get(channel_id)
             if (
@@ -149,10 +172,12 @@ class MemoryStateBackend:
             return record
 
     async def delete_channel(self, channel_id: str) -> None:
+        """Remove the channel record (no-op if absent)."""
         async with self._lock:
             self._channels.pop(channel_id, None)
 
     async def prune_expired_channels(self, now: float) -> int:
+        """Drop channels whose TTL has elapsed. Returns the count pruned."""
         async with self._lock:
             expired = [
                 channel_id
@@ -164,7 +189,7 @@ class MemoryStateBackend:
             return len(expired)
 
     async def aclose(self) -> None:
-        return None
+        """No-op: the in-memory backend has no external resources to release."""
 
 
 __all__ = ["MemoryStateBackend"]

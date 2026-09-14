@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:omniscribe_client/core/theme/app_colors.dart';
 import 'package:omniscribe_client/core/theme/app_typography.dart';
+import 'package:omniscribe_client/data/providers/job_orchestration_notifier.dart';
 import 'package:omniscribe_client/data/providers/workstation_notifier.dart';
 import 'package:omniscribe_client/data/providers/workstation_state.dart';
 import 'package:omniscribe_client/presentation/common/app_button.dart';
@@ -20,19 +21,20 @@ class BottomProgressDock extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final colors = context.colors;
     final wsState = ref.watch(workstationProvider);
+    final job = ref.watch(jobOrchestrationProvider);
     final notifier = ref.read(workstationProvider.notifier);
 
-    final isProcessing = wsState.isProcessing;
-    final stage = wsState.stage;
-    final percent = wsState.percent;
-    final percentInt = wsState.percentInt;
-    final statusMsg = wsState.statusMessage;
+    final isProcessing = job.isProcessing;
+    final stage = job.stage;
+    final percent = job.percent;
+    final percentInt = job.percentInt;
+    final statusMsg = job.statusMessage;
 
-    final processedBlocks = wsState.processedBlocks;
-    final totalBlocks = wsState.totalBlocks;
-    final retries = wsState.totalRetriesAttempted;
-    final repaired = wsState.repairedCount;
-    final avgConf = wsState.avgConfidence;
+    final processedBlocks = job.processedBlocks;
+    final totalBlocks = job.totalBlocks;
+    final retries = job.totalRetriesAttempted;
+    final repaired = job.repairedCount(wsState.documentRevisedCount);
+    final avgConf = job.avgConfidence;
 
     // Sprint 3 / H-1 audit fix: wrap the dock in a Semantics node
     // with `liveRegion: true` so screen readers announce progress
@@ -67,7 +69,7 @@ class BottomProgressDock extends ConsumerWidget {
           // 1. Stage Stepper Row
           SingleChildScrollView(
             scrollDirection: Axis.horizontal,
-            child: _buildStageStepper(colors, wsState),
+            child: _buildStageStepper(colors, job),
           ),
           const SizedBox(height: 10),
 
@@ -218,10 +220,10 @@ class BottomProgressDock extends ConsumerWidget {
   }
 
   Widget _buildStageStepper(
-      AppColorScheme colors, WorkstationState state) {
+      AppColorScheme colors, JobOrchestrationState job) {
     const stages = WorkstationState.pipelineStages;
-    final currentIdx = state.currentStageIndex;
-    final isDone = state.stage == 'Complete';
+    final currentIdx = job.currentStageIndex;
+    final isDone = job.stage == 'Complete';
     // When `currentStageIndex == -1` the active stage is not part of the
     // pipeline (e.g. Idle / Error / Cancelled). Treat the same as "no active
     // step" — every connector is dim, no node is highlighted.

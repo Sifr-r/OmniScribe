@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel
-
 from omniscribe.harness.context import Context
-from omniscribe.harness.plugin import Plugin
+from omniscribe.harness.plugin import EmptySchema, Plugin
 from omniscribe.plugins.artifacts import ArtifactStore
 from omniscribe.plugins.jobs import JobQueue, TranslationJobRunner
 from omniscribe.plugins.runtime import RuntimeService
@@ -16,14 +14,10 @@ from omniscribe.plugins.translate.service import (
 )
 
 
-class TranslateSchema(BaseModel):
-    """No configurable fields."""
-
-
 class TranslatePlugin(Plugin):
     """Client-frozen translation surface: sync, async (JobQueue), NLLB."""
 
-    Schema = TranslateSchema
+    Schema = EmptySchema
 
     async def apply(self, ctx: Context) -> None:
         queue = ctx.inject(JobQueue)

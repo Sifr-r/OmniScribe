@@ -247,8 +247,9 @@ class TestHybridDecodedCache:
         """
         from PIL import Image
 
+        from omniscribe.core.imaging.utils import decode_base64_image as real_decode
         from omniscribe.core.workflows import hybrid as hybrid_mod
-        from omniscribe.core.workflows.utils import _decode_page_image as real_decode
+        from omniscribe.core.workflows.stages import ocr as ocr_stage
 
         # Pre-existing baseline: ``_emit_page_callbacks`` is referenced in
         # ``_ocr_pages`` but not bound on HybridEngine in this test path
@@ -269,12 +270,13 @@ class TestHybridDecodedCache:
 
         decode_call_count = 0
 
-        def fake_decode_page_image(b64: str) -> Image.Image:
+        def fake_decode_page_image(b64: str, mode: str | None = None) -> Image.Image:
             nonlocal decode_call_count
             decode_call_count += 1
-            return real_decode(b64)
+            return real_decode(b64, mode=mode) if mode else real_decode(b64)
 
-        monkeypatch.setattr(hybrid_mod, "_decode_page_image", fake_decode_page_image)
+        # ``_ocr_per_box`` decodes via the ocr stage module's import.
+        monkeypatch.setattr(ocr_stage, "decode_base64_image", fake_decode_page_image)
 
         ocr = _StubOCR(crop_text="from crop")
         engine = _engine(ocr=ocr)
@@ -320,17 +322,18 @@ class TestHybridDecodedCache:
         """
         from PIL import Image
 
-        from omniscribe.core.workflows import hybrid as hybrid_mod
-        from omniscribe.core.workflows.utils import _decode_page_image as real_decode
+        from omniscribe.core.imaging.utils import decode_base64_image as real_decode
+        from omniscribe.core.workflows.stages import refine as refine_stage
 
         decode_call_count = 0
 
-        def fake_decode_page_image(b64: str) -> Image.Image:
+        def fake_decode_page_image(b64: str, mode: str | None = None) -> Image.Image:
             nonlocal decode_call_count
             decode_call_count += 1
-            return real_decode(b64)
+            return real_decode(b64, mode=mode) if mode else real_decode(b64)
 
-        monkeypatch.setattr(hybrid_mod, "_decode_page_image", fake_decode_page_image)
+        # ``refine_uncertain`` decodes via the refine stage module's import.
+        monkeypatch.setattr(refine_stage, "decode_base64_image", fake_decode_page_image)
 
         ocr = _StubOCR(crop_text="recovered")
         aligner = _StubAligner(alignment=lambda s, lines: [(b, "") for b, _ in s])
@@ -804,10 +807,10 @@ class TestHybridRefinePages:
         import threading
         import time
 
+        from omniscribe.core.imaging.utils import decode_base64_image
         from omniscribe.core.workflows.stages.refine import (
             HybridRefiner,
         )
-        from omniscribe.core.workflows.utils import _decode_page_image
 
         ocr = _StubOCR(crop_text="ok")
         refiner = HybridRefiner(ocr_processor=ocr)  # type: ignore[arg-type]
@@ -816,12 +819,12 @@ class TestHybridRefinePages:
         images_dict = {i: _make_tiny_b64_image() for i in range(3)}
         pages_structured = {i: [([0.1, 0.1, 0.9, 0.2], "")] for i in range(3)}
 
-        original = _decode_page_image
+        original = decode_base64_image
         active = 0
         peak = 0
         counter_lock = threading.Lock()
 
-        def _slow_decode(b64: str):
+        def _slow_decode(b64: str, mode: str | None = None):
             nonlocal active, peak
             with counter_lock:
                 active += 1
@@ -830,7 +833,7 @@ class TestHybridRefinePages:
                 # Sleep on a worker thread so the asyncio loop stays free
                 # for the gather() to schedule all three decodes.
                 time.sleep(0.05)
-                return original(b64)
+                return original(b64, mode=mode) if mode else original(b64)
             finally:
                 with counter_lock:
                     active -= 1
@@ -838,8 +841,8 @@ class TestHybridRefinePages:
         # Monkey-patch the module-level helper the refiner imports.
         import omniscribe.core.workflows.stages.refine as _refine_mod
 
-        orig_decode = _refine_mod._decode_page_image
-        _refine_mod._decode_page_image = _slow_decode  # type: ignore[assignment]
+        orig_decode = _refine_mod.decode_base64_image
+        _refine_mod.decode_base64_image = _slow_decode  # type: ignore[assignment]
         try:
             await refiner.refine_uncertain(
                 sparse_structured=pages_structured,  # type: ignore[arg-type]
@@ -848,7 +851,7 @@ class TestHybridRefinePages:
                 progress=None,
             )
         finally:
-            _refine_mod._decode_page_image = orig_decode
+            _refine_mod.decode_base64_image = orig_decode
 
         # Parallel gather -> peak reaches 3. Serial loop -> 1.
         assert peak == 3, f"expected parallel decode (peak=3), got {peak}"

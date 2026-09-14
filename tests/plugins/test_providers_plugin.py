@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 from omniscribe.config import load_settings
 from omniscribe.harness.context import Context
 from omniscribe.plugins import providers as prov
+from omniscribe.plugins._http import bearer_token
 from omniscribe.plugins.providers import (
     PROVIDER_TEMPLATES,
     ProviderManager,
@@ -448,12 +449,14 @@ def test_provider_models_passes_resolved_key_to_discover_models() -> None:
 
 
 def test_bearer_token_helper() -> None:
-    assert prov._bearer_token("Bearer sk-test-token") == "sk-test-token"
-    assert prov._bearer_token("Bearer   sk-test-token  ") == "sk-test-token"
-    assert prov._bearer_token("Bearer ") == ""
-    assert prov._bearer_token("Basic dXNlcjpwYXNz") is None
-    assert prov._bearer_token(None) is None
-    assert prov._bearer_token("") is None
+    # `bearer_token` now lives in the shared `plugins._http` module (audit F10).
+    # `providers.py` re-exports nothing of its own for this helper.
+    assert bearer_token("Bearer sk-test-token") == "sk-test-token"
+    assert bearer_token("Bearer   sk-test-token  ") == "sk-test-token"
+    assert bearer_token("Bearer ") == ""
+    assert bearer_token("Basic dXNlcjpwYXNz") is None
+    assert bearer_token(None) is None
+    assert bearer_token("") is None
 
 
 async def test_plugin_registers_provider_manager_service() -> None:

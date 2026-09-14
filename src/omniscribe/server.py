@@ -28,6 +28,8 @@ from dotenv import load_dotenv
 from fastapi import HTTPException
 
 from omniscribe.config import RuntimeSettings, load_settings
+from omniscribe.plugins._http import plugin_error_exception_handler
+from omniscribe.plugins.errors import PluginError
 from omniscribe.utils import configure_logging  # noqa: F401  -- re-exported for tests
 from omniscribe.utils.structured_logging import _resolve_log_format
 
@@ -282,6 +284,16 @@ def create_app() -> ASGIApplication:
             content={"error": "bad_request", "detail": _sanitize_value_error(exc)},
         )
 
+    # Audit F2: collapse the byte-identical ``except XError as exc:
+    # return envelope(exc.status_code, exc.error, exc.detail)`` blocks that
+    # lived in every plugin route. Any :class:`PluginError` subclass
+    # (``DocumentsError``, ``TranslateError``, ``TranscribeError``,
+    # ``GlossaryError``, ...) is converted to the canonical ``{error,
+    # detail}`` envelope by a single handler.
+    @web_app.exception_handler(PluginError)
+    async def plugin_error_handler(request: Any, exc: PluginError) -> Any:
+        return await plugin_error_exception_handler(request, exc)
+
     # Audit D8: every error response across the API surface uses the
     # same ``{"error": <code>, "detail": <message>}`` envelope. The
     # catch-all, the ValueError handler, and the CircuitOpenError
@@ -337,13 +349,21 @@ def create_app() -> ASGIApplication:
 
 
 class LazyASGIApp:
-    """ASGI proxy that defers FastAPI imports until the server is used."""
+    """ASGI proxy that defers FastAPI imports until the server is used.
+
+    Wrapping the real FastAPI app lets ``omniscribe.server:app`` be
+    importable without triggering the (heavy + optional) FastAPI /
+    harness imports; the first real ASGI call is what pays the cost.
+    Tests that import the module without invoking the app stay fast.
+    """
 
     def __init__(self, factory: Callable[[], ASGIApplication]) -> None:
+        """Store the app factory; do not invoke it yet."""
         self._factory = factory
         self._app: ASGIApplication | None = None
 
     def _load(self) -> ASGIApplication:
+        """Build the underlying app on first access, then cache it."""
         if self._app is None:
             self._app = self._factory()
         return self._app
@@ -354,6 +374,14 @@ class LazyASGIApp:
         receive: ASGIReceive,
         send: ASGISend,
     ) -> None:
+        """Forward the ASGI call to the lazily-loaded app.
+
+        Catches the "request cancelled" exceptions that some
+        downstream code raises when a client disconnects mid-stream
+        and converts them to a structured 503 so the WebSocket close
+        handshake doesn't surface as an unhandled exception in the
+        operator log.
+        """
         try:
             await self._load()(scope, receive, send)
         except BaseException as exc:
@@ -412,6 +440,12 @@ def _sanitize_value_error(exc: Exception | str) -> str:
 
 
 def _detect_bind_host() -> str:
+    """Detect the configured bind host from env vars or ``--host`` CLI args.
+
+    Falls back to ``127.0.0.1`` when neither is set. Used by
+    :func:`_validate_runtime_settings` so the non-loopback bind check
+    sees the same value the operator actually launched the server with.
+    """
     """Detect the configured bind host from environment or command-line arguments."""
     for env_var in ("OMNISCRIBE_HOST", "UVICORN_HOST", "HOST"):
         val = os.environ.get(env_var)
@@ -520,6 +554,7 @@ def _validate_runtime_settings(
 
 
 def _parse_host(value: str) -> str:
+    """Validate the ``--host`` CLI argument (non-empty after stripping)."""
     host = value.strip()
     if not host:
         raise argparse.ArgumentTypeError("host must not be empty")
@@ -527,6 +562,7 @@ def _parse_host(value: str) -> str:
 
 
 def _parse_port(value: str) -> int:
+    """Validate the ``--port`` CLI argument (integer in ``[1, 65535]``)."""
     try:
         port = int(value)
     except ValueError as exc:
@@ -555,6 +591,13 @@ def _parse_workers(value: str) -> int:
 
 
 def main(argv: Sequence[str] | None = None) -> None:
+    """Console-script entry point (``omniscribe-server``).
+
+    Parses CLI args, validates runtime settings (refusing to bind
+    non-loopback without an auth token, etc.), eagerly loads the
+    FastAPI app to surface any boot-time errors before uvicorn takes
+    over, then hands control to ``uvicorn.run``.
+    """
     load_dotenv()
     parser = argparse.ArgumentParser(
         description="Local LLM PDF OCR web server (FastAPI + WebSocket progress).",

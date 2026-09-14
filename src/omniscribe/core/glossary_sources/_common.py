@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-import base64
-import binascii
 import re
 from collections import Counter
 from typing import Any
 
 from defusedxml import ElementTree as _DefusedElementTree
 from defusedxml.common import DefusedXmlException
+
+from omniscribe.utils.env import parse_bool
 
 from .encoding import decode_bytes
 from .summary import GlossaryImportSummary
@@ -79,17 +79,6 @@ def entry_dict(
     return item
 
 
-def parse_bool(value: Any) -> bool:
-    """Parse common CSV/JSON boolean spellings without truthiness surprises."""
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, (int, float)):
-        return bool(value)
-    if isinstance(value, str):
-        return value.strip().lower() in {"1", "true", "yes", "y", "on"}
-    return False
-
-
 def finalize(
     entries: list[dict[str, object]],
     *,
@@ -132,14 +121,6 @@ def language_matches(value: str | None, wanted: str) -> bool:
     actual = value.replace("_", "-").split("-", 1)[0].lower()
     expected = wanted.replace("_", "-").split("-", 1)[0].lower()
     return actual == expected
-
-
-def decode_base64(value: str) -> bytes:
-    """Decode a strict inline base64 payload."""
-    try:
-        return base64.b64decode(value, validate=True)
-    except (ValueError, binascii.Error) as exc:
-        raise ValueError("inline_bytes_b64 is not valid base64.") from exc
 
 
 def validate_identifier(value: str, field_name: str) -> str:

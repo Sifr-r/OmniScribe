@@ -15,6 +15,16 @@ if TYPE_CHECKING:
     from omniscribe.harness.context import Context
 
 
+class EmptySchema(BaseModel):
+    """Sentinel :class:`pydantic.BaseModel` for plugins with no configuration.
+
+    Replaces the byte-identical ``class XSchema(BaseModel): 'No configurable
+    fields.'`` placeholders that used to live in every plugin's ``plugin.py``
+    (audit F5). Point a plugin's ``Schema`` at this class to declare it takes
+    no user-facing configuration.
+    """
+
+
 class Plugin:
     """Base class for every harness plugin."""
 

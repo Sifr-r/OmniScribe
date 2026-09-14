@@ -433,13 +433,13 @@ class TestProcessorSystemPromptWiring:
         captured: dict = {}
 
         async def fake_chat(
-            prompt, image_base64, *, timeout, max_tokens, system_prompt=None
+            prompt, image_b64, *, timeout, max_tokens, system_prompt=None
         ):
             captured["system_prompt"] = system_prompt
             return "# Page"
 
         proc._chat = fake_chat  # type: ignore[assignment]
-        await proc.perform_ocr(image_base64="aW1hZ2U=")
+        await proc.perform_ocr(image_b64="aW1hZ2U=")
         assert captured["system_prompt"] is None
 
     async def test_handwriting_page_path_sends_handwriting_system_message(self):
@@ -448,13 +448,13 @@ class TestProcessorSystemPromptWiring:
         captured: dict = {}
 
         async def fake_chat(
-            prompt, image_base64, *, timeout, max_tokens, system_prompt=None
+            prompt, image_b64, *, timeout, max_tokens, system_prompt=None
         ):
             captured["system_prompt"] = system_prompt
             return "# Page"
 
         proc._chat = fake_chat  # type: ignore[assignment]
-        await proc.perform_ocr(image_base64="aW1hZ2U=")
+        await proc.perform_ocr(image_b64="aW1hZ2U=")
         assert captured["system_prompt"] is HANDWRITING_OCR_SYSTEM_MESSAGE
 
     async def test_crop_path_sends_ocr_system_message(self):
@@ -462,13 +462,13 @@ class TestProcessorSystemPromptWiring:
         captured: dict = {}
 
         async def fake_chat(
-            prompt, image_base64, *, timeout, max_tokens, system_prompt=None
+            prompt, image_b64, *, timeout, max_tokens, system_prompt=None
         ):
             captured["system_prompt"] = system_prompt
             return "text"
 
         proc._chat = fake_chat  # type: ignore[assignment]
-        await proc.perform_ocr_on_crop(image_base64="aW1hZ2U=")
+        await proc.perform_ocr_on_crop(image_b64="aW1hZ2U=")
         assert captured["system_prompt"] is OCR_SYSTEM_MESSAGE
 
     async def test_crop_repair_hint_appended_and_default_temperature_kept(self):
@@ -477,7 +477,7 @@ class TestProcessorSystemPromptWiring:
 
         async def fake_chat(
             prompt,
-            image_base64,
+            image_b64,
             *,
             timeout,
             max_tokens,
@@ -490,7 +490,7 @@ class TestProcessorSystemPromptWiring:
 
         proc._chat = fake_chat  # type: ignore[method-assign]
         await proc.perform_ocr_on_crop(
-            image_base64="aW1hZ2U=",
+            image_b64="aW1hZ2U=",
             repair_hint="REPAIR PASS 2: your previous reading of this region was:\nwrong text",
         )
         assert "REPAIR PASS 2" in captured["prompt"]
@@ -503,7 +503,7 @@ class TestProcessorSystemPromptWiring:
 
         async def fake_chat(
             prompt,
-            image_base64,
+            image_b64,
             *,
             timeout,
             max_tokens,
@@ -515,7 +515,7 @@ class TestProcessorSystemPromptWiring:
 
         proc._chat = fake_chat  # type: ignore[method-assign]
         await proc.perform_ocr_on_crop(
-            image_base64="aW1hZ2U=", repair_hint="hint", temperature=0.2
+            image_b64="aW1hZ2U=", repair_hint="hint", temperature=0.2
         )
         assert captured["temperature"] == 0.2
 
@@ -526,7 +526,7 @@ class TestProcessorSystemPromptWiring:
 
         async def fake_chat(
             prompt,
-            image_base64,
+            image_b64,
             *,
             timeout,
             max_tokens,
@@ -536,7 +536,7 @@ class TestProcessorSystemPromptWiring:
             return responses.pop(0)
 
         proc._chat = fake_chat  # type: ignore[method-assign]
-        lines = await proc.perform_ocr(image_base64="aW1hZ2U=", self_correction=True)
+        lines = await proc.perform_ocr(image_b64="aW1hZ2U=", self_correction=True)
         assert lines == ["First pass text"]
 
     async def test_page_correction_fallback_keeps_first_pass(self):
@@ -549,7 +549,7 @@ class TestProcessorSystemPromptWiring:
 
         async def fake_chat(
             prompt,
-            image_base64,
+            image_b64,
             *,
             timeout,
             max_tokens,
@@ -559,7 +559,7 @@ class TestProcessorSystemPromptWiring:
             return responses.pop(0)
 
         proc._chat = fake_chat  # type: ignore[method-assign]
-        lines = await proc.perform_ocr(image_base64="aW1hZ2U=", self_correction=True)
+        lines = await proc.perform_ocr(image_b64="aW1hZ2U=", self_correction=True)
         assert lines == ["First pass text"]
 
     async def test_page_correction_valid_result_replaces_first_pass(self):
@@ -568,7 +568,7 @@ class TestProcessorSystemPromptWiring:
 
         async def fake_chat(
             prompt,
-            image_base64,
+            image_b64,
             *,
             timeout,
             max_tokens,
@@ -578,7 +578,7 @@ class TestProcessorSystemPromptWiring:
             return responses.pop(0)
 
         proc._chat = fake_chat  # type: ignore[method-assign]
-        lines = await proc.perform_ocr(image_base64="aW1hZ2U=", self_correction=True)
+        lines = await proc.perform_ocr(image_b64="aW1hZ2U=", self_correction=True)
         assert lines == ["Corrected page text"]
 
     async def test_crop_correction_fallback_keeps_first_pass(self):
@@ -590,7 +590,7 @@ class TestProcessorSystemPromptWiring:
 
         async def fake_chat(
             prompt,
-            image_base64,
+            image_b64,
             *,
             timeout,
             max_tokens,
@@ -601,7 +601,7 @@ class TestProcessorSystemPromptWiring:
 
         proc._chat = fake_chat  # type: ignore[method-assign]
         result = await proc.perform_ocr_on_crop(
-            image_base64="aW1hZ2U=", self_correction=True
+            image_b64="aW1hZ2U=", self_correction=True
         )
         assert result == "first crop text"
 
@@ -611,7 +611,7 @@ class TestProcessorSystemPromptWiring:
 
         async def fake_chat(
             prompt,
-            image_base64,
+            image_b64,
             *,
             timeout,
             max_tokens,
@@ -622,7 +622,7 @@ class TestProcessorSystemPromptWiring:
 
         proc._chat = fake_chat  # type: ignore[method-assign]
         result = await proc.perform_ocr_on_crop(
-            image_base64="aW1hZ2U=", self_correction=True
+            image_b64="aW1hZ2U=", self_correction=True
         )
         assert result == "first crop text"
 
@@ -632,7 +632,7 @@ class TestProcessorSystemPromptWiring:
 
         async def fake_chat(
             prompt,
-            image_base64,
+            image_b64,
             *,
             timeout,
             max_tokens,
@@ -643,7 +643,7 @@ class TestProcessorSystemPromptWiring:
 
         proc._chat = fake_chat  # type: ignore[method-assign]
         result = await proc.perform_ocr_on_crop(
-            image_base64="aW1hZ2U=", self_correction=True
+            image_b64="aW1hZ2U=", self_correction=True
         )
         assert result == "corrected crop text"
 
@@ -660,7 +660,7 @@ class TestProcessorSystemPromptWiring:
         captured: list = []
 
         async def fake_chat(
-            prompt, image_base64, *, timeout, max_tokens, system_prompt=None
+            prompt, image_b64, *, timeout, max_tokens, system_prompt=None
         ):
             captured.append(system_prompt)
             return "text"
@@ -669,7 +669,7 @@ class TestProcessorSystemPromptWiring:
         # No Tesseract available in the test env, so dual_engine is
         # effectively a no-op for the draft. The system message is
         # still set, and the call returns the result of fake_chat.
-        await proc.perform_ocr_on_crop(image_base64="aW1hZ2U=", dual_engine=True)
+        await proc.perform_ocr_on_crop(image_b64="aW1hZ2U=", dual_engine=True)
         assert all(sp is DUAL_ENGINE_OCR_SYSTEM_MESSAGE for sp in captured)
         assert captured  # at least one chat call happened
 
@@ -683,13 +683,13 @@ class TestProcessorSystemPromptWiring:
         captured: dict = {}
 
         async def fake_chat(
-            prompt, image_base64, *, timeout, max_tokens, system_prompt=None
+            prompt, image_b64, *, timeout, max_tokens, system_prompt=None
         ):
             captured["system_prompt"] = system_prompt
             return "# Page"
 
         proc._chat = fake_chat  # type: ignore[assignment]
-        await proc.perform_ocr(image_base64="aW1hZ2U=")
+        await proc.perform_ocr(image_b64="aW1hZ2U=")
         assert captured["system_prompt"] is None
 
     async def test_olmocr_model_drops_system_message_on_crop_path(self):
@@ -697,13 +697,13 @@ class TestProcessorSystemPromptWiring:
         captured: dict = {}
 
         async def fake_chat(
-            prompt, image_base64, *, timeout, max_tokens, system_prompt=None
+            prompt, image_b64, *, timeout, max_tokens, system_prompt=None
         ):
             captured["system_prompt"] = system_prompt
             return "text"
 
         proc._chat = fake_chat  # type: ignore[assignment]
-        await proc.perform_ocr_on_crop(image_base64="aW1hZ2U=")
+        await proc.perform_ocr_on_crop(image_b64="aW1hZ2U=")
         assert captured["system_prompt"] is None
 
     async def test_olmocr_model_drops_system_message_on_dual_engine_path(self):
@@ -711,13 +711,13 @@ class TestProcessorSystemPromptWiring:
         captured: list = []
 
         async def fake_chat(
-            prompt, image_base64, *, timeout, max_tokens, system_prompt=None
+            prompt, image_b64, *, timeout, max_tokens, system_prompt=None
         ):
             captured.append(system_prompt)
             return "text"
 
         proc._chat = fake_chat  # type: ignore[assignment]
-        await proc.perform_ocr_on_crop(image_base64="aW1hZ2U=", dual_engine=True)
+        await proc.perform_ocr_on_crop(image_b64="aW1hZ2U=", dual_engine=True)
         assert all(sp is None for sp in captured)
         assert captured  # at least one chat call happened
 
@@ -766,7 +766,7 @@ class TestChatRetrySingleLayer:
             with pytest.raises(LLMCallError):
                 await proc._chat(
                     prompt="OCR this",
-                    image_base64="aW1hZ2U=",
+                    image_b64="aW1hZ2U=",
                     timeout=60.0,
                     max_tokens=4096,
                 )
@@ -799,7 +799,7 @@ class TestChatRetrySingleLayer:
             mock_call.return_value = "extracted text"
             res = await client.chat(
                 prompt="read this",
-                image_base64="fakeb64data",
+                image_b64="fakeb64data",
                 timeout=30.0,
                 max_tokens=1000,
             )

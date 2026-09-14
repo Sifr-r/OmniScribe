@@ -227,11 +227,15 @@ class _SmartPresetSelectorState extends State<SmartPresetSelector> {
                   final preset = SmartPreset.allPresets[index];
                   final isSelected = activePreset?.id == preset.id;
 
-                  return _PresetCardItem(
-                    preset: preset,
-                    isSelected: isSelected,
-                    isCompact: isCompact,
-                    onTap: () => widget.onPresetSelected(preset),
+                  return Tooltip(
+                    message: preset.description,
+                    waitDuration: const Duration(milliseconds: 300),
+                    child: _PresetCardItem(
+                      preset: preset,
+                      isSelected: isSelected,
+                      isCompact: isCompact,
+                      onTap: () => widget.onPresetSelected(preset),
+                    ),
                   );
                 },
               );

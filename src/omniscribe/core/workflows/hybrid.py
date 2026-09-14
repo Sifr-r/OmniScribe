@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 from PIL import Image
 
 from omniscribe.core.aligner import HybridAligner
-from omniscribe.core.document import BBox, DenseMode, SpellcheckMode
+from omniscribe.core.document import DenseMode, SpellcheckMode
 from omniscribe.core.imaging.page_preprocess import (
     PagePreprocessingOptions,
     PagePreprocessor,
@@ -48,7 +48,6 @@ from omniscribe.core.workflows.stages import (
 )
 from omniscribe.core.workflows.utils import (
     DETECT_CHUNK_SIZE,
-    _decode_page_image,
     _drop_refined_duplicates,
     _estimate_confidence,
     _is_refinable,
@@ -70,7 +69,6 @@ __all__ = [
     "DETECT_CHUNK_SIZE",
     "_DECODED_CACHE_MAX_ENTRIES",
     "HybridEngine",
-    "_decode_page_image",
     "_drop_refined_duplicates",
     "_estimate_confidence",
     "_is_refinable",
@@ -80,6 +78,31 @@ __all__ = [
 
 
 class HybridEngine(EngineBase):
+    """Surya-layout + VLM-OCR + DP-alignment hybrid OCR engine.
+
+    The engine drives five phases per :meth:`execute` call:
+
+    1. **Convert** — PDF/image → per-page images (with optional
+       preprocessing: deskew, denoise, contrast normalization).
+    2. **Layout** — Surya batched layout detection + recall boosters
+       (whitespace, embedded text layer) to widen the box set.
+    3. **OCR** — concurrent VLM OCR across the (sparse + dense)
+       page set, capped by ``concurrency``.
+    4. **Refine** (optional) — second VLM pass on empty/uncertain
+       boxes; this is the slower-but-more-accurate mode referenced in
+       ``docs/benchmarks.md``.
+    5. **Repair** (optional, Phase 4b) — quality repair of
+       below-target blocks (spec §3.2).
+    6. **Finalize** — assemble the ``DocumentResult``, run document
+       processors, apply the trust layer, optionally route by quality,
+       and emit the sandwich PDF / block tree.
+
+    Each phase is delegated to a single-responsibility sub-stage
+    (``HybridConverter``, ``HybridLayoutDetector``, ``HybridOcrRunner``,
+    ``HybridRefiner``); the engine itself is a phase driver. See
+    ``docs/ARCHITECTURE.md`` for the full pipeline topology.
+    """
+
     def __init__(
         self,
         aligner: HybridAligner,
@@ -93,6 +116,19 @@ class HybridEngine(EngineBase):
         recall_booster: WhitespaceRecallBooster | None = None,
         text_layer_recall: PdfTextLayerRecall | None = None,
     ) -> None:
+        """Wire dependencies into the four sub-stages and initialize run state.
+
+        ``aligner``, ``ocr_processor``, ``pdf_handler``,
+        ``output_writer`` are required. ``document_processors``,
+        ``page_preprocessor``, ``block_callbacks``, ``trust_orchestrator``,
+        ``recall_booster``, and ``text_layer_recall`` are optional
+        feature toggles (each is a no-op when ``None``).
+
+        Stage dependencies are set ONCE here; they are NOT re-pushed
+        per :meth:`execute` call. ``last_failed_pages`` is shared by
+        reference with the OCR runner so in-place mutations are
+        visible without re-injection.
+        """
         super().__init__(
             output_writer=output_writer,
             document_processors=document_processors,
@@ -207,6 +243,41 @@ class HybridEngine(EngineBase):
         repair_options: RepairOptions | None = None,
         cancel_check: CancelCheck | None = None,
     ) -> dict[int, list[str]]:
+        """Run the full hybrid OCR pipeline on ``input_path`` → ``output_path``.
+
+        Parameters
+        ----------
+        input_path:
+            Path to a PDF or image. The converter handles both via
+            ``pdf_handler``.
+        output_path:
+            Destination for the sandwich PDF / artifact. The exact
+            format is decided by ``output_writer``.
+        pages:
+            Optional page range (e.g. ``"1-3,5,7-9"``). ``None`` means
+            the full document.
+        concurrency:
+            Max in-flight VLM calls for the OCR + refine phases. The
+            local overhead stages are CPU-bound and parallelize
+            independently of this value.
+        refine:
+            Enable the second-pass VLM refine for empty / uncertain
+            boxes (slower, measurably more accurate).
+        dense_threshold / dense_mode:
+            Control which pages get the expensive dense-box VLM pass.
+            ``AUTO`` picks per-page based on layout density.
+        spellcheck / cross_page:
+            Document-processor toggles applied during finalize.
+        repair_options:
+            Phase-4b quality repair (off when ``None`` or ``.enabled=False``).
+        cancel_check:
+            Callable polled between phases; raises :class:`OCRCancelled`
+            on truthy return.
+
+        Returns
+        -------
+        ``dict[int, list[str]]`` — page-num → list of warning strings.
+        """
         if not isinstance(dense_mode, DenseMode):
             raise ValueError(
                 f"dense_mode must be a DenseMode instance; got {dense_mode!r}"
@@ -404,36 +475,6 @@ class HybridEngine(EngineBase):
         finally:
             if tl_open and tl is not None:
                 await asyncio.to_thread(tl.close)
-
-    async def _apply_recall(
-        self,
-        *,
-        chunk_pages: Sequence[int],
-        images_dict: dict[int, str],
-        chunk_boxes: list[list[BBox]],
-        decoded_get: Callable[[int], Image.Image | None] | None = None,
-        decoded_put: Callable[[int, Image.Image], None] | None = None,
-    ) -> tuple[list[list[BBox]], int, int]:
-        # Phase 3.3 (4.5): removed re-injection of ``recall_booster``.
-        return await self.layout_detector.apply_recall(
-            chunk_pages=chunk_pages,
-            images_dict=images_dict,
-            chunk_boxes=chunk_boxes,
-            decoded_get=decoded_get or self._decoded_get,
-            decoded_put=decoded_put or self._decoded_put,
-        )
-
-    async def _apply_text_layer_recall(
-        self,
-        *,
-        chunk_pages: Sequence[int],
-        chunk_boxes: list[list[BBox]],
-    ) -> tuple[list[list[BBox]], int, int]:
-        # Phase 3.3 (4.5): removed re-injection of ``text_layer_recall``.
-        return await self.layout_detector.apply_text_layer_recall(
-            chunk_pages=chunk_pages,
-            chunk_boxes=chunk_boxes,
-        )
 
     def _select_dense_pages(
         self,

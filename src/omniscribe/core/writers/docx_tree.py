@@ -10,12 +10,15 @@ from __future__ import annotations
 
 import contextlib
 import io
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, cast
 
 from docx import Document
 from docx.enum.table import WD_TABLE_ALIGNMENT
 from docx.shared import Inches, Pt, RGBColor
 
+from omniscribe.core.block_tree import block_type_str
+from omniscribe.core.writers._guard import TableDedup
 from omniscribe.core.writers.exporter_base import BaseDocumentExporter
 
 if TYPE_CHECKING:
@@ -42,116 +45,174 @@ def convert_tree_to_docx(tree: DocumentTree) -> io.BytesIO:
     style.font.name = "Arial"
     style.font.size = Pt(11)
 
-    rendered_tables: set[str | int] = set()
+    rendered_tables = TableDedup()
     for page in tree.pages:
         for node in page.children:
             if hasattr(node, "rows") and hasattr(node, "cells"):
-                rendered_tables.add(id(node))
-                if getattr(node, "block_id", None):
-                    rendered_tables.add(node.block_id)
+                rendered_tables.add(node)
             _render_block(doc, node, rendered_tables)
     for table in tree.tables:
-        if id(table) not in rendered_tables and (
-            not table.block_id or table.block_id not in rendered_tables
-        ):
-            _render_table(doc, table)
-            rendered_tables.add(id(table))
-            if table.block_id:
-                rendered_tables.add(table.block_id)
+        if table in rendered_tables:
+            continue
+        _render_table(doc, table)
+        rendered_tables.add(table)
     out = io.BytesIO()
     doc.save(out)
     out.seek(0)
     return out
 
 
+def _render_section_header(
+    doc: Any,
+    node: Any,
+    rendered_tables: TableDedup | None = None,
+) -> None:
+    level = max(1, min(6, getattr(node, "level", 1) or 1))
+    h = doc.add_heading(node.text, level=level)
+    h.paragraph_format.space_before = Pt(12)
+    h.paragraph_format.space_after = Pt(6)
+
+
+def _render_list_item(
+    doc: Any,
+    node: Any,
+    rendered_tables: TableDedup | None = None,
+) -> None:
+    style_name = "List Bullet" if getattr(node, "level", 0) == 0 else "List Bullet 2"
+    p = doc.add_paragraph(node.text, style=style_name)
+    p.paragraph_format.space_after = Pt(3)
+
+
+def _render_code(
+    doc: Any,
+    node: Any,
+    rendered_tables: TableDedup | None = None,
+) -> None:
+    p = doc.add_paragraph()
+    run = p.add_run(node.text)
+    run.font.name = "Courier New"
+    run.font.size = Pt(10)
+
+
+def _render_equation(
+    doc: Any,
+    node: Any,
+    rendered_tables: TableDedup | None = None,
+) -> None:
+    p = doc.add_paragraph()
+    p.alignment = 1  # CENTER
+    run = p.add_run("$ " + node.text + " $")
+    run.italic = True
+
+
+def _render_figure(
+    doc: Any,
+    node: Any,
+    rendered_tables: TableDedup | None = None,
+) -> None:
+    metadata = getattr(node, "metadata", {}) or {}
+    if metadata.get("image_bytes"):
+        p = doc.add_paragraph()
+        run = p.add_run()
+        with contextlib.suppress(Exception):
+            run.add_picture(io.BytesIO(metadata["image_bytes"]), width=Inches(5.5))
+    if getattr(node, "text", ""):
+        cap = doc.add_paragraph(node.text)
+        for r in cap.runs:
+            r.italic = True
+            r.font.size = Pt(10)
+            r.font.color.rgb = RGBColor(0x55, 0x55, 0x55)
+
+
+def _render_key_value(
+    doc: Any,
+    node: Any,
+    rendered_tables: TableDedup | None = None,
+) -> None:
+    metadata = getattr(node, "metadata", {}) or {}
+    p = doc.add_paragraph()
+    run = p.add_run(metadata.get("key", "") + ": ")
+    run.bold = True
+    p.add_run(getattr(node, "text", ""))
+
+
+def _render_table_block(
+    doc: Any,
+    node: Any,
+    rendered_tables: TableDedup | None = None,
+) -> None:
+    if rendered_tables is not None:
+        rendered_tables.add(node)
+    if hasattr(node, "cells") and getattr(node, "cells", None):
+        _render_table(doc, cast("TableNode", node))
+    elif hasattr(node, "text") and node.text:
+        p = doc.add_paragraph(node.text)
+        p.paragraph_format.space_after = Pt(6)
+
+
+def _render_paragraph(
+    doc: Any,
+    node: Any,
+    rendered_tables: TableDedup | None = None,
+) -> None:
+    p = doc.add_paragraph()
+    p.paragraph_format.space_after = Pt(6)
+    p.paragraph_format.line_spacing = 1.15
+    spans = getattr(node, "spans", None)
+    if not spans:
+        p.add_run(getattr(node, "text", ""))
+        return
+
+    for sp in spans:
+        run = p.add_run(sp.text)
+        if getattr(sp, "bold", False):
+            run.bold = True
+        if getattr(sp, "italic", False):
+            run.italic = True
+        if getattr(sp, "code", False):
+            run.font.name = "Courier New"
+
+
+def _render_noop(
+    doc: Any,
+    node: Any,
+    rendered_tables: TableDedup | None = None,
+) -> None:
+    """No-op renderer for header/footer/page_number blocks excluded from body."""
+    return
+
+
+_RENDER_DISPATCH: dict[str, Callable[..., None]] = {
+    "section_header": _render_section_header,
+    "list_item": _render_list_item,
+    "code": _render_code,
+    "equation": _render_equation,
+    "figure": _render_figure,
+    "key_value": _render_key_value,
+    "table": _render_table_block,
+    "paragraph": _render_paragraph,
+    "text": _render_paragraph,
+    "page_header": _render_noop,
+    "page_footer": _render_noop,
+    "page_number": _render_noop,
+}
+
+
 def _render_block(
     doc: Any,
     node: BlockNode | TableNode | Any,
-    rendered_tables: set[str | int] | None = None,
+    rendered_tables: TableDedup | None = None,
 ) -> None:
     if hasattr(node, "rows") and hasattr(node, "cells"):
         if rendered_tables is not None:
-            rendered_tables.add(id(node))
-            if getattr(node, "block_id", None):
-                rendered_tables.add(node.block_id)
+            rendered_tables.add(node)
         _render_table(doc, cast("TableNode", node))
         return
     if not hasattr(node, "block_type"):
         return
-    bt = (
-        node.block_type.value
-        if hasattr(node.block_type, "value")
-        else str(node.block_type)
-    )
-    if bt == "section_header":
-        level = max(1, min(6, getattr(node, "level", 1) or 1))
-        h = doc.add_heading(node.text, level=level)
-        h.paragraph_format.space_before = Pt(12)
-        h.paragraph_format.space_after = Pt(6)
-    elif bt == "list_item":
-        style_name = (
-            "List Bullet" if getattr(node, "level", 0) == 0 else "List Bullet 2"
-        )
-        p = doc.add_paragraph(node.text, style=style_name)
-        p.paragraph_format.space_after = Pt(3)
-    elif bt == "code":
-        p = doc.add_paragraph()
-        run = p.add_run(node.text)
-        run.font.name = "Courier New"
-        run.font.size = Pt(10)
-    elif bt == "equation":
-        p = doc.add_paragraph()
-        p.alignment = 1  # CENTER
-        run = p.add_run("$ " + node.text + " $")
-        run.italic = True
-    elif bt == "figure":
-        metadata = getattr(node, "metadata", {}) or {}
-        if metadata.get("image_bytes"):
-            p = doc.add_paragraph()
-            run = p.add_run()
-            with contextlib.suppress(Exception):
-                run.add_picture(io.BytesIO(metadata["image_bytes"]), width=Inches(5.5))
-        if getattr(node, "text", ""):
-            cap = doc.add_paragraph(node.text)
-            for r in cap.runs:
-                r.italic = True
-                r.font.size = Pt(10)
-                r.font.color.rgb = RGBColor(0x55, 0x55, 0x55)
-    elif bt == "table":
-        if rendered_tables is not None:
-            rendered_tables.add(id(node))
-            if getattr(node, "block_id", None):
-                rendered_tables.add(node.block_id)
-        if hasattr(node, "cells") and getattr(node, "cells", None):
-            _render_table(doc, cast("TableNode", node))
-        elif hasattr(node, "text") and node.text:
-            p = doc.add_paragraph(node.text)
-            p.paragraph_format.space_after = Pt(6)
-    elif bt in ("page_header", "page_footer", "page_number"):
-        # Don't render these as body content.
-        return
-    elif bt == "key_value":
-        metadata = getattr(node, "metadata", {}) or {}
-        p = doc.add_paragraph()
-        run = p.add_run(metadata.get("key", "") + ": ")
-        run.bold = True
-        p.add_run(getattr(node, "text", ""))
-    else:
-        p = doc.add_paragraph()
-        p.paragraph_format.space_after = Pt(6)
-        p.paragraph_format.line_spacing = 1.15
-        spans = getattr(node, "spans", None)
-        if spans:
-            for sp in spans:
-                run = p.add_run(sp.text)
-                if sp.bold:
-                    run.bold = True
-                if sp.italic:
-                    run.italic = True
-                if sp.code:
-                    run.font.name = "Courier New"
-        else:
-            p.add_run(getattr(node, "text", ""))
+    bt = block_type_str(node.block_type)
+    renderer = _RENDER_DISPATCH.get(bt, _render_paragraph)
+    renderer(doc, node, rendered_tables)
 
 
 def _render_table(doc: Any, table_node: TableNode | BlockNode | Any) -> None:

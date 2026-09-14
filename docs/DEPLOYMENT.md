@@ -268,7 +268,7 @@ Job artifacts in `/tmp/ocr_*` are removed by the startup sweep
 
 ## See Also
 
-- [README.md](README.md) — feature overview, install, web workspace
+- [README.md](../README.md) — feature overview, install, web workspace
 - [CHANGELOG.md](CHANGELOG.md) — version history and breaking changes
 - [SECURITY.md](SECURITY.md) — threat model, hardening checklist,
   vulnerability disclosure

@@ -593,8 +593,14 @@ class TestCancellationHandling:
         pages = _create_synthetic_page_images(count=3)
 
         cancelled_pages: list[str] = []
+        started = asyncio.Event()
+        started_count = 0
 
         async def _hanging_call(b64: str, _prompt: str | None = None) -> str:
+            nonlocal started_count
+            started_count += 1
+            if started_count == 3:
+                started.set()
             try:
                 await asyncio.sleep(10.0)
             except asyncio.CancelledError:
@@ -610,8 +616,9 @@ class TestCancellationHandling:
         ):
             mock_imgs.return_value = pages
             doc_task = asyncio.create_task(backend.ocr_document("doc.pdf"))
-            # Let workers start
-            await asyncio.sleep(0.01)
+            # Wait until all three page workers (concurrency=3) are in the
+            # hanging call, instead of guessing a wall-clock delay.
+            await asyncio.wait_for(started.wait(), timeout=5.0)
             # Cancel the parent task
             doc_task.cancel()
 

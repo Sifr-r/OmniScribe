@@ -45,9 +45,17 @@ async def test_registers_runtime_service_with_settings() -> None:
 async def test_mark_ready_flips_flag_and_emits_harness_ready() -> None:
     ctx, service = await _mount()
     seen: list[HarnessReady] = []
-    ctx.on(HarnessReady, lambda ev: seen.append(ev))  # type: ignore[arg-type]
+    emitted = asyncio.Event()
+
+    def _record(_ev: HarnessReady) -> None:
+        seen.append(_ev)
+        emitted.set()
+
+    ctx.on(HarnessReady, _record)  # type: ignore[arg-type]
     service.mark_ready()
-    await asyncio.sleep(0.01)
+    # mark_ready schedules the HarnessReady emission as a task; wait for
+    # the actual event rather than guessing a wall-clock delay.
+    await asyncio.wait_for(emitted.wait(), timeout=5.0)
     assert service.ready is True
     assert seen == [HarnessReady()]
     await ctx.dispose()

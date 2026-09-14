@@ -207,6 +207,9 @@ cython_debug/
 .mavis/
 .mavis
 
+# opencode agent scratch state (session logs, one-off verify scripts)
+.opencode/
+
 src/omniscribe/static/assets/
 
 # One-off planning docs and ephemeral tool output

@@ -83,29 +83,6 @@ class CompositePagePreprocessor:
         return PagePreprocessingResult(images=current_images, metadata=all_metadata)
 
 
-class HandwritingPagePreprocessor:
-    """Applies handwriting-specific preprocessing before layout detection and OCR."""
-
-    def preprocess(
-        self,
-        images: Mapping[int, str],
-        options: PagePreprocessingOptions,
-    ) -> PagePreprocessingResult:
-        from omniscribe.core.imaging.handwriting import (
-            HandwritingOptions,
-            preprocess_for_ocr,
-        )
-
-        # Use default handwriting options, triggered by the handwriting mode
-        hw_opts = HandwritingOptions(enabled=True)
-        processed: dict[int, str] = {}
-        metadata: dict[int, dict[str, object]] = {}
-        for page_index, image_b64 in images.items():
-            processed[page_index] = preprocess_for_ocr(image_b64, hw_opts)
-            metadata[page_index] = {"handwriting_preprocessed": True}
-        return PagePreprocessingResult(images=processed, metadata=metadata)
-
-
 class LocalPagePreprocessor:
     """Deterministic local image cleanup built from OpenCV and Pillow.
 
@@ -208,9 +185,6 @@ def _trim_border(image: Image.Image) -> tuple[Image.Image, dict[str, object]]:
         "original_width": image.width,
         "original_height": image.height,
     }
-
-
-_crop_cleanup = _trim_border
 
 
 def _normalize_contrast(array: np.ndarray) -> np.ndarray:

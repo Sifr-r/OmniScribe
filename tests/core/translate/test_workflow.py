@@ -12,6 +12,7 @@ import pytest
 from omniscribe.core.translate import nodes as translation_nodes
 from omniscribe.core.translate.config import (
     AsyncTranslationUnavailable,
+    TranslationError,
     TranslationSettings,
 )
 from omniscribe.core.translate.workflow import (
@@ -96,9 +97,9 @@ def test_get_translation_app_compiles_when_langgraph_available(
 def test_lazy_translation_app_delegates_to_get_translation_app(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """translation_app.invoke delegates directly to get_translation_app().invoke."""
+    """translation_app.invoke delegates to get_translation_app().ainvoke."""
     mock_app = MagicMock()
-    mock_app.invoke.return_value = {"translated_chunk": "Translated text"}
+    mock_app.ainvoke = AsyncMock(return_value={"translated_chunk": "Translated text"})
     monkeypatch.setattr(
         "omniscribe.core.translate.workflow.get_translation_app",
         lambda: mock_app,
@@ -110,7 +111,7 @@ def test_lazy_translation_app_delegates_to_get_translation_app(
     }
     result = translation_app.invoke(state)
     assert result == {"translated_chunk": "Translated text"}
-    mock_app.invoke.assert_called_once_with(state)
+    mock_app.ainvoke.assert_awaited_once_with(state)
 
 
 # ---------------------------------------------------------------------------
@@ -353,9 +354,11 @@ def test_run_translation_end_to_end_with_mocked_app(
 ) -> None:
     """run_translation invokes the translation app for each text chunk and combines results."""
     mock_app = MagicMock()
-    mock_app.invoke.side_effect = lambda state: {
-        "translated_chunk": f"Translated({state['source_chunk']})"
-    }
+
+    async def fake_ainvoke(state: TranslationState, *args: Any, **kwargs: Any) -> Any:
+        return {"translated_chunk": f"Translated({state['source_chunk']})"}
+
+    mock_app.ainvoke = AsyncMock(side_effect=fake_ainvoke)
 
     monkeypatch.setattr(
         "omniscribe.core.translate.workflow.get_translation_app",
@@ -368,4 +371,243 @@ def test_run_translation_end_to_end_with_mocked_app(
 
     result = run_translation("Dummy input", target_language="Spanish")
     assert result == "Translated(Chunk 1)\n\nTranslated(Chunk 2)"
-    assert mock_app.invoke.call_count == 2
+    assert mock_app.ainvoke.await_count == 2
+
+
+async def test_run_translation_bridges_running_loop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """run_translation works when called from inside a running event loop."""
+    mock_app = MagicMock()
+    mock_app.ainvoke = AsyncMock(return_value={"translated_chunk": "Bonjour"})
+    monkeypatch.setattr(
+        "omniscribe.core.translate.workflow.get_translation_app",
+        lambda: mock_app,
+    )
+
+    result = run_translation("Hello world", target_language="French")
+    assert result == "Bonjour"
+
+
+# ---------------------------------------------------------------------------
+# Translate/evaluate loop: retry convergence, fail-safe bookkeeping, failures
+# ---------------------------------------------------------------------------
+
+
+def _loop_settings(**overrides: Any) -> TranslationSettings:
+    kwargs: dict[str, Any] = {
+        "api_base": "https://example.test/v1",
+        "api_key": "test-key",
+        "model": "test-model",
+    }
+    kwargs.update(overrides)
+    return TranslationSettings(**kwargs)
+
+
+def _initial_state(settings: TranslationSettings) -> TranslationState:
+    return {
+        "source_chunk": "Hello world, this is a test.",
+        "target_language": "French",
+        "rag_context": [],
+        "translated_chunk": "",
+        "evaluation_score": 1.0,
+        "feedback": "",
+        "attempts": 0,
+        "settings": settings,
+    }
+
+
+async def _drive_loop(state: TranslationState) -> TranslationState:
+    """Drive the real nodes through the same cycle the compiled graph wires."""
+    settings = state["settings"]
+    for _ in range(settings.max_attempts):
+        state.update(await translate_node(state))  # type: ignore[arg-type]
+        state.update(await evaluate_node(state))  # type: ignore[arg-type]
+        if should_refine(state) == "end":
+            break
+    return state
+
+
+async def test_translation_loop_converges_after_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A below-acceptance score retries with feedback; a passing score exits."""
+    scores = iter([0.4, 0.95])
+    translations = iter(["Une premiere sortie ici.", "Une meilleure sortie ici."])
+    prompts: list[str] = []
+
+    async def fake_translate_llm(**kwargs: Any) -> str:
+        prompts.append(kwargs["messages"][0]["content"])
+        return next(translations)
+
+    async def fake_judge(state: Any) -> tuple[float, str]:
+        return next(scores), "needs work"
+
+    monkeypatch.setattr(translation_nodes, "call_llm", fake_translate_llm)
+    monkeypatch.setattr(translation_nodes, "_llm_evaluate_translation", fake_judge)
+
+    state = await _drive_loop(
+        _initial_state(_loop_settings(acceptance_score=0.8, max_attempts=3))
+    )
+
+    assert state["attempts"] == 2
+    assert state["translated_chunk"] == "Une meilleure sortie ici."
+    assert state["best_score"] == 0.95
+    assert len(prompts) == 2
+    assert "needs work" in prompts[1]
+
+
+async def test_translation_loop_max_attempts_keeps_best(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """At max attempts the best-scoring attempt wins, not the last one."""
+    scores = iter([0.5, 0.3])
+    translations = iter(["Bonne tentative numero un.", "Sortie finale bien pire."])
+
+    async def fake_translate_llm(**kwargs: Any) -> str:
+        return next(translations)
+
+    async def fake_judge(state: Any) -> tuple[float, str]:
+        return next(scores), "scored"
+
+    monkeypatch.setattr(translation_nodes, "call_llm", fake_translate_llm)
+    monkeypatch.setattr(translation_nodes, "_llm_evaluate_translation", fake_judge)
+
+    state = await _drive_loop(
+        _initial_state(_loop_settings(acceptance_score=0.9, max_attempts=2))
+    )
+
+    assert state["attempts"] == 2
+    assert state["translated_chunk"] == "Bonne tentative numero un."
+    assert state["best_score"] == 0.5
+    assert not state.get("failed")
+
+
+async def test_translation_loop_reverts_to_best_after_late_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An LLM error after a good attempt reverts to the best translation."""
+    calls = {"n": 0}
+
+    async def flaky_llm(**kwargs: Any) -> str:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return "Premiere bonne sortie de test."
+        raise RuntimeError("socket hangup")
+
+    async def fake_judge(state: Any) -> tuple[float, str]:
+        return 0.6, "scored"
+
+    monkeypatch.setattr(translation_nodes, "call_llm", flaky_llm)
+    monkeypatch.setattr(translation_nodes, "_llm_evaluate_translation", fake_judge)
+
+    state = await _drive_loop(
+        _initial_state(_loop_settings(acceptance_score=0.9, max_attempts=3))
+    )
+
+    assert state["attempts"] == 2
+    assert state["translated_chunk"] == "Premiere bonne sortie de test."
+    assert state["feedback"] == "Reverted to best attempt."
+    assert not state.get("failed")
+
+
+async def test_translation_loop_marks_failed_when_errors_exhaust_attempts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every attempt erroring at max attempts marks the state failed."""
+    judge_calls: list[Any] = []
+
+    async def failing_llm(**kwargs: Any) -> str:
+        raise RuntimeError("connection refused")
+
+    async def fake_judge(state: Any) -> tuple[float, str]:
+        judge_calls.append(state)
+        return 1.0, ""
+
+    monkeypatch.setattr(translation_nodes, "call_llm", failing_llm)
+    monkeypatch.setattr(translation_nodes, "_llm_evaluate_translation", fake_judge)
+
+    state = await _drive_loop(
+        _initial_state(_loop_settings(acceptance_score=0.8, max_attempts=1))
+    )
+
+    assert state["attempts"] == 1
+    assert state["failed"] is True
+    assert "[Translation Error: connection refused]" in state["translated_chunk"]
+    assert judge_calls == []
+
+
+def test_run_translation_raises_translation_error_on_failed_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """run_translation raises TranslationError when the graph marks the chunk failed."""
+    mock_app = MagicMock()
+    mock_app.ainvoke = AsyncMock(
+        return_value={"failed": True, "translated_chunk": "[Translation Error: boom]"}
+    )
+    monkeypatch.setattr(
+        "omniscribe.core.translate.workflow.get_translation_app",
+        lambda: mock_app,
+    )
+
+    with pytest.raises(TranslationError, match="Translation failed"):
+        run_translation("Hello world", target_language="French")
+
+
+# ---------------------------------------------------------------------------
+# Real compiled LangGraph app (requires the async-translation extra)
+# ---------------------------------------------------------------------------
+
+
+def test_compiled_graph_happy_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The compiled graph wires retrieve → translate → evaluate → end."""
+    pytest.importorskip("langgraph")
+    get_translation_app.cache_clear()
+    try:
+
+        async def fake_translate_llm(**kwargs: Any) -> str:
+            return "Bonjour le monde, ceci est un essai."
+
+        async def fake_judge(state: Any) -> tuple[float, str]:
+            return 0.95, "faithful"
+
+        monkeypatch.setattr(translation_nodes, "call_llm", fake_translate_llm)
+        monkeypatch.setattr(translation_nodes, "_llm_evaluate_translation", fake_judge)
+
+        state = _initial_state(_loop_settings())
+        result = translation_app.invoke(state)
+
+        assert result["translated_chunk"] == "Bonjour le monde, ceci est un essai."
+        assert result["attempts"] == 1
+        assert result["best_score"] == 0.95
+    finally:
+        get_translation_app.cache_clear()
+
+
+def test_compiled_graph_retry_loop_exits_on_acceptance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The conditional edge retranslates on a low score and exits on acceptance."""
+    pytest.importorskip("langgraph")
+    get_translation_app.cache_clear()
+    try:
+        scores = iter([0.4, 0.95])
+        translations = iter(["Une premiere sortie ici.", "Une meilleure sortie ici."])
+
+        async def fake_translate_llm(**kwargs: Any) -> str:
+            return next(translations)
+
+        async def fake_judge(state: Any) -> tuple[float, str]:
+            return next(scores), "needs work"
+
+        monkeypatch.setattr(translation_nodes, "call_llm", fake_translate_llm)
+        monkeypatch.setattr(translation_nodes, "_llm_evaluate_translation", fake_judge)
+
+        state = _initial_state(_loop_settings(acceptance_score=0.8, max_attempts=3))
+        result = translation_app.invoke(state)
+
+        assert result["attempts"] == 2
+        assert result["translated_chunk"] == "Une meilleure sortie ici."
+        assert result["best_score"] == 0.95
+    finally:
+        get_translation_app.cache_clear()

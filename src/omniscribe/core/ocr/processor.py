@@ -35,6 +35,7 @@ from typing import TYPE_CHECKING, Any
 from openai import AsyncOpenAI
 
 from omniscribe.config import load_settings
+from omniscribe.core.imaging.utils import decode_b64_bytes, decode_base64_image
 from omniscribe.core.ocr.chat_client import ChatClient
 from omniscribe.core.ocr.client import (
     _format_model_not_loaded,
@@ -294,7 +295,7 @@ class OCRProcessor:
 
     async def perform_ocr(
         self,
-        image_base64: str,
+        image_b64: str,
         self_correction: bool = False,
         binarize: bool = False,
         dual_engine: bool = False,
@@ -321,14 +322,14 @@ class OCRProcessor:
         discarded good OCR whenever the correction pass came back blank).
         """
         if binarize:
-            image_base64 = await asyncio.to_thread(
-                self._apply_adaptive_threshold, image_base64
+            image_b64 = await asyncio.to_thread(
+                self._apply_adaptive_threshold, image_b64
             )
 
         handwriting_mode = getattr(self, "handwriting_mode", False)
         prompt = HANDWRITING_PAGE_PROMPT if handwriting_mode else OLMOCR_PAGE_PROMPT
         if dual_engine:
-            draft = await asyncio.to_thread(self._get_tesseract_draft, image_base64)
+            draft = await asyncio.to_thread(self._get_tesseract_draft, image_b64)
             if draft:
                 prompt = fill_dual_engine_page(draft)
 
@@ -347,7 +348,7 @@ class OCRProcessor:
 
         text = await self._chat(
             prompt,
-            image_base64,
+            image_b64,
             timeout=self.page_timeout_s,
             max_tokens=self.page_max_tokens,
             system_prompt=page_system,
@@ -360,7 +361,7 @@ class OCRProcessor:
             correction_prompt = fill_correction_page(text)
             corrected = await self._chat(
                 correction_prompt,
-                image_base64,
+                image_b64,
                 timeout=self.page_timeout_s,
                 max_tokens=self.page_max_tokens,
                 system_prompt=self._resolve_page_system(
@@ -384,14 +385,14 @@ class OCRProcessor:
     async def _run_trocr_arbitration(
         self,
         vlm_result: str,
-        image_base64: str,
+        image_b64: str,
         vlm_confidence: float,
     ) -> str:
         """Arbitrate between VLM and TrOCR outputs; return the higher-confidence text.
 
         Args:
             vlm_result: Text from VLM model
-            image_base64: Base64-encoded image for TrOCR
+            image_b64: Base64-encoded image for TrOCR
             vlm_confidence: Confidence score from VLM heuristic
 
         Returns:
@@ -404,13 +405,13 @@ class OCRProcessor:
         try:
             from omniscribe.core.ocr.trocr import _heuristic_confidence
 
-            image_bytes = base64.b64decode(image_base64)
+            image_bytes = decode_b64_bytes(image_b64)
             trocr_res = await self.trocr_engine.recognize(image_bytes)
             if trocr_res.confidence > vlm_confidence:
                 correction_prompt = fill_dual_engine_crop(trocr_res.text)
                 vlm_corrected = await self._chat(
                     correction_prompt,
-                    image_base64,
+                    image_b64,
                     timeout=self.crop_timeout_s,
                     max_tokens=self.crop_max_tokens,
                     system_prompt=self._resolve_crop_system(
@@ -442,7 +443,7 @@ class OCRProcessor:
 
     async def perform_ocr_on_crop(
         self,
-        image_base64: str,
+        image_b64: str,
         self_correction: bool = False,
         binarize: bool = False,
         dual_engine: bool = False,
@@ -464,14 +465,14 @@ class OCRProcessor:
         bumps it per retry attempt).
         """
         if binarize:
-            image_base64 = await asyncio.to_thread(
-                self._apply_adaptive_threshold, image_base64
+            image_b64 = await asyncio.to_thread(
+                self._apply_adaptive_threshold, image_b64
             )
 
         handwriting_mode = getattr(self, "handwriting_mode", False)
         prompt = HANDWRITING_CROP_PROMPT if handwriting_mode else CROP_PROMPT
         if dual_engine:
-            draft = await asyncio.to_thread(self._get_tesseract_draft, image_base64)
+            draft = await asyncio.to_thread(self._get_tesseract_draft, image_b64)
             if draft:
                 prompt = fill_dual_engine_crop(draft)
 
@@ -489,7 +490,7 @@ class OCRProcessor:
             chat_kwargs["temperature"] = temperature
         text = await self._chat(
             prompt,
-            image_base64,
+            image_b64,
             timeout=self.crop_timeout_s,
             max_tokens=self.crop_max_tokens,
             system_prompt=crop_system,
@@ -503,7 +504,7 @@ class OCRProcessor:
             correction_prompt = fill_correction_crop(text)
             corrected = await self._chat(
                 correction_prompt,
-                image_base64,
+                image_b64,
                 timeout=self.crop_timeout_s,
                 max_tokens=self.crop_max_tokens,
                 system_prompt=crop_system,
@@ -528,16 +529,14 @@ class OCRProcessor:
 
             vlm_conf = _heuristic_confidence(result)
             if vlm_conf < self.confidence_threshold:
-                result = await self._run_trocr_arbitration(
-                    result, image_base64, vlm_conf
-                )
+                result = await self._run_trocr_arbitration(result, image_b64, vlm_conf)
 
         return result
 
     async def _chat(
         self,
         prompt: str,
-        image_base64: str,
+        image_b64: str,
         *,
         timeout: float,
         max_tokens: int,
@@ -566,26 +565,23 @@ class OCRProcessor:
         self._chat_client.circuit_breaker = self.circuit_breaker
         return await self._chat_client.chat(
             prompt,
-            image_base64,
+            image_b64,
             timeout=timeout,
             max_tokens=max_tokens,
             system_prompt=system_prompt,
             temperature=temperature,
         )
 
-    def _get_tesseract_draft(self, image_base64: str) -> str:
+    def _get_tesseract_draft(self, image_b64: str) -> str:
         try:
-            import io
-
             import pytesseract
-            from PIL import Image
 
-            image_bytes = base64.b64decode(image_base64)
-            # H1 audit fix: ``with`` block guarantees buffer close.
-            with Image.open(io.BytesIO(image_bytes)) as img:
-                # Fallback to multiple common languages (or just Arabic/English for this workload)
-                draft: str = pytesseract.image_to_string(img, lang="ara+eng")
-                return draft.strip()
+            # H1 audit fix: ``decode_base64_image`` opens + closes the
+            # underlying buffer via a ``with`` block internally (audit F7).
+            img = decode_base64_image(image_b64)
+            # Fallback to multiple common languages (or just Arabic/English for this workload)
+            draft: str = pytesseract.image_to_string(img, lang="ara+eng")
+            return draft.strip()
         except (ImportError, OSError, RuntimeError, ValueError) as exc:
             # ``ImportError`` covers the soft-dep case where pytesseract or
             # PIL is not installed in this environment; ``RuntimeError``
@@ -653,7 +649,7 @@ class OCRProcessor:
             handwriting_mode=handwriting_mode, dual_engine=dual_engine
         )
 
-    def _apply_adaptive_threshold(self, image_base64: str) -> str:
+    def _apply_adaptive_threshold(self, image_b64: str) -> str:
         """Adaptive mean threshold using only PIL (no OpenCV dependency).
 
         Approximates ``cv2.adaptiveThreshold(..., ADAPTIVE_THRESH_GAUSSIAN_C,
@@ -667,7 +663,7 @@ class OCRProcessor:
             import numpy as np
             from PIL import Image, ImageFilter
 
-            img = Image.open(io.BytesIO(base64.b64decode(image_base64))).convert("L")
+            img = decode_base64_image(image_b64, mode="L")
 
             # Local mean via box blur (radius 10 ~ block_size 21).
             local_mean = img.filter(ImageFilter.BoxBlur(radius=10))
@@ -692,7 +688,7 @@ class OCRProcessor:
                 exc,
                 exc_info=True,
             )
-            return image_base64
+            return image_b64
 
 
 __all__ = ["OCRProcessor"]

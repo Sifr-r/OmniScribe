@@ -197,6 +197,27 @@ class _FakeJobQueue:
     async def status(self, job_id: str):
         return self.records.get(job_id)
 
+    # JobQueueProtocol surface: the service accepts the modern protocol
+    # methods as well as the legacy submit/status doubles, and these
+    # aliases route through the legacy ones.
+    async def enqueue(
+        self,
+        request: Any,
+        *,
+        request_meta: dict[str, Any] | None = None,
+        input_path: str | None = None,
+    ) -> Any:
+        return await self.submit(request, request_meta=request_meta)
+
+    async def get_job(self, job_id: str) -> Any:
+        return await self.status(job_id)
+
+    async def cancel_job(self, job_id: str) -> bool:
+        return False
+
+    async def list_jobs(self, *, limit: int = 100, offset: int = 0) -> list[Any]:
+        return list(self.records.values())
+
 
 class _FakeStore:
     """Artifact store double keyed by id → (token, blob, content_type)."""
@@ -349,7 +370,7 @@ async def test_job_status_maps_all_queue_states(
     impl._store.blobs["r-1"] = ("rt", store_blob, "application/json")
     # JobRecord carries a dict field and is unhashable, so the fake queue
     # is keyed by job_id: plant the record, then poll by id.
-    impl._queue.records[complete_record.job_id] = complete_record
+    _q.records[complete_record.job_id] = complete_record
     complete = await impl.job_status(complete_record.job_id)
     assert complete is not None
     assert complete["state"] == "SUCCESS"

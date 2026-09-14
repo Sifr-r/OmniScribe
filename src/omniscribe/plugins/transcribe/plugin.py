@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel
-
 from omniscribe.harness.context import Context
-from omniscribe.harness.plugin import Plugin
+from omniscribe.harness.plugin import EmptySchema, Plugin
 from omniscribe.plugins.artifacts import ArtifactStore
 from omniscribe.plugins.runtime import RuntimeService
 from omniscribe.plugins.transcribe.routes import build_transcribe_router
@@ -15,14 +13,10 @@ from omniscribe.plugins.transcribe.service import (
 )
 
 
-class TranscribeSchema(BaseModel):
-    """No configurable fields."""
-
-
 class TranscribePlugin(Plugin):
     """Client-frozen transcription surface: sync + config + discovery."""
 
-    Schema = TranscribeSchema
+    Schema = EmptySchema
 
     async def apply(self, ctx: Context) -> None:
         store = ctx.inject(ArtifactStore)

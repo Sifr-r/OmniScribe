@@ -180,6 +180,7 @@ include = [
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=1.4.0",
+    "pytest-rerunfailures>=15.0",
     "ruff>=0.16.2",
     "mypy>=1.9.0",
     "hypothesis>=6.100.0",
@@ -271,12 +272,16 @@ select = [
     "SIM", # flake8-simplify (ternary, match, etc.)
     "RUF", # ruff-specific rules
     "G",   # flake8-logging-format (catches f-strings in logger.*)
+    "C90", # mccabe complexity
 ]
 ignore = [
     "E501", # line too long (handled by formatter)
     "B008", # do not perform function calls in argument defaults (standard in FastAPI)
     "G004", # f-strings in logging — too noisy in this codebase's existing style
 ]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 15
 
 [tool.ruff.lint.per-file-ignores]
 # Pre-existing violations surfaced when SIM/RUF/G were enabled. Each entry
@@ -306,6 +311,29 @@ ignore = [
 # belongs to a follow-up PR (the audit's B904 cleanup is its own
 # item). Per-file-ignore keeps CI green while the project standardizes.
 "src/omniscribe/plugins/ocr/plugin.py" = ["B904"]
+"src/omniscribe/plugins/ocr/routes.py" = ["B904"]
+# Pre-existing legacy functions exceeding cyclomatic complexity 15.
+# Targeted for decomposition in upcoming sprints.
+"src/omniscribe/core/aligner.py" = ["C901"]
+"src/omniscribe/core/chunking/chunker.py" = ["C901"]
+"src/omniscribe/core/chunking/taxonomy.py" = ["C901"]
+"src/omniscribe/core/glossary_sources/encoding.py" = ["C901"]
+"src/omniscribe/core/grounded/parsers.py" = ["C901"]
+"src/omniscribe/core/lexicon/migration.py" = ["C901"]
+"src/omniscribe/core/processors/table.py" = ["C901"]
+"src/omniscribe/core/readers/docx_reader.py" = ["C901"]
+"src/omniscribe/core/readers/html_reader.py" = ["C901"]
+"src/omniscribe/core/readers/markdown_reader.py" = ["C901"]
+"src/omniscribe/core/translate/config.py" = ["C901"]
+"src/omniscribe/core/workflows/stages/ocr.py" = ["C901"]
+"src/omniscribe/core/workflows/stages/refine.py" = ["C901"]
+"src/omniscribe/core/writers/html.py" = ["C901"]
+"src/omniscribe/middleware/upload_limit.py" = ["C901"]
+"src/omniscribe/plugins/glossary/routes.py" = ["C901"]
+"src/omniscribe/plugins/ocr/service.py" = ["C901"]
+"src/omniscribe/plugins/progress.py" = ["C901"]
+"src/omniscribe/plugins/transcribe/config_store.py" = ["C901"]
+"src/omniscribe/utils/security.py" = ["C901"]
 "tests/**/*.py" = [
     "RUF002", # × in docstring comments
     "RUF003", # × in inline comments

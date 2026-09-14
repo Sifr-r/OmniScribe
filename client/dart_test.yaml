@@ -1,0 +1,20 @@
+# Configuration for the integration test runner.
+#
+# Tags defined here are matched against the `tags` list of every
+# `testWidgets(...)` block. `flutter test --tags <name>` will only run tests
+# whose tag list contains `<name>`; tests tagged with other names are
+# skipped. That lets us run the suite once on Windows and once on web-server
+# without dragging native-only tests through the headless web runner (and
+# vice versa).
+#
+# Conventions used by integration_test/:
+#   windows — tests that need native shell integration (file pickers, drag
+#             drop, dialogs, Ctrl+Enter / Ctrl+O)
+#   web     — tests that must also pass under web-server (tab navigation,
+#             theme toggle, modals, settings, keyboard navigation that goes
+#             through Flutter's CallbackShortcuts layer)
+tags:
+  windows:
+    description: "Native-shell integration tests for the Windows desktop build."
+  web:
+    description: "Integration tests that also run under the headless web-server target."

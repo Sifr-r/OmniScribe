@@ -2,14 +2,12 @@
 
 Phase 3.8 (4.8, 2026-09-05): ``sanitize_job_error`` was extracted to
 :mod:`omniscribe.plugins.ocr.services.error_sanitization` and renamed
-``sanitize_job_error``. The ``OCRService`` and ``OCRServiceImpl``
-imports remain on ``omniscribe.plugins.ocr.service`` (those are the
-actual service class and its alias).
+``sanitize_job_error``.
 """
 
 from __future__ import annotations
 
-from omniscribe.plugins.ocr.service import OCRService, OCRServiceImpl
+from omniscribe.plugins.ocr.service import OCRServiceImpl
 from omniscribe.plugins.ocr.services import sanitize_job_error
 from omniscribe.plugins.state_backend import JobRecord
 
@@ -116,7 +114,7 @@ def testsanitize_job_error_secrets_and_tokens() -> None:
 
 
 def test_status_response_outputs_sanitized_error() -> None:
-    service = object.__new__(OCRService)
+    service = object.__new__(OCRServiceImpl)
     assert isinstance(service, OCRServiceImpl)
 
     # Database error -> storage error

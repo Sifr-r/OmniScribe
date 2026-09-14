@@ -298,7 +298,7 @@ contract tests live in `tests/routers/`, plugin unit tests in
 
 ## See Also
 
-- [README.md](README.md) — feature overview, install, scripts
+- [README.md](../README.md) — feature overview, install, scripts
 - [CHANGELOG.md](CHANGELOG.md) — version history and breaking changes
 - [ARCHITECTURE.md](ARCHITECTURE.md) — pipeline, component map, and full API surface
 - [DEPLOYMENT.md](DEPLOYMENT.md) — local / LAN / public-internet deployment profiles

@@ -88,12 +88,65 @@ def _resolve_provider_config(
     )
 
 
+def _parse_dict_item(item: dict[str, Any]) -> tuple[str, str | None]:
+    """Extract (text, image_b64) from a single content dictionary item."""
+    item_type = item.get("type")
+    if item_type == "text":
+        text_val = item.get("text")
+        return (str(text_val) if text_val else "", None)
+
+    if item_type == "image_url":
+        img_obj = item.get("image_url")
+        url_str = ""
+        if isinstance(img_obj, str):
+            url_str = img_obj
+        elif isinstance(img_obj, dict):
+            url_str = str(img_obj.get("url", ""))
+
+        if not url_str:
+            return "", None
+
+        if "base64," in url_str:
+            return "", url_str.split("base64,", 1)[1]
+        return "", url_str
+
+    if item_type == "image":
+        src = item.get("source", {})
+        if isinstance(src, dict):
+            data = src.get("data")
+            if data is not None:
+                return "", str(data)
+
+    return "", None
+
+
+def _parse_content_items(items: list[Any]) -> tuple[str, str | None]:
+    """Extract (text_content, image_b64) from a list of content items."""
+    p_parts: list[str] = []
+    extracted_image: str | None = None
+
+    for item in items:
+        if isinstance(item, str):
+            p_parts.append(item)
+            continue
+        if not isinstance(item, dict):
+            continue
+
+        text, img = _parse_dict_item(item)
+        if text:
+            p_parts.append(text)
+        if img and extracted_image is None:
+            extracted_image = img
+
+    return "\n".join(p_parts), extracted_image
+
+
 def _extract_prompt_and_image(
     messages: list[dict[str, Any]] | None,
     prompt: str | None = None,
-    image_base64: str | None = None,
+    image_b64: str | None = None,
 ) -> tuple[str, str | None]:
-    """Parse messages payload or direct args into ``(text_prompt, image_base64)``.
+    """Parse messages payload or direct args into ``(text_prompt, image_b64)``.
 
     Only user-role entries contribute to the returned prompt and image;
     system-role entries (if any) are silently dropped — the explicit
@@ -104,53 +157,37 @@ def _extract_prompt_and_image(
     messages-list shape the caller might construct.
     """
     extracted_prompt = prompt or ""
-    extracted_image = image_base64
+    extracted_image = image_b64
 
-    if messages:
-        p_parts: list[str] = []
-        for msg in messages:
-            if msg.get("role") == "system":
-                # Drop system entries — use the ``system_prompt``
-                # parameter on call_llm / call_vlm instead.
-                continue
-            content = msg.get("content")
-            if isinstance(content, str):
-                p_parts.append(content)
-            elif isinstance(content, list):
-                for item in content:
-                    if isinstance(item, str):
-                        p_parts.append(item)
-                    elif isinstance(item, dict):
-                        item_type = item.get("type")
-                        if item_type == "text":
-                            text_val = item.get("text")
-                            if text_val:
-                                p_parts.append(str(text_val))
-                        elif item_type == "image_url":
-                            img_obj = item.get("image_url")
-                            url_str = ""
-                            if isinstance(img_obj, str):
-                                url_str = img_obj
-                            elif isinstance(img_obj, dict):
-                                url_str = str(img_obj.get("url", ""))
-                            if url_str and extracted_image is None:
-                                if "base64," in url_str:
-                                    extracted_image = url_str.split("base64,", 1)[1]
-                                else:
-                                    extracted_image = url_str
-                        elif item_type == "image":
-                            src = item.get("source", {})
-                            if isinstance(src, dict) and extracted_image is None:
-                                extracted_image = str(src.get("data", ""))
-        if p_parts and not extracted_prompt:
-            extracted_prompt = "\n".join(p_parts)
+    if not messages:
+        return extracted_prompt, extracted_image
+
+    p_parts: list[str] = []
+    for msg in messages:
+        if msg.get("role") == "system":
+            # Drop system entries — use the ``system_prompt``
+            # parameter on call_llm / call_vlm instead.
+            continue
+
+        content = msg.get("content")
+        if isinstance(content, str):
+            p_parts.append(content)
+        elif isinstance(content, list):
+            text, img = _parse_content_items(content)
+            if text:
+                p_parts.append(text)
+            if img and extracted_image is None:
+                extracted_image = img
+
+    if p_parts and not extracted_prompt:
+        extracted_prompt = "\n".join(p_parts)
 
     return extracted_prompt, extracted_image
 
 
 async def call_vlm(
     prompt: str,
-    image_base64: str | None = None,
+    image_b64: str | None = None,
     *,
     model: str | None = None,
     api_base: str | None = None,
@@ -169,7 +206,7 @@ async def call_vlm(
     return await complete_vlm_prompt(
         provider_config=provider_config,
         prompt=prompt,
-        image_base64=image_base64,
+        image_b64=image_b64,
         model=model,
         temperature=temperature,
         max_tokens=max_tokens,
@@ -185,7 +222,7 @@ async def call_llm(
     api_key: str | None = None,
     messages: list[dict[str, Any]] | None = None,
     prompt: str | None = None,
-    image_base64: str | None = None,
+    image_b64: str | None = None,
     temperature: float = 0.1,
     max_tokens: int | None = None,
     timeout: float | None = None,
@@ -203,7 +240,7 @@ async def call_llm(
     extracted_prompt, extracted_image = _extract_prompt_and_image(
         messages=messages,
         prompt=prompt,
-        image_base64=image_base64,
+        image_b64=image_b64,
     )
 
     provider_config = _resolve_provider_config(
@@ -213,7 +250,7 @@ async def call_llm(
     return await complete_vlm_prompt(
         provider_config=provider_config,
         prompt=extracted_prompt,
-        image_base64=extracted_image,
+        image_b64=extracted_image,
         model=model,
         temperature=temperature,
         max_tokens=max_tokens or 4096,

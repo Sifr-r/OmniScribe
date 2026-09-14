@@ -13,7 +13,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from omniscribe.core.block_tree import TableNode
+from omniscribe.core.block_tree import TableNode, block_type_str
+from omniscribe.core.writers._guard import TableDedup
 from omniscribe.core.writers.exporter_base import BaseDocumentExporter
 
 if TYPE_CHECKING:
@@ -42,9 +43,6 @@ class MarkdownWriter(BaseDocumentExporter):
         return render_markdown(tree, **kwargs)
 
 
-MarkdownExporter = MarkdownWriter
-
-
 def render_markdown(
     tree: DocumentTree,
     *,
@@ -53,7 +51,7 @@ def render_markdown(
 ) -> str:
     """Render a :class:`DocumentTree` to a clean GFM string."""
     out: list[str] = []
-    rendered_table_ids: set[str | int] = set()
+    rendered_table_ids = TableDedup()
 
     for i, page in enumerate(tree.pages):
         if i > 0 and include_page_breaks:
@@ -64,16 +62,12 @@ def render_markdown(
 
     # Render any unrendered tables from tree.tables
     for table in tree.tables:
-        t_id = getattr(table, "block_id", "")
-        if (not t_id or t_id not in rendered_table_ids) and id(
-            table
-        ) not in rendered_table_ids:
-            tbl_str = _render_table(table)
-            if tbl_str:
-                out.append(tbl_str)
-            if t_id:
-                rendered_table_ids.add(t_id)
-            rendered_table_ids.add(id(table))
+        if table in rendered_table_ids:
+            continue
+        tbl_str = _render_table(table)
+        if tbl_str:
+            out.append(tbl_str)
+        rendered_table_ids.add(table)
 
     # Also render any unrendered figures from tree.figures not yet covered
     rendered_figure_ids: set[str | int] = {
@@ -119,7 +113,7 @@ def render_markdown(
 
 def _render_page(
     page: PageTree,
-    rendered_table_ids: set[str | int],
+    rendered_table_ids: TableDedup,
 ) -> str:
     blocks: list[str] = []
     current_list: list[str] = []
@@ -134,18 +128,14 @@ def _render_page(
     for child in page.children:
         if isinstance(child, TableNode):
             flush_list()
-            if child.block_id:
-                rendered_table_ids.add(child.block_id)
-            rendered_table_ids.add(id(child))
+            rendered_table_ids.add(child)
             tbl_str = _render_table(child)
             if tbl_str:
                 blocks.append(tbl_str)
             continue
 
         bt = getattr(child, "block_type", None)
-        bt_val = (
-            bt.value if (bt is not None and hasattr(bt, "value")) else str(bt or "")
-        )
+        bt_val = block_type_str(bt)
 
         if bt_val == "list_item":
             item_str = _render_block(child)
@@ -154,9 +144,7 @@ def _render_page(
         else:
             flush_list()
             if bt_val == "table":
-                if getattr(child, "block_id", None):
-                    rendered_table_ids.add(child.block_id)
-                rendered_table_ids.add(id(child))
+                rendered_table_ids.add(child)
                 tbl_str = _render_table(child)
                 if tbl_str:
                     blocks.append(tbl_str)
@@ -173,11 +161,7 @@ def _render_block(node: BlockNode | TableNode | Any) -> str:
     if isinstance(node, TableNode):
         return _render_table(node)
 
-    bt = (
-        node.block_type.value
-        if hasattr(node.block_type, "value")
-        else str(node.block_type)
-    )
+    bt = block_type_str(node.block_type)
 
     if bt == "section_header":
         level = getattr(node, "level", 0) or 0
@@ -361,7 +345,6 @@ def _clean_table_cell(text: str | None) -> str:
 
 
 __all__ = [
-    "MarkdownExporter",
     "MarkdownWriter",
     "render_markdown",
 ]

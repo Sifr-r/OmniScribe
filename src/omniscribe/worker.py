@@ -34,7 +34,6 @@ from omniscribe.plugins.jobs import (
     JobStarted,
 )
 from omniscribe.plugins.jobs_redis import RedisJobQueue
-from omniscribe.plugins.progress import ProgressService
 from omniscribe.plugins.state_backend import (
     TERMINAL_JOB_STATUSES,
     StateBackend,
@@ -223,7 +222,6 @@ async def _worker_loop(
     active_jobs: dict[str, asyncio.Task[None]],
     poll_interval: float = 0.2,
     visibility_timeout: float = 300.0,
-    progress_service: ProgressService | None = None,
 ) -> None:
     """Run one worker loop claiming and executing jobs."""
     _LOGGER.info("Worker loop %d started (worker_id=%s)", worker_index, worker_id)

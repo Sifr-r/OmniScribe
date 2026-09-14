@@ -202,7 +202,7 @@ Before exposing OmniScribe beyond `localhost`:
 
 ## See Also
 
-- [README.md](README.md) — feature overview, install, web workspace
+- [README.md](../README.md) — feature overview, install, web workspace
 - [CHANGELOG.md](CHANGELOG.md) — version history and breaking changes
 - [ARCHITECTURE.md](ARCHITECTURE.md) — component map and API surface
 - [DEPLOYMENT.md](DEPLOYMENT.md) — local / LAN / public-internet deployment profiles

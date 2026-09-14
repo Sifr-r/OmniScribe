@@ -1,7 +1,7 @@
 # OmniScribe — Outstanding Work
 
 **Consolidated:** 2026-08-31  
-**Updated:** 2026-09-07 (open items only; smells fixed in the 2026-09-07 remediation pass are removed — full history via `git log -- docs/outstanding-work.md`)  
+**Updated:** 2026-09-13 (open items only; smells fixed in the 2026-09-07 remediation pass are removed — full history via `git log -- docs/outstanding-work.md`; Q12 stubbed-server half and R4 publication closed 2026-09-13, see inside)  
 **Sources:** the deferred Medium/Low backlog of the 2026-08-29 five-domain audit, the 2026-09-04 [Five-Lens Audit](audits/2026-09-04-five-lens-audit.md), the 2026-09-07 [RFC 003 — Redis state backend](rfcs/2026-09-redis-state-backend.md), and Phase C follow-ups. Completed planning artifacts (remediation plan, RFC 002 scope) are preserved in git history.
 
 This file tracks **open work only**. All completed items (audit-remediation
@@ -94,7 +94,19 @@ Deferred from RFC 002 Sprint 4 (the user picked Redis instead).
 Multi-day work; not urgent. Each is a separate workstream.
 
 - **Q12 Flutter `integration_test/` against a real running
-  server.** Multi-day; Flutter-side.
+  server.** Multi-day; Flutter-side. **Update 2026-09-13:** the
+  stubbed-FastAPI half of Q12 is now closed —
+  `client/integration_test/` boots the real app against an in-process
+  stub server (real WebSocket upgrade, streamed `block_complete`
+  frame, artifact-header OCR result) and drives the workstation
+  golden path end-to-end; see the remediation roadmap §4.3. The
+  *real-server* variant is also closed in scoped form the same day:
+  `app_real_server_test.dart` spawns a live `omniscribe-server`
+  (`uv run`, free-port pick, `/api/health` polling, skip-guard when
+  Python tooling is absent), fetches the sample fixture, and asserts
+  the server-side preview rasterization round-trip. What remains
+  here is only the **full OCR pass against a live VLM** — an
+  operator-hardware dependency, not test tooling.
 - **Q13 Flutter widget test balance.** Multi-day; Flutter-side.
 - **U12 follow-ups.** The Sprint 3 sample-PDF affordance
   closes the audit finding; remaining U12 work would be
@@ -139,10 +151,17 @@ All five workstreams have landed on 2026-09-07, tested and verified across 49/49
 
 Closeout items remain open per
 [RFC 004 §10](rfcs/2026-09-competitive-gap-remediation.md): the
-real-Redis multi-worker smoke (blocked on §2's scale decision), R4
-publication (nightly `--score-markdown` step, README benchmarks
-section, `docs/benchmarks.md` competitive-table provenance), the
-license-gated OmniDocBench public-dataset run, and the full
+real-Redis multi-worker smoke (blocked on §2's scale decision) and the
+license-gated OmniDocBench public-dataset run. **R4 publication closed
+2026-09-13**: the README gained a Benchmarks section (methodology,
+reproducibility command, license-gating pointer), `docs/benchmarks.md`
+gained a §4 Provenance subsection (OmniScribe rows = reproducible
+baseline; competitor rows = explicitly not same-protocol measurements
+until re-run), and the nightly `--score-markdown` step was **deliberately
+not wired** — the script drives a live VLM pipeline (none in CI) and
+fail-softs, so a CI step would be a silent no-op gate (the P3-12 failure
+mode); rationale and the manual command are recorded in the
+`docs/benchmarks.md` §4 Provenance subsection. The full
 `pytest -m "not slow"` suite (ruff and mypy are clean as of the
 2026-09-07 remediation pass; the table-fallback suite landed and
 passes 7/7 the same day).

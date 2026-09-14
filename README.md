@@ -7,6 +7,16 @@
 
 OmniScribe turns scanned PDFs and photos into searchable, selectable PDFs. Everything runs on your machine — no cloud OCR, no signup, no API keys. The local vision model is yours to choose (LM Studio, Ollama, or any OpenAI-compatible server).
 
+## Screenshots
+
+| **Workstation** — loaded document with pipeline controls | **AI Engine Setup Wizard** — local or cloud in a few clicks |
+| :---: | :---: |
+| ![Workstation with a loaded document](docs/screenshots/workstation.png) | ![AI Engine Setup Wizard](docs/screenshots/ai-setup-wizard-modal.png) |
+| **Glossary** — domain terminology lexicons | **Export** — searchable sandwich PDF |
+| ![Glossary screen](docs/screenshots/glossary-screen.png) | ![Export modal](docs/screenshots/export-modal.png) |
+
+More captures (provider browser, empty-state upload, provider configuration) live in [docs/screenshots/](docs/screenshots/README.md).
+
 ## Trust & Privacy
 
 OmniScribe is local-first. By design:
@@ -14,7 +24,7 @@ OmniScribe is local-first. By design:
 - **No telemetry, no analytics, no phone-home.** The server makes no outbound calls except to the VLM endpoint you configure in `LLM_API_BASE`.
 - **No cloud OCR.** OCR runs against a local VLM (LM Studio, Ollama, or any OpenAI-compatible server) you bring. If you point `OMNISCRIBE_LLM_API_BASE` at a hosted provider, your documents and extracted text leave your machine — see [DEPLOYMENT.md](docs/DEPLOYMENT.md) §"Third-party VLM" for the privacy warning.
 - **No upload, no signup, no API keys from us.** Bearer tokens for the LAN / public-internet profiles are tokens you generate yourself with `python -c 'import secrets; print(secrets.token_urlsafe(32))'`; the server ships with no default.
-- **Open-source under MIT** (this project) + **AGPL-3.0** (the bundled PyMuPDF). See [SECURITY.md](SECURITY.md) for the full threat model and the [Third-Party Software Notices](#third-party-software-notices) below for the PyMuPDF license details.
+- **Open-source under MIT** (this project) + **AGPL-3.0** (the bundled PyMuPDF). See [SECURITY.md](docs/SECURITY.md) for the full threat model and the [Third-Party Software Notices](#third-party-software-notices) below for the PyMuPDF license details.
 
 ## Before you start
 
@@ -31,6 +41,23 @@ A starting-point model table:
 
 If you already run an Ollama or other OpenAI-compatible server, set `LLM_API_BASE` in your environment to point at it — OmniScribe will discover the model list automatically.
 
+## Performance expectations
+
+Per-page cost = **local overhead + VLM time**, and the VLM term dominates. Plan for roughly `N × (VLM seconds + ~0.5 s)` for a document of N pages.
+
+Measured local-stage timings on the bundled fixtures (reference machine: i7-12700KF, 20 threads, default DPI settings — your numbers scale with cores and DPI):
+
+| Local stage | Per page | Notes |
+| --- | --- | --- |
+| Conversion (PDF → page images) | 0.03–0.06 s | CPU-bound, parallelized |
+| Sandwich embedding (searchable PDF) | 0.2–0.5 s | Re-rasterizes at embed DPI + invisible-text overlay |
+
+Layout detection (Surya, hybrid path) adds a one-time model download and a per-page cost that depends on CPU/GPU; it was not measurable in the environment this table was produced in.
+
+The VLM call is the order-of-magnitude variable. Rough expectations tied to the model table above: a 7B-class Q4 vision model on an 8 GB GPU processes a typical page in seconds-to-tens-of-seconds on GPU and dramatically slower on CPU-only; a 72B-class model trades several times that latency for accuracy. The **Grounded** engine issues one VLM call per page (latency-optimal); the **Hybrid** engine makes multiple VLM round-trips per page (sparse/dense/refine) and is proportionally slower but measurably more accurate — see [docs/benchmarks.md](docs/benchmarks.md). On large documents, bound the cost up front with the `pages` range option instead of OCR-ing everything to find out.
+
+A reproducible end-to-end pages/min table per hardware tier needs one live VLM benchmarking session (`uv run python scripts/confidence_eval.py --score-markdown`); the quality side of that run is tracked in [docs/benchmarks.md](docs/benchmarks.md) §Provenance.
+
 ## Features
 
 - **Format Support**: PDFs and images, including JPEG, PNG, BMP, WebP, TIFF, and AVIF.
@@ -42,6 +69,16 @@ If you already run an Ollama or other OpenAI-compatible server, set `LLM_API_BAS
 - **Voice Transcription**: Local and API-based speech-to-text audio transcription via `/api/transcribe`.
 - **Flutter Client**: Cross-platform desktop / mobile client built with Flutter + Riverpod (light/dark themes, Material 3, animated transitions), page selection, WebSocket progress, preview, translation, extraction, transcription, glossary browsing, and export to the OmniScribe FastAPI server.
 
+## Benchmarks
+
+Document-parsing quality is measured end-to-end on the exported Markdown — character/word error rates (CER/WER), BLEU, chrF, heading-structure F1, and table similarity — with `scripts/confidence_eval.py` against the bundled example fixtures. Scoring methodology, baseline tables, and the competitive positioning live in [docs/benchmarks.md](docs/benchmarks.md). Reproduce locally against a live OpenAI-compatible VLM endpoint with:
+
+```bash
+uv run python scripts/confidence_eval.py --score-markdown
+```
+
+Public-dataset runs (OmniDocBench, OCR-Quality, KIE-HVQA) are gated on the license review described in [docs/benchmarks.md](docs/benchmarks.md) §5; the in-tree mini fixtures keep the regression tests network-free.
+
 ## Installation
 
 ```bash
@@ -50,7 +87,7 @@ cd OmniScribe
 uv sync --extra web --extra preprocessing
 ```
 
-If anything goes wrong, run `make doctor` — it reports Python version, `uv` on PATH, Redis reachability, and whether your VLM endpoint is actually responding on `127.0.0.1:1234`.
+If anything goes wrong, run `make doctor` (or directly: `uv run python scripts/dev.py doctor`, which is the same thing and needs no `make` — handy on Windows) — it reports Python version, `uv` on PATH, Redis reachability, and whether your VLM endpoint is actually responding on `127.0.0.1:1234`.
 
 For asynchronous translation:
 
@@ -89,7 +126,7 @@ Real OCR requires an OpenAI-compatible VLM endpoint. The local-development defau
 
 | Platform | Backend (Python) | Frontend (Flutter) | Binary install |
 | --- | --- | --- | --- |
-| Windows 10/11 | ✅ | ✅ Windows desktop | ❌ *deferred to v0.3+* (see [RFC 001](rfcs/2026-09-end-user-install.md)) |
+| Windows 10/11 | ✅ | ✅ Windows desktop | ❌ *deferred to v0.3+* (see [RFC 001](docs/rfcs/2026-09-end-user-install.md)) |
 | macOS 13+ | ✅ | ✅ macOS desktop | ❌ *deferred to v0.3+* |
 | Ubuntu 22.04+ / Debian 12+ | ✅ | ✅ Linux desktop | ❌ *deferred to v0.3+* |
 
@@ -215,12 +252,12 @@ PDF-handling surface that pypdfium2 covers with feature parity.
 
 ## See Also
 
-- [CHANGELOG.md](CHANGELOG.md) — version history and breaking changes
+- [CHANGELOG.md](docs/CHANGELOG.md) — version history and breaking changes
 - [ARCHITECTURE.md](ARCHITECTURE.md) — pipeline, component map, and full API surface
-- [DEPLOYMENT.md](DEPLOYMENT.md) — local / LAN / public-internet deployment profiles
-- [SECURITY.md](SECURITY.md) — threat model, hardening checklist, vulnerability disclosure
-- [AGENTS.md](AGENTS.md) — contributor guide and full env-var reference
-- [TROUBLESHOOTING.md](TROUBLESHOOTING.md) — first-run error guide
-- [rfcs/2026-09-end-user-install.md](rfcs/2026-09-end-user-install.md) — proposed path to a single-binary distribution (Phase 4)
+- [DEPLOYMENT.md](docs/DEPLOYMENT.md) — local / LAN / public-internet deployment profiles
+- [SECURITY.md](docs/SECURITY.md) — threat model, hardening checklist, vulnerability disclosure
+- [AGENTS.md](docs/AGENTS.md) — contributor guide and full env-var reference
+- [TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) — first-run error guide
+- [rfcs/2026-09-end-user-install.md](docs/rfcs/2026-09-end-user-install.md) — proposed path to a single-binary distribution (Phase 4)
 
 _Last updated: 2026-09-05_

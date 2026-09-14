@@ -123,7 +123,7 @@ def doctor() -> int:
     HINTS: Final[dict[str, str]] = {
         "uv": "uv-is-not-recognized",
         "Python": "python-311-is-not-installed",
-        "Redis": "make-doctor-says-redis-is-unreachable",
+        "Redis": "make-doctor-says-redis-is-unreachable-but-i-dont-use-redis",
         "Model server": "ocr-returns-nothing",
     }
 

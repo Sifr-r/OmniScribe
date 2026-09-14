@@ -19,6 +19,7 @@ from omniscribe.plugins.documents.prompts import (
     build_extraction_prompt,
 )
 from omniscribe.plugins.documents.schemas import ExtractionRequest
+from omniscribe.plugins.errors import PluginError
 from omniscribe.utils.json_parse import extract_json
 from omniscribe.utils.security import check_ssrf_target_sync
 
@@ -35,14 +36,16 @@ EXPORT_MEDIA_TYPES: dict[str, str] = {
 }
 
 
-class DocumentsError(Exception):
-    """User-facing documents error carrying the envelope wire fields."""
+class DocumentsError(PluginError):
+    """User-facing documents error (envelope wire fields on ``PluginError``).
 
-    def __init__(self, status_code: int, error: str, detail: str) -> None:
-        super().__init__(detail)
-        self.status_code = status_code
-        self.error = error
-        self.detail = detail
+    Thin subclass of :class:`omniscribe.plugins.errors.PluginError` so the
+    documents plugin participates in the F2 exception-to-envelope middleware
+    registry alongside :class:`TranslateError`, :class:`TranscribeError`, and
+    :class:`GlossaryError`. The previous incarnation re-implemented the
+    constructor body verbatim (audit F11) — keep this subclass empty to match
+    the sibling plugins.
+    """
 
 
 def load_pages(raw: Mapping[str, Any]) -> dict[int, list[str]]:

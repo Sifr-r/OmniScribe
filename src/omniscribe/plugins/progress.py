@@ -163,6 +163,12 @@ class ProgressServiceImpl:
     # -- channel lifecycle ----------------------------------------------------
 
     async def open_channel(self, *, job_id: str = "") -> ChannelHandle:
+        """Create a new channel and persist it with the configured TTL.
+
+        Returns a :class:`ChannelHandle` with the id and session
+        token to send back to the client; the client must present
+        the session token to attach to the WebSocket.
+        """
         handle = ChannelHandle(
             channel_id=uuid.uuid4().hex, session_token=secrets.token_urlsafe(32)
         )
@@ -172,11 +178,18 @@ class ProgressServiceImpl:
         return handle
 
     async def get_channel(self, channel_id: str) -> ChannelRecord | None:
+        """Return the channel record or ``None`` if unknown (does NOT consume)."""
         return await self._backend.get_channel(channel_id)
 
     async def consume_channel(
         self, channel_id: str, session_token: str
     ) -> ChannelRecord | None:
+        """Return the channel and atomically mark it consumed if the token matches.
+
+        Used by the WebSocket handshake: a second consume (or wrong
+        token) returns ``None`` so the WS handler can close with the
+        standard ``4401`` code without leaking channel existence.
+        """
         return await self._backend.consume_channel(channel_id, session_token)
 
     # -- connection registry ----------------------------------------------------
@@ -184,11 +197,23 @@ class ProgressServiceImpl:
     def attach(
         self, channel_id: str, ws: Any, loop: asyncio.AbstractEventLoop
     ) -> _Connection:
+        """Register ``ws`` under ``channel_id``; return the connection handle.
+
+        The accept-loop is recorded alongside the socket so future
+        sends from any other loop can be marshaled back onto the
+        accept loop via ``run_coroutine_threadsafe``.
+        """
         connection = _Connection(ws, loop)
         self._connections.setdefault(channel_id, set()).add(connection)
         return connection
 
     def detach(self, channel_id: str, connection: _Connection) -> None:
+        """Remove ``connection`` from the channel registry.
+
+        Idempotent: dropping an already-detached connection is a
+        no-op so the foreign-loop done-callback can fire safely
+        after a same-loop detach already ran.
+        """
         connections = self._connections.get(channel_id)
         if connections is not None:
             connections.discard(connection)
@@ -373,6 +398,12 @@ class ProgressServiceImpl:
     # -- cancellation ----------------------------------------------------------------
 
     async def cancel(self, channel_id: str) -> bool:
+        """Mark the channel cancelled and broadcast a cancellation frame.
+
+        Always returns ``True``; the boolean shape is preserved for
+        API symmetry with the job-queue ``cancel`` method (where a
+        false return can mean "already terminal").
+        """
         self._cancelled.add(channel_id)
         await self.broadcast(
             channel_id, {"type": "cancelled", "status": "Cancelled by user."}
@@ -380,6 +411,7 @@ class ProgressServiceImpl:
         return True
 
     def is_cancelled(self, channel_id: str) -> bool:
+        """Return ``True`` if :meth:`cancel` has been called for ``channel_id``."""
         return channel_id in self._cancelled
 
 

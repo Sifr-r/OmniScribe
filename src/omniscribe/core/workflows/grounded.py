@@ -42,6 +42,25 @@ logger = logging.getLogger(__name__)
 
 
 class GroundedEngine(EngineBase):
+    """Bbox-native VLM OCR engine (one call per document).
+
+    The backend returns ``(bbox, text)`` pairs directly — no Surya
+    layout pass, no DP alignment, no second-pass refine. This is the
+    latency-optimal path for VLM models that can localize text (e.g.
+    Qwen2.5-VL grounded mode) and is significantly faster than
+    :class:`HybridEngine` on the same input. Trade-off: the per-block
+    quality depends entirely on the backend model, so the
+    ``RepairableGroundedBackend`` Protocol exists for backends that
+    can re-OCR a crop to lift below-target blocks.
+
+    The engine also accepts the same ``block_callbacks`` and
+    ``trust_orchestrator`` kwargs as the hybrid engine; the trust
+    layer receives ``page_image=None`` here because the grounded
+    backend doesn't surface rendered page images, so the
+    pixel-aware trust sub-modules fall back to their non-pixel
+    defaults.
+    """
+
     def __init__(
         self,
         grounded_backend: GroundedOCRBackend,
@@ -50,6 +69,14 @@ class GroundedEngine(EngineBase):
         block_callbacks: BlockCallbackSet | None = None,
         trust_orchestrator: TrustOrchestrator | None = None,
     ) -> None:
+        """Store the backend and forward optional feature toggles to ``EngineBase``.
+
+        ``grounded_backend`` and ``output_writer`` are required. The
+        remaining kwargs are feature toggles (each is a no-op when
+        ``None``); ``block_callbacks`` and ``trust_orchestrator`` are
+        accepted for API parity with :class:`HybridEngine` even though
+        the grounded path doesn't render page images.
+        """
         # Phase B (review M2) — the grounded path also accepts the
         # callback set for symmetry with HybridEngine. The current
         # execute() doesn't yet emit per-block events (only the
@@ -161,9 +188,13 @@ class GroundedEngine(EngineBase):
         repair_options: RepairOptions | None = None,
         cancel_check: CancelCheck | None = None,
     ) -> dict[int, list[str]]:
-        """
-        Grounded path: the backend returns (bbox, text) pairs directly.
-        No Surya, no DP, no refine — the model already knows where the text is.
+        """Run the grounded OCR pipeline on ``input_path`` → ``output_path``.
+
+        Grounded path: the backend returns ``(bbox, text)`` pairs
+        directly. No Surya, no DP, no refine — the model already knows
+        where the text is. The pipeline still applies the optional
+        :class:`RepairableGroundedBackend` quality-repair loop
+        (spec §3.2) and the trust layer before emitting.
         """
         self._reset_run_state()
 

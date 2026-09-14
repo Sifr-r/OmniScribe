@@ -8,6 +8,7 @@ import 'package:omniscribe_client/core/theme/app_theme.dart';
 import 'package:omniscribe_client/data/models/document_result.dart';
 import 'package:omniscribe_client/data/models/feature_models.dart';
 import 'package:omniscribe_client/data/providers/repository_providers.dart';
+import 'package:omniscribe_client/data/providers/job_orchestration_notifier.dart';
 import 'package:omniscribe_client/data/providers/workstation_notifier.dart';
 import 'package:omniscribe_client/data/repositories/feature_repository.dart';
 import 'package:omniscribe_client/presentation/common/app_button.dart';
@@ -65,7 +66,7 @@ void main() {
             Uint8List.fromList([1, 2, 3]),
             'test.pdf',
           );
-      container.read(workstationProvider.notifier).setTextArtifact(
+      container.read(jobOrchestrationProvider.notifier).setTextArtifact(
             textArtifactId: 'art-123',
             textArtifactToken: 'tok-abc',
           );
@@ -180,7 +181,7 @@ void main() {
             Uint8List.fromList([1, 2, 3]),
             'scan.pdf',
           );
-      container.read(workstationProvider.notifier).setTrustSummary(
+      container.read(jobOrchestrationProvider.notifier).setTrustSummary(
             const TrustSummary(
               blockCount: 10,
               scoredCount: 10,
@@ -208,7 +209,7 @@ void main() {
             Uint8List.fromList([1, 2, 3]),
             'scan.pdf',
           );
-      container.read(workstationProvider.notifier).setTrustSummary(
+      container.read(jobOrchestrationProvider.notifier).setTrustSummary(
             const TrustSummary(
               blockCount: 10,
               scoredCount: 10,

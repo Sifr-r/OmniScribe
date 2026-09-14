@@ -11,9 +11,16 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, cast
 
-from omniscribe.core.block_tree import BlockNode, BlockType, DocumentTree, TableNode
+from omniscribe.core.block_tree import (
+    BlockNode,
+    BlockType,
+    DocumentTree,
+    TableNode,
+    block_type_str,
+)
 from omniscribe.core.chunking.taxonomy import RAGElementCategory, map_element_type
 from omniscribe.core.errors import ChunkingError
+from omniscribe.core.writers._guard import TableDedup
 from omniscribe.core.writers.markdown import _clean_table_cell, _render_figure_node
 
 _BBox = tuple[float, float, float, float]
@@ -223,36 +230,24 @@ class SectionAwareChunker:
 
     def _collect_elements(self, tree: DocumentTree) -> list[BlockNode | TableNode]:
         elements: list[BlockNode | TableNode] = []
-        rendered_table_ids: set[str | int] = set()
+        rendered_table_ids = TableDedup()
 
         for page in tree.pages:
             for child in page.children:
                 if isinstance(child, TableNode):
-                    if child.block_id:
-                        rendered_table_ids.add(child.block_id)
-                    rendered_table_ids.add(id(child))
+                    rendered_table_ids.add(child)
                     elements.append(child)
                 else:
-                    bt_val = (
-                        child.block_type.value
-                        if hasattr(child.block_type, "value")
-                        else str(child.block_type or "")
-                    )
+                    bt_val = block_type_str(child.block_type)
                     if bt_val == "table":
-                        if child.block_id:
-                            rendered_table_ids.add(child.block_id)
-                        rendered_table_ids.add(id(child))
+                        rendered_table_ids.add(child)
                     elements.append(child)
 
         for table in tree.tables:
-            t_id = getattr(table, "block_id", "")
-            if (not t_id or t_id not in rendered_table_ids) and id(
-                table
-            ) not in rendered_table_ids:
-                elements.append(table)
-                if t_id:
-                    rendered_table_ids.add(t_id)
-                rendered_table_ids.add(id(table))
+            if table in rendered_table_ids:
+                continue
+            elements.append(table)
+            rendered_table_ids.add(table)
 
         return elements
 

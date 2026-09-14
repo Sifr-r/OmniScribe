@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:omniscribe_client/core/theme/app_colors.dart';
 import 'package:omniscribe_client/core/theme/app_typography.dart';
 import 'package:omniscribe_client/data/models/process_settings.dart';
+import 'package:omniscribe_client/data/providers/job_orchestration_notifier.dart';
 import 'package:omniscribe_client/data/providers/workstation_notifier.dart';
 import 'package:omniscribe_client/presentation/common/app_badge.dart';
 import 'package:omniscribe_client/presentation/common/app_card.dart';
@@ -23,15 +24,16 @@ class QualityRepairDock extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final colors = context.colors;
-    final wsState = ref.watch(workstationProvider);
+    final job = ref.watch(jobOrchestrationProvider);
 
     final isRepairEnabled = settings.qualityRepairEnabled;
     final target = settings.qualityTarget ?? 0.85;
     final maxRetries = settings.maxRetries;
 
-    final repairedCount = wsState.repairedCount;
-    final retriesAttempted = wsState.totalRetriesAttempted;
-    final avgConf = wsState.avgConfidence;
+    final repairedCount =
+        job.repairedCount(ref.watch(workstationProvider).documentRevisedCount);
+    final retriesAttempted = job.totalRetriesAttempted;
+    final avgConf = job.avgConfidence;
 
     return AppCard(
       variant: AppCardVariant.raised,

@@ -6,6 +6,8 @@ import 'package:omniscribe_client/core/theme/app_colors.dart';
 import 'package:omniscribe_client/core/theme/app_typography.dart';
 import 'package:omniscribe_client/data/models/bbox_item.dart';
 import 'package:omniscribe_client/data/models/document_result.dart';
+import 'package:omniscribe_client/data/providers/document_selection_notifier.dart';
+import 'package:omniscribe_client/data/providers/document_viewport_notifier.dart';
 import 'package:omniscribe_client/data/providers/workstation_notifier.dart';
 import 'package:omniscribe_client/data/providers/workstation_state.dart';
 import 'bbox_painter.dart';
@@ -51,7 +53,9 @@ class _DocumentViewportState extends ConsumerState<DocumentViewport> {
   }
 
   void _onTransformChanged() {
-    final scale = _transformController.value.getMaxScaleOnAxis();
+    final value = _transformController.value;
+    ref.read(documentViewportProvider.notifier).syncFromMatrix(value);
+    final scale = value.getMaxScaleOnAxis();
     if ((scale - _currentScale).abs() > 0.01) {
       setState(() {
         _currentScale = scale;
@@ -59,25 +63,26 @@ class _DocumentViewportState extends ConsumerState<DocumentViewport> {
     }
   }
 
+  /// Applies the provider's viewport transform to the controller when it
+  /// diverges from the gesture-synced matrix (no-op after plain gestures).
+  void _applyProviderTransform() {
+    final viewport = ref.read(documentViewportProvider);
+    final current = _transformController.value;
+    final sameScale =
+        (current.getMaxScaleOnAxis() - viewport.scale).abs() < 0.001;
+    final sameTranslation =
+        (current.storage[12] - viewport.translation.dx).abs() < 0.001 &&
+            (current.storage[13] - viewport.translation.dy).abs() < 0.001;
+    if (sameScale && sameTranslation) return;
+    _transformController.value = viewport.matrix;
+  }
+
   void _zoomBy(double factor) {
     if (_lastViewportSize.width <= 0 || _lastViewportSize.height <= 0) return;
-    final current = _transformController.value;
-    final currentScale = current.getMaxScaleOnAxis();
-    final targetScale = (currentScale * factor).clamp(0.15, 6.0);
-    if ((targetScale - currentScale).abs() < 0.001) return;
-    final effectiveFactor = targetScale / currentScale;
-
-    final cx = _lastViewportSize.width / 2.0;
-    final cy = _lastViewportSize.height / 2.0;
-    final tx = current.storage[12];
-    final ty = current.storage[13];
-
-    final newTx = cx * (1.0 - effectiveFactor) + tx * effectiveFactor;
-    final newTy = cy * (1.0 - effectiveFactor) + ty * effectiveFactor;
-
-    _transformController.value =
-        Matrix4.diagonal3Values(targetScale, targetScale, 1.0)
-          ..setTranslationRaw(newTx, newTy, 0.0);
+    ref
+        .read(documentViewportProvider.notifier)
+        .zoomBy(factor, _lastViewportSize);
+    _applyProviderTransform();
   }
 
   void _zoomIn() => _zoomBy(1.25);
@@ -85,49 +90,26 @@ class _DocumentViewportState extends ConsumerState<DocumentViewport> {
   void _zoomOut() => _zoomBy(0.8);
 
   void _fitToScreen({Size? viewportSize, Size? canvasSize}) {
-    final vp = viewportSize ?? _lastViewportSize;
-    final cv = canvasSize ?? _lastCanvasSize;
-    if (vp.width <= 0 || vp.height <= 0 || cv.width <= 0 || cv.height <= 0) {
-      _transformController.value = Matrix4.identity();
-      return;
-    }
-
-    const double padding = 28.0;
-    final double availWidth = math.max(60.0, vp.width - padding * 2);
-    final double availHeight = math.max(60.0, vp.height - padding * 2);
-
-    final double scaleX = availWidth / cv.width;
-    final double scaleY = availHeight / cv.height;
-    final double fitScale = math.min(scaleX, scaleY).clamp(0.15, 3.0);
-
-    final double scaledW = cv.width * fitScale;
-    final double scaledH = cv.height * fitScale;
-    final double dx = (vp.width - scaledW) / 2.0;
-    final double dy = (vp.height - scaledH) / 2.0;
-
-    _transformController.value =
-        Matrix4.diagonal3Values(fitScale, fitScale, 1.0)
-          ..setTranslationRaw(dx, dy, 0.0);
+    ref.read(documentViewportProvider.notifier).fitToScreen(
+          viewportSize: viewportSize ?? _lastViewportSize,
+          canvasSize: canvasSize ?? _lastCanvasSize,
+        );
+    _applyProviderTransform();
   }
 
   void _resetZoom() {
-    final vp = _lastViewportSize;
-    final cv = _lastCanvasSize;
-    if (vp.width <= 0 || vp.height <= 0 || cv.width <= 0 || cv.height <= 0) {
-      _transformController.value = Matrix4.identity();
-      return;
-    }
-    final double dx = (vp.width - cv.width) / 2.0;
-    final double dy = (vp.height - cv.height) / 2.0;
-    _transformController.value =
-        Matrix4.diagonal3Values(1.0, 1.0, 1.0)
-          ..setTranslationRaw(dx, dy, 0.0);
+    ref.read(documentViewportProvider.notifier).resetToActualSize(
+          viewportSize: _lastViewportSize,
+          canvasSize: _lastCanvasSize,
+        );
+    _applyProviderTransform();
   }
 
   void _handleTapUp(TapUpDetails details, Size canvasSize,
-      List<BBoxItem> bboxes, WorkstationNotifier notifier) {
+      List<BBoxItem> bboxes) {
+    final selection = ref.read(documentSelectionProvider.notifier);
     if (canvasSize.width <= 0 || canvasSize.height <= 0 || bboxes.isEmpty) {
-      notifier.selectBBox(null);
+      selection.select(null);
       widget.onBBoxSelected?.call(null);
       return;
     }
@@ -142,21 +124,22 @@ class _DocumentViewportState extends ConsumerState<DocumentViewport> {
     }).toList();
 
     if (hits.isEmpty) {
-      notifier.selectBBox(null);
+      selection.select(null);
       widget.onBBoxSelected?.call(null);
     } else {
       // Pick the most specific (smallest area) box
       hits.sort((a, b) => (a.width * a.height).compareTo(b.width * b.height));
       final selected = hits.first;
-      notifier.selectBBox(selected);
+      selection.select(selected);
       widget.onBBoxSelected?.call(selected);
     }
   }
 
-  void _handlePointerHover(PointerHoverEvent event, Size canvasSize,
-      List<BBoxItem> bboxes, WorkstationNotifier notifier) {
+  void _handlePointerHover(
+      PointerHoverEvent event, Size canvasSize, List<BBoxItem> bboxes) {
+    final selection = ref.read(documentSelectionProvider.notifier);
     if (canvasSize.width <= 0 || canvasSize.height <= 0 || bboxes.isEmpty) {
-      notifier.hoverBBox(null);
+      selection.hover(null);
       return;
     }
 
@@ -169,10 +152,10 @@ class _DocumentViewportState extends ConsumerState<DocumentViewport> {
     }).toList();
 
     if (hits.isEmpty) {
-      notifier.hoverBBox(null);
+      selection.hover(null);
     } else {
       hits.sort((a, b) => (a.width * a.height).compareTo(b.width * b.height));
-      notifier.hoverBBox(hits.first);
+      selection.hover(hits.first);
     }
   }
 
@@ -226,8 +209,13 @@ class _DocumentViewportState extends ConsumerState<DocumentViewport> {
                     _hasFittedInitial = true;
                     WidgetsBinding.instance.addPostFrameCallback((_) {
                       if (mounted) {
-                        _fitToScreen(
-                            viewportSize: viewportSize, canvasSize: canvasSize);
+                        ref
+                            .read(documentViewportProvider.notifier)
+                            .fitToScreen(
+                              viewportSize: viewportSize,
+                              canvasSize: canvasSize,
+                            );
+                        _applyProviderTransform();
                       }
                     });
                   } else if (!wsState.hasDocument) {
@@ -305,6 +293,7 @@ class _DocumentViewportState extends ConsumerState<DocumentViewport> {
     AppColorScheme colors,
     Size canvasSize,
   ) {
+    final selectionState = ref.watch(documentSelectionProvider);
     return Container(
       key: _canvasKey,
       width: canvasSize.width,
@@ -324,12 +313,11 @@ class _DocumentViewportState extends ConsumerState<DocumentViewport> {
       child: ClipRRect(
         borderRadius: BorderRadius.circular(6),
         child: MouseRegion(
-          onHover: (e) =>
-              _handlePointerHover(e, canvasSize, bboxes, notifier),
-          onExit: (_) => notifier.hoverBBox(null),
+          onHover: (e) => _handlePointerHover(e, canvasSize, bboxes),
+          onExit: (_) =>
+              ref.read(documentSelectionProvider.notifier).hover(null),
           child: GestureDetector(
-            onTapUp: (details) =>
-                _handleTapUp(details, canvasSize, bboxes, notifier),
+            onTapUp: (details) => _handleTapUp(details, canvasSize, bboxes),
             child: Stack(
               fit: StackFit.expand,
               children: [
@@ -348,8 +336,8 @@ class _DocumentViewportState extends ConsumerState<DocumentViewport> {
                   size: canvasSize,
                   painter: BBoxPainter(
                     bboxes: bboxes,
-                    selectedBBox: wsState.selectedBBox,
-                    hoveredBBox: wsState.hoveredBBox,
+                    selectedBBox: selectionState.selectedBBox,
+                    hoveredBBox: selectionState.hoveredBBox,
                     colors: colors,
                     showBBoxes: wsState.showBBoxes,
                     showHeatmap: wsState.showHeatmap,

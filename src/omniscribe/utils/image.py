@@ -64,8 +64,6 @@ DEFAULT_CROP_RESAMPLING: Image.Resampling = Image.Resampling.BICUBIC
 #   (300, 200): ImageStat 0.181 ms -> numpy 0.182 ms  (parity)
 # Numpy wins for small/medium crops (the common case for text-line
 # bboxes that triggered the upscale); parity at large crops.
-_DEFAULT_STDDEV_NDARRAY: np.ndarray | None = None
-
 # Iteration 4 (perf): cProfile on the post-Iteration-3 crop+encode path
 # showed BICUBIC resize (54%, 4.053s for 50 pages x 150 boxes) and
 # JPEG encode (20%, 1.484s) dominate. Pillow's C code releases the GIL
@@ -163,9 +161,7 @@ def _crop_one(
     if cw < min_dim or ch < min_dim:
         scale = max(min_dim / max(1, cw), min_dim / max(1, ch))
         scale = min(scale, 16.0)
-        crop = crop.resize(
-            (int(cw * scale), int(ch * scale)), resampling
-        )
+        crop = crop.resize((int(cw * scale), int(ch * scale)), resampling)
 
     buf.seek(0)
     buf.truncate()

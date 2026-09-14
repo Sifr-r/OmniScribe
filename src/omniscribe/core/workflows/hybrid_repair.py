@@ -235,13 +235,22 @@ async def repair_single_page(
         # Memoize crop by bbox. Retries within the same page share the
         # same bbox so the cache hits. ``bbox not in crop_cache``
         # distinguishes "cache miss" from "cached blank crop".
-        if bbox not in crop_cache:
+        # ``aligner.align_text`` may return bboxes as lists (the
+        # HybridAligner does, and so do test stubs) so normalize to a
+        # tuple before using as a dict key — lists are unhashable and
+        # would raise ``TypeError`` here, which the repair loop's
+        # generic-except handler would then swallow and silently skip
+        # the retry (the audit-flagged bug fixed below).
+        bbox_key: tuple[float, float, float, float] = (
+            tuple(bbox) if not isinstance(bbox, tuple) else bbox
+        )
+        if bbox_key not in crop_cache:
             page_image = await get_page_image(p_num)
             crop_b64 = await asyncio.to_thread(
-                crop_for_ocr_from_image, page_image, list(bbox)
+                crop_for_ocr_from_image, page_image, list(bbox_key)
             )
-            crop_cache[bbox] = crop_b64
-        crop_b64 = crop_cache[bbox]
+            crop_cache[bbox_key] = crop_b64
+        crop_b64 = crop_cache[bbox_key]
         if crop_b64 is None:
             return ""
         hint = (

@@ -25,45 +25,38 @@ from __future__ import annotations
 
 import hashlib
 import logging
-import os
-import re
 import threading
 import uuid
 from collections.abc import Callable, Iterable, Sequence
 from datetime import datetime
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import Any
 
 import pyarrow as pa
 
 from .embedding import EmbeddingModel, get_default_embedding_model
 from .lancedb_helpers import (
-    _entry_from_row,
     _opt_str,
     _sql_escape,
     _to_utc_datetime,
 )
-from .query_terms import candidate_terms
-from .schema import LEXICON_SCHEMA, VECTOR_INDEX_SPEC
+from .schema import (
+    LEXICON_SCHEMA,
+    VECTOR_INDEX_SPEC,
+    EmbeddingModelMismatchError,
+    LexiconSchemaManager,
+)
+from .search import HybridSearchEngine
 from .store import (
     GlossaryMeta,
     LexiconEntry,
     LexiconHit,
     LexiconQuery,
     entry_hash,
-    normalize_term,
     now_utc,
 )
 
 logger = logging.getLogger(__name__)
-
-
-class EmbeddingModelMismatchError(RuntimeError):
-    """The lexicon was built with a different embedding model.
-
-    Cosine scores across mixed vector spaces are meaningless, so opening
-    the store fails loud instead of returning silently wrong rankings.
-    """
 
 
 def _new_id() -> str:
@@ -133,6 +126,7 @@ class LanceDBLexiconStore:
 
     TABLE_NAME = "terms"
     META_TABLE = "_meta"
+    INDEX_MIN_ROWS = 128
 
     def __init__(
         self,
@@ -150,6 +144,12 @@ class LanceDBLexiconStore:
         self._init_lock = threading.Lock()
         self._initialized = False
         self._fingerprint_cache: str | None = None
+        self._schema_mgr = LexiconSchemaManager(
+            schema=LEXICON_SCHEMA,
+            index_spec=VECTOR_INDEX_SPEC,
+            min_index_rows=self.INDEX_MIN_ROWS,
+        )
+        self._search_engine = HybridSearchEngine()
 
     # --- Lifecycle ----------------------------------------------------------
 
@@ -167,95 +167,11 @@ class LanceDBLexiconStore:
                     "Install with: `uv sync --extra lexicon`."
                 ) from exc
             self._db = lancedb.connect(str(self._path))
-            # ``list_tables()`` returns a Pydantic response with a ``tables``
-            # list (the older ``table_names()`` is deprecated). Handle both
-            # shapes so we work across LanceDB 0.5 to 0.37.
-            raw = self._db.list_tables()
-            tables = getattr(raw, "tables", None)
-            if tables is None:
-                tables = list(raw)
-            existing = {str(t) for t in tables}
-            if self.TABLE_NAME in existing:
-                self._table = self._db.open_table(self.TABLE_NAME)
-            else:
-                # Create empty table with the canonical schema; rows are
-                # added on the first save_glossary call. ``mode="create"``
-                # raises if the table already exists, which is what we want
-                # here (the ``in existing`` branch above handles the
-                # open-existing case).
-                self._table = self._db.create_table(
-                    self.TABLE_NAME, schema=LEXICON_SCHEMA, mode="create"
-                )
-            self._ensure_meta_and_compat(existing)
-            self._ensure_columns()
-            self._ensure_index()
+            self._table = self._schema_mgr.ensure_table(
+                self._db, self._embedding, self._clock
+            )
             self._initialized = True
             logger.info("LanceDBLexiconStore opened at %s", self._path)
-
-    def _ensure_meta_and_compat(self, existing_tables: set[str]) -> None:
-        """Guard against embedding-model drift; adopt legacy tables.
-
-        Records the model name + dim in a ``_meta`` table at creation time
-        and compares on every open. A pre-``_meta`` lexicon adopts the
-        currently-configured model (nothing to compare against yet).
-        """
-        import pyarrow as pa
-
-        model_name = self._embedding.model_name
-        dim = int(self._embedding.dim)
-        meta_schema = pa.schema(
-            [
-                pa.field("model_name", pa.string(), nullable=False),
-                pa.field("dim", pa.int32(), nullable=False),
-                pa.field("created_at", pa.timestamp("ms"), nullable=False),
-            ]
-        )
-        meta_row = {
-            "model_name": model_name,
-            "dim": dim,
-            "created_at": self._clock(),
-        }
-        if self.META_TABLE in existing_tables:
-            meta = self._db.open_table(self.META_TABLE)
-            rows = meta.to_arrow().to_pylist()
-            if rows:
-                stored_name = str(rows[0].get("model_name"))
-                stored_dim = int(rows[0].get("dim") or 0)
-                if stored_name != model_name or (stored_dim and stored_dim != dim):
-                    raise EmbeddingModelMismatchError(
-                        f"Lexicon at {self._path} was built with embedding model "
-                        f"'{stored_name}' (dim={stored_dim}) but is being opened "
-                        f"with '{model_name}' (dim={dim}). Vector spaces are "
-                        "incompatible; re-import the glossaries or unset "
-                        "OMNISCRIBE_EMBEDDING_MODEL."
-                    )
-                return
-            meta.add([meta_row])
-            return
-        self._db.create_table(
-            self.META_TABLE,
-            pa.Table.from_pylist([meta_row], schema=meta_schema),
-            mode="create",
-        )
-
-    def _ensure_columns(self) -> None:
-        """Add columns introduced after the table was created (legacy tables)."""
-        try:
-            field_names = set(self._table.schema.names)
-        except Exception:
-            return
-        if "entry_hash" not in field_names:
-            # A typed pa.Schema (not an SQL "NULL" literal, which yields a
-            # Null-typed column that later rejects Utf8 rows).
-            import pyarrow as pa
-
-            try:
-                self._table.add_columns(
-                    pa.schema([pa.field("entry_hash", pa.string())])
-                )
-                logger.info("Added entry_hash column to legacy lexicon table")
-            except Exception as exc:
-                logger.warning("Could not add entry_hash column: %s", exc)
 
     def close(self) -> None:
         # LanceDB connections are lightweight and process-bound; nothing to
@@ -264,32 +180,9 @@ class LanceDBLexiconStore:
         self._db = None
         self._table = None
 
-    INDEX_MIN_ROWS = 128
-
     def _ensure_index(self) -> None:
-        """Create the HNSW (or IVF-PQ) vector index per VECTOR_INDEX_SPEC.
-
-        Idempotent (``replace=True``) and try-guarded: index creation is an
-        optimization, never a correctness gate. Skipped below
-        ``INDEX_MIN_ROWS`` where a flat scan is cheaper than index upkeep.
-        """
-        try:
-            if self._table.count_rows() < self.INDEX_MIN_ROWS:
-                return
-            index_type = str(VECTOR_INDEX_SPEC["index_type"])
-            kwargs: dict[str, object] = {
-                "metric": VECTOR_INDEX_SPEC["metric"],
-                "vector_column_name": "embedding",
-                "index_type": index_type,
-                "replace": True,
-            }
-            if index_type == "ivf_pq":
-                kwargs["num_partitions"] = VECTOR_INDEX_SPEC["num_partitions"]
-                kwargs["num_sub_vectors"] = VECTOR_INDEX_SPEC["num_sub_vectors"]
-            self._table.create_index(**kwargs)
-            logger.info("Vector index ensured (%s)", index_type)
-        except Exception as exc:
-            logger.debug("create_index skipped: %s", exc)
+        """Create the HNSW (or IVF-PQ) vector index per VECTOR_INDEX_SPEC."""
+        self._schema_mgr.ensure_index(self._table)
 
     def fingerprint(self) -> str:
         """Cheap content fingerprint of the glossary library (Protocol).
@@ -682,57 +575,9 @@ class LanceDBLexiconStore:
     #     (deliberately no FTS/tantivy dependency; CJK-safe);
     # fused by reciprocal rank fusion with env-tunable leg weights.
 
-    RRF_K = 60
-    # Projection for keyword/row lookups: everything except the embedding
-    # column, so scans don't drag vectors into memory.
-    _KEYWORD_PROJECTION: ClassVar[list[str]] = [
-        "id",
-        "glossary_id",
-        "source_text",
-        "target_text",
-        "source_lang",
-        "target_lang",
-        "domain",
-        "register",
-        "pos",
-        "case_sensitive",
-        "notes",
-        "source_uri",
-        "source_format",
-        "usage_count",
-        "entry_hash",
-        "created_at",
-        "updated_at",
-        "glossary_name",
-        "glossary_enabled",
-        "glossary_priority",
-        "glossary_group",
-        "glossary_source_uri",
-        "glossary_encoding",
-    ]
-
-    @staticmethod
-    def _env_float(name: str, default: float) -> float:
-        raw = os.getenv(name)
-        if raw is None or not raw.strip():
-            return default
-        try:
-            return float(raw)
-        except ValueError:
-            logger.warning("Env %s=%r invalid; using default %s", name, raw, default)
-            return default
-
     def hybrid_query(self, query: LexiconQuery) -> list[LexiconHit]:
         self._ensure_open()
-        if not query.source_chunk or not query.source_chunk.strip():
-            return []
-        try:
-            row_count = self._table.count_rows()
-        except Exception:
-            row_count = self._table.to_arrow().num_rows
-        if row_count == 0:
-            return []
-        return self._hybrid_via_lancedb(query)
+        return self._search_engine.hybrid_search(self._table, query, self._embedding)
 
     def exact_lookup(
         self,
@@ -742,58 +587,16 @@ class LanceDBLexiconStore:
         target_lang: str,
     ) -> list[LexiconEntry]:
         self._ensure_open()
-        probe = source_text.strip()
-        if not probe:
-            return []
-        probe_norm = normalize_term(probe)
-        where_parts: list[str] = []
-        if source_lang:
-            where_parts.append(f"source_lang = '{_sql_escape(source_lang)}'")
-        if target_lang:
-            where_parts.append(f"target_lang = '{_sql_escape(target_lang)}'")
-        try:
-            search = self._table.search()
-            if where_parts:
-                search = search.where(" AND ".join(where_parts))
-            tbl = search.to_arrow()
-        except Exception:
-            tbl = self._table.to_arrow()
-        if tbl.num_rows == 0:
-            return []
-
-        entries: list[LexiconEntry] = []
-        for row in tbl.to_pylist():
-            row_source = str(row.get("source_text", "")).strip()
-            if bool(row.get("case_sensitive", False)):
-                if row_source != probe:
-                    continue
-            elif normalize_term(row_source) != probe_norm:
-                continue
-            if source_lang and str(row.get("source_lang", "")) != source_lang:
-                continue
-            if target_lang and str(row.get("target_lang", "")) != target_lang:
-                continue
-            entries.append(_entry_from_row(row))
-        return entries
+        return self._search_engine.exact_lookup(
+            self._table,
+            source_text,
+            source_lang=source_lang,
+            target_lang=target_lang,
+        )
 
     def list_entries(self, glossary_id: str) -> list[LexiconEntry]:
         self._ensure_open()
-        target = str(glossary_id)
-        escaped_target = _sql_escape(target)
-        try:
-            search = self._table.search().where(f"glossary_id = '{escaped_target}'")
-            tbl = search.to_arrow()
-        except Exception:
-            all_tbl = self._table.to_arrow()
-            if all_tbl.num_rows == 0:
-                return []
-            import pyarrow.compute as pc
-
-            mask = pc.equal(all_tbl["glossary_id"], target)
-            tbl = all_tbl.filter(mask)
-        if tbl.num_rows == 0:
-            return []
-        return [_entry_from_row(r) for r in tbl.to_pylist()]
+        return self._search_engine.list_entries(self._table, glossary_id)
 
     # --- Internal helpers ---------------------------------------------------
 
@@ -829,266 +632,8 @@ class LanceDBLexiconStore:
         except Exception:
             return {}
 
-    def _matches_query(self, row: dict[str, Any], query: LexiconQuery) -> bool:
-        """Evaluate query filter predicates against a row dict."""
-        if query.source_lang and str(row.get("source_lang", "")) != query.source_lang:
-            return False
-        if query.target_lang and str(row.get("target_lang", "")) != query.target_lang:
-            return False
-        if query.domain and str(row.get("domain", "")) != query.domain:
-            return False
-        if query.enabled_only and not bool(row.get("glossary_enabled", True)):
-            return False
-        if query.glossary_ids is not None:
-            allowed = {str(g) for g in query.glossary_ids}
-            if str(row.get("glossary_id", "")) not in allowed:
-                return False
-        return True
-
-    def _hybrid_via_lancedb(self, query: LexiconQuery) -> list[LexiconHit]:
-        terms = candidate_terms(query.source_chunk)
-        # The embedding window is ~128 tokens for the pinned MiniLM model;
-        # a 4000-char chunk is silently truncated by the encoder, so cap
-        # the chunk query explicitly and let candidate terms carry the
-        # tail of the chunk.
-        query_texts = [query.source_chunk[:512], *terms[:4]]
-        if len(query.source_chunk) > 512:
-            logger.warning(
-                "Lexicon query chunk is %d chars; truncated to 512 for the "
-                "embedding window (the keyword leg still sees the full chunk).",
-                len(query.source_chunk),
-            )
-        try:
-            query_vecs = self._embedding.embed_batch(query_texts)
-        except Exception:
-            query_vecs = [self._embedding.embed(t) for t in query_texts]
-        if not query_vecs or not any(any(vec) for vec in query_vecs):
-            return []
-
-        where_clauses = self._build_where(query)
-        over = max(query.limit * 3, 24)
-        vector_scores: dict[str, float] = {}
-        for vec in query_vecs:
-            if not vec or not any(vec):
-                # Zero vector (unknown/unmapped text) carries no cosine signal.
-                continue
-            try:
-                search = (
-                    self._table.search(vec, vector_column_name="embedding")
-                    .metric("cosine")
-                    .limit(over)
-                )
-                if where_clauses:
-                    search = search.where(where_clauses, prefilter=True)
-                raw = search.to_arrow().to_pylist()
-            except Exception as exc:
-                logger.warning(
-                    "LanceDB vector search failed: %s; falling back to Arrow search",
-                    exc,
-                )
-                return self._hybrid_via_arrow(query)
-            for row in raw:
-                row_id = str(row.get("id"))
-                score = max(0.0, min(1.0, 1.0 - float(row.get("_distance", 1.0))))
-                if score > vector_scores.get(row_id, 0.0):
-                    vector_scores[row_id] = score
-
-        keyword_scores = self._keyword_scores(query)
-        fused = self._rrf_fuse(vector_scores, keyword_scores, over)
-        if not fused:
-            return []
-
-        rows_by_id = self._rows_by_id({gid for gid, _ in fused})
-        min_score = query.min_score if query.min_score is not None else 0.0
-        hits: list[LexiconHit] = []
-        for gid, _rrf in fused:
-            row = rows_by_id.get(gid)
-            if row is None:
-                continue
-            cos = vector_scores.get(gid, 0.0)
-            kw = keyword_scores.get(gid, 0.0)
-            # The cosine floor applies to vector-only evidence; a strong
-            # keyword match survives a weak cosine (exact acronyms, codes).
-            if cos < min_score and kw < 0.8:
-                continue
-            hits.append(
-                LexiconHit(entry=_entry_from_row(row), score=cos, keyword_score=kw)
-            )
-            if len(hits) >= query.limit:
-                break
-        if hits:
-            logger.debug(
-                "lexicon query terms=%s top=%s",
-                terms[:3],
-                [
-                    (h.entry.source_text, round(h.score, 3), round(h.keyword_score, 2))
-                    for h in hits[:3]
-                ],
-            )
-        return hits
-
-    def _keyword_scores(self, query: LexiconQuery) -> dict[str, float]:
-        """Deterministic keyword evidence: exact > prefix > substring.
-
-        Scans a non-embedding projection of the (already SQL-filtered) rows
-        and scores normalized matches against candidate terms plus the
-        chunk's individual words (glossaries are term-level; a lowercase
-        word like "privacy" is exactly what a glossary contains). O(rows)
-        per query — fine at personal-scale lexicons, and it keeps the
-        store dependency-free.
-        """
-        terms = [normalize_term(t) for t in candidate_terms(query.source_chunk)]
-        terms.extend(
-            normalize_term(w)
-            for w in re.findall(r"[^\W_]+", query.source_chunk, re.UNICODE)
-            if len(w) >= 3
-        )
-        chunk_norm = normalize_term(query.source_chunk[:80])
-        if chunk_norm:
-            terms.append(chunk_norm)
-        seen: set[str] = set()
-        deduped: list[str] = []
-        for term in terms:
-            if not term or term in seen:
-                continue
-            seen.add(term)
-            deduped.append(term)
-            if len(deduped) >= 24:
-                break
-        if not deduped:
-            return {}
-        try:
-            search = self._table.search()
-            where = self._build_where(query)
-            if where:
-                search = search.where(where, prefilter=True)
-            tbl = search.to_arrow()
-            cols = [c for c in self._KEYWORD_PROJECTION if c in tbl.column_names]
-            rows = tbl.select(cols).to_pylist()
-        except Exception as exc:
-            logger.debug("keyword leg scan failed: %s", exc)
-            return {}
-        scores: dict[str, float] = {}
-        for row in rows:
-            source_norm = normalize_term(str(row.get("source_text", "")))
-            best = 0.0
-            for term in terms:
-                if not term:
-                    continue
-                if source_norm == term:
-                    best = max(best, 1.0)
-                elif source_norm.startswith(term) or term.startswith(source_norm):
-                    best = max(best, 0.8)
-                elif term in source_norm:
-                    best = max(best, 0.6)
-            if best:
-                scores[str(row.get("id"))] = best
-        return scores
-
-    def _rrf_fuse(
-        self,
-        vector_scores: dict[str, float],
-        keyword_scores: dict[str, float],
-        depth: int,
-    ) -> list[tuple[str, float]]:
-        """Reciprocal-rank fusion of the two legs, ordered best-first."""
-        vector_weight = self._env_float("OMNISCRIBE_LEXICON_VECTOR_WEIGHT", 0.6)
-        keyword_weight = self._env_float("OMNISCRIBE_LEXICON_KEYWORD_WEIGHT", 0.4)
-        fused: dict[str, float] = {}
-        for rank, (gid, _score) in enumerate(
-            sorted(vector_scores.items(), key=lambda kv: -kv[1])[:depth]
-        ):
-            fused[gid] = fused.get(gid, 0.0) + vector_weight / (self.RRF_K + rank + 1)
-        for rank, (gid, _score) in enumerate(
-            sorted(keyword_scores.items(), key=lambda kv: -kv[1])[:depth]
-        ):
-            fused[gid] = fused.get(gid, 0.0) + keyword_weight / (self.RRF_K + rank + 1)
-        return sorted(fused.items(), key=lambda kv: -kv[1])
-
-    def _rows_by_id(self, ids: set[str]) -> dict[str, dict[str, Any]]:
-        if not ids:
-            return {}
-        escaped = ", ".join(f"'{_sql_escape(g)}'" for g in ids)
-        rows: dict[str, dict[str, Any]] = {}
-        try:
-            tbl = self._table.search().where(f"id IN ({escaped})").to_arrow()
-            cols = [c for c in self._KEYWORD_PROJECTION if c in tbl.column_names]
-            rows = {str(r["id"]): r for r in tbl.select(cols).to_pylist()}
-        except Exception:
-            try:
-                tbl = self._table.to_arrow()
-                cols = [c for c in self._KEYWORD_PROJECTION if c in tbl.column_names]
-                for r in tbl.select(cols).to_pylist():
-                    if str(r.get("id")) in ids:
-                        rows[str(r["id"])] = r
-            except Exception:
-                return {}
-        return rows
-
-    def _hybrid_via_arrow(self, query: LexiconQuery) -> list[LexiconHit]:
-        """Fallback ranking when the LanceDB vector search path failed.
-
-        Pushes the supported WHERE subset into LanceDB before materialising
-        rows; remaining predicates apply in-Python via :meth:`_matches_query`.
-        Pure-vector (degraded path) with clamped scores.
-        """
-        import numpy as np
-
-        try:
-            where = self._build_where(query)
-            if where:
-                tbl = self._table.search().where(where).to_arrow()
-            else:
-                tbl = self._table.to_arrow()
-        except Exception:
-            try:
-                tbl = self._table.to_arrow()
-            except Exception:
-                return []
-        if tbl.num_rows == 0:
-            return []
-
-        rows = tbl.to_pylist()
-        candidates = [r for r in rows if self._matches_query(r, query)]
-        if not candidates:
-            return []
-
-        query_vec = np.asarray(
-            self._embedding.embed(query.source_chunk), dtype=np.float32
-        )
-        emb_matrix = np.asarray([r["embedding"] for r in candidates], dtype=np.float32)
-        qn = query_vec / (np.linalg.norm(query_vec) + 1e-12)
-        en = emb_matrix / (np.linalg.norm(emb_matrix, axis=1, keepdims=True) + 1e-12)
-        scores = en @ qn
-        order = np.argsort(-scores)
-        hits: list[LexiconHit] = []
-        for idx in order:
-            score = max(0.0, min(1.0, float(scores[idx])))
-            if query.min_score is not None and score < query.min_score:
-                continue
-            row = candidates[int(idx)]
-            hits.append(
-                LexiconHit(entry=_entry_from_row(row), score=score, keyword_score=0.0)
-            )
-            if len(hits) >= query.limit:
-                break
-        return hits
-
     def _build_where(self, query: LexiconQuery) -> str | None:
-        """Build a LanceDB WHERE clause string from the structured filters."""
-        clauses: list[str] = []
-        if query.source_lang:
-            clauses.append(f"source_lang = '{_sql_escape(query.source_lang)}'")
-        if query.target_lang:
-            clauses.append(f"target_lang = '{_sql_escape(query.target_lang)}'")
-        if query.domain:
-            clauses.append(f"domain = '{_sql_escape(query.domain)}'")
-        if query.enabled_only:
-            clauses.append("glossary_enabled = true")
-        if query.glossary_ids is not None:
-            allowed = ", ".join(f"'{_sql_escape(str(g))}'" for g in query.glossary_ids)
-            clauses.append(f"glossary_id IN ({allowed})")
-        return " AND ".join(clauses) if clauses else None
+        return self._search_engine.build_where(query)
 
 
 class GlossaryNotFoundError(KeyError):
@@ -1096,6 +641,7 @@ class GlossaryNotFoundError(KeyError):
 
 
 __all__ = [
+    "EmbeddingModelMismatchError",
     "GlossaryNotFoundError",
     "LanceDBLexiconStore",
     "_row_from_entry",

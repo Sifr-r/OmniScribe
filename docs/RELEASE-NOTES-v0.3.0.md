@@ -38,7 +38,7 @@ The single-binary Windows distribution per
 **deferred from v0.2.0** because the PyInstaller bundle
 crashed at boot with `ModuleNotFoundError: No module named
 'anyio'` after 14 build attempts. Sprint 1 of
-[RFC 002](rfcs/2026-09-v0.3.0-scope.md) identified the
+RFC 002 identified the
 actual cause and shipped the fix. The full root-cause
 analysis is at
 [`docs/rfcs/2026-09-bundle-sprint-1-findings.md`](rfcs/2026-09-bundle-sprint-1-findings.md).
@@ -87,7 +87,7 @@ fix is five lines:
    discovered automatically by `scripts/iterative_bundle.py`).
 
 The minimal reproducer at
-[`repro/`](../../repro) (40 lines of spec + 21 lines of
+[`repro/`](../repro) (40 lines of spec + 21 lines of
 entry script) proves the anyio part is local, not upstream.
 The 14 prior attempts spent on hooks, force-imports, and
 version downgrades were fighting a phantom.
@@ -323,7 +323,7 @@ See [`docs/DEPLOYMENT.md`](DEPLOYMENT.md):
 
 - **U12 — in-UI "try with sample PDF" affordance** is
   deferred to v0.3.x Sprint 3 (per
-  [RFC 002](rfcs/2026-09-v0.3.0-scope.md) §4). The
+  RFC 002 §4). The
   end-user audit finding U12 ("a new user has no easy way
   to confirm the install works without finding their own
   PDF") is real; the fix is a FastAPI `/api/sample-pdf/{name}`
@@ -373,10 +373,10 @@ The full spec for v0.2.0 was the two docs under
 
 - **[`2026-09-04-five-lens-audit.md`](audits/2026-09-04-five-lens-audit.md)**
   (51 KB) — the 5-lens audit that drove the v0.2.0 work.
-- **[`2026-09-04-remediation-plan.md`](audits/2026-09-04-remediation-plan.md)**
+- **`2026-09-04-remediation-plan.md`**
   — the 6-phase plan; v0.3.0 closes Phase 4 (the
   single-binary distribution).
-- **[`rfcs/2026-09-v0.3.0-scope.md`](rfcs/2026-09-v0.3.0-scope.md)**
+- **`rfcs/2026-09-v0.3.0-scope.md`**
   (RFC 002, 9.2 KB) — the v0.3.0 plan, including the bundle
   decision (Option (a) — wait for upstream PyInstaller
   fix; superseded by Sprint 1's local-bug finding), the
@@ -393,7 +393,7 @@ in at least one phase; none is dropped.
 
 ## 8. Next steps (post-v0.3.0)
 
-Per [RFC 002](rfcs/2026-09-v0.3.0-scope.md) §5:
+Per RFC 002 §5:
 
 - **Sprint 3 (next)** — U12 "try with sample PDF": FastAPI
   `/api/sample-pdf/{name}` route + Flutter Workstation

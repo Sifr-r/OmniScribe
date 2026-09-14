@@ -52,12 +52,6 @@ _LEVELS: tuple[HallucinationRisk, ...] = (
 )
 
 
-def _bump(risk: HallucinationRisk) -> HallucinationRisk:
-    """Bump risk one level (capped at HIGH)."""
-    idx = _LEVELS.index(risk)
-    return _LEVELS[min(idx + 1, len(_LEVELS) - 1)]
-
-
 def _strong_bump(risk: HallucinationRisk) -> HallucinationRisk:
     """Bump risk two levels (e.g., ``NONE`` → ``MEDIUM``).
 

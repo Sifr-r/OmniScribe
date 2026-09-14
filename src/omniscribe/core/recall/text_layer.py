@@ -21,6 +21,7 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass
+from typing import ClassVar
 
 import pymupdf as fitz  # PyMuPDF
 
@@ -68,18 +69,7 @@ TEXT_LAYER_AGREEMENT_TARGET = 0.2
 class TextLayerRecallOptions(BaseRecallOptions):
     """Configuration options for PDF text-layer secondary recall."""
 
-    @classmethod
-    def from_env(cls) -> TextLayerRecallOptions:
-        """Seed from ``OMNISCRIBE_TEXT_LAYER_RECALL`` (default on).
-
-        Only explicit disable values (``0``/``false``/``no``/``off``/
-        ``n``/``disabled``, case-insensitive) turn the pass off; unset or
-        unrecognized values keep it enabled.
-
-        The env read goes through :func:`omniscribe.utils.env.env_str`
-        (audit H3) so this module no longer imports ``os``.
-        """
-        return cls._from_env(_ENV_TEXT_LAYER_RECALL)
+    env_var: ClassVar[str] = _ENV_TEXT_LAYER_RECALL
 
 
 class PdfTextLayerRecall:
@@ -270,22 +260,3 @@ def token_agreement(ocr_text: str, layer_text: str) -> float:
         return 1.0
     hits = sum(1 for t in ocr_tokens if t in layer_tokens)
     return hits / len(ocr_tokens)
-
-
-def _overlaps_existing(candidate: BBox, existing_boxes: list[BBox]) -> bool:
-    """True when the candidate is already explained by a merged box."""
-    return geometry.overlaps(
-        candidate,
-        existing_boxes,
-        max_containment=_MAX_CONTAINMENT,
-        max_iou=_MAX_IOU,
-    )
-
-
-def _straddles_existing(candidate: BBox, existing_boxes: list[BBox]) -> bool:
-    """True when the candidate spans >= 2 merged boxes (gutter/stacked lines)."""
-    return geometry.straddles(
-        candidate,
-        existing_boxes,
-        straddle_min_overlap=_STRADDLE_MIN_OVERLAP,
-    )

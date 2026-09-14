@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:omniscribe_client/core/theme/app_theme.dart';
 import 'package:omniscribe_client/data/providers/settings_notifier.dart';
@@ -7,6 +8,12 @@ import 'package:omniscribe_client/presentation/shell/shell_state.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // Debug affordance: ``?a11y=1`` forces the semantics tree on so headless
+  // browser tooling (docs screenshot capture, CI UI checks) can drive the
+  // app without a real screen reader attached.
+  if (Uri.base.queryParameters['a11y'] == '1') {
+    SemanticsBinding.instance.ensureSemantics();
+  }
   runApp(
     const ProviderScope(
       child: OmniScribeApp(),

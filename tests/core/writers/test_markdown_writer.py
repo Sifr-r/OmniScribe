@@ -12,7 +12,6 @@ from omniscribe.core.block_tree import (
 from omniscribe.core.document import DocumentBlock, DocumentPage, DocumentResult
 from omniscribe.core.writers.exporter_base import BaseDocumentExporter
 from omniscribe.core.writers.markdown import (
-    MarkdownExporter,
     MarkdownWriter,
     render_markdown,
 )
@@ -21,7 +20,6 @@ from omniscribe.core.writers.markdown import (
 def test_markdown_writer_hierarchy() -> None:
     writer = MarkdownWriter()
     assert isinstance(writer, BaseDocumentExporter)
-    assert MarkdownExporter is MarkdownWriter
 
 
 def test_markdown_writer_headings() -> None:

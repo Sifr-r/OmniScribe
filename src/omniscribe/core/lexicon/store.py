@@ -17,10 +17,10 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Protocol, runtime_checkable
 
-# Embedding model dimension is fixed by the pinned model in ``embedding.py``.
-# We re-export the constant here so callers don't need to import the embedding
-# module just to validate or construct a query.
-EMBEDDING_DIM: int = 384
+# Re-export the canonical ``EMBEDDING_DIM`` from :mod:`.embedding` so callers
+# don't need to import the embedding module just to validate or construct a
+# query. The single source of truth lives in :mod:`.embedding` (audit F6).
+from .embedding import EMBEDDING_DIM
 
 
 def normalize_term(text: str) -> str:
@@ -187,7 +187,7 @@ class LexiconStore(Protocol):
 
 
 __all__ = [
-    "EMBEDDING_DIM",
+    "EMBEDDING_DIM",  # re-exported from .embedding
     "GlossaryMeta",
     "LexiconEntry",
     "LexiconHit",

@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:omniscribe_client/core/theme/app_colors.dart';
 import 'package:omniscribe_client/core/theme/app_typography.dart';
 import 'package:omniscribe_client/data/models/feature_models.dart';
+import 'package:omniscribe_client/data/providers/job_orchestration_notifier.dart';
 import 'package:omniscribe_client/data/providers/repository_providers.dart';
 import 'package:omniscribe_client/data/providers/workstation_notifier.dart';
 import 'package:omniscribe_client/presentation/common/app_badge.dart';
@@ -96,6 +97,7 @@ class _ExportModalState extends ConsumerState<ExportModal> {
 
   Future<void> _handleExport() async {
     final wsState = ref.read(workstationProvider);
+    final jobState = ref.read(jobOrchestrationProvider);
     final repo = ref.read(featureRepositoryProvider);
 
     setState(() {
@@ -138,12 +140,12 @@ class _ExportModalState extends ConsumerState<ExportModal> {
           break;
 
         case ExportFormat.docxTree:
-          if (wsState.textArtifactId != null &&
-              wsState.textArtifactToken != null) {
+          if (jobState.textArtifactId != null &&
+              jobState.textArtifactToken != null) {
             final bytes = await repo.exportDocxTree(
               ExportBlockTreeRequest(
-                textArtifactId: wsState.textArtifactId!,
-                textArtifactToken: wsState.textArtifactToken!,
+                textArtifactId: jobState.textArtifactId!,
+                textArtifactToken: jobState.textArtifactToken!,
               ),
             );
             await _saveWithPicker(
@@ -230,6 +232,7 @@ class _ExportModalState extends ConsumerState<ExportModal> {
   Widget build(BuildContext context) {
     final colors = context.colors;
     final wsState = ref.watch(workstationProvider);
+    final jobState = ref.watch(jobOrchestrationProvider);
 
     return ConstrainedBox(
       constraints: const BoxConstraints(maxWidth: 540),
@@ -324,9 +327,9 @@ class _ExportModalState extends ConsumerState<ExportModal> {
                             color: colors.textMuted,
                           ),
                         ),
-                        if ((wsState.trustSummary?.flaggedCount ?? 0) > 0)
+                        if ((jobState.trustSummary?.flaggedCount ?? 0) > 0)
                           Text(
-                            '${wsState.trustSummary!.flaggedCount} block${wsState.trustSummary!.flaggedCount == 1 ? "" : "s"} flagged for review',
+                            '${jobState.trustSummary!.flaggedCount} block${jobState.trustSummary!.flaggedCount == 1 ? "" : "s"} flagged for review',
                             style: AppTypography.micro(
                               color: colors.warning,
                             ),

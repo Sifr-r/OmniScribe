@@ -39,6 +39,25 @@ class BlockType(StrEnum):
     KEY_VALUE = "key_value"
 
 
+def block_type_str(block_type: Any) -> str:
+    """Coerce a :class:`BlockType` (or string-ish fallback) to its string value.
+
+    Replaces the byte-identical defensive dance that used to live in every
+    writer and chunker (audit F9):
+
+        bt = (
+            node.block_type.value
+            if hasattr(node.block_type, "value")
+            else str(node.block_type)
+        )
+
+    A ``BlockType`` enum is a :class:`enum.StrEnum`, so ``block_type.value`` is
+    already a ``str``; the ``hasattr`` branch only fires for tests or external
+    callers that pass plain strings or ``None``.
+    """
+    return block_type.value if hasattr(block_type, "value") else str(block_type or "")
+
+
 _BBox = tuple[float, float, float, float]
 
 

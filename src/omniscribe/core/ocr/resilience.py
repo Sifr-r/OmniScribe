@@ -327,22 +327,6 @@ class CircuitBreaker:
                     self.cooldown_seconds,
                 )
 
-    # Async-friendly shims. Async OCR call sites awaiting the breaker
-    # API surface are first-class: pipeline code uniformly awaits
-    # ``cb.acheck()`` / ``cb.arecord_failure()`` regardless of whether
-    # the underlying implementation needs the event loop. The shims
-    # simply proxy to the synchronous implementations when there is
-    # no actual awaitable work; the registry's lock guarantees the
-    # bookkeeping stays consistent even under concurrent awaits.
-    async def acheck(self) -> None:
-        await self.check()
-
-    async def arecord_success(self) -> None:
-        await self.record_success()
-
-    async def arecord_failure(self) -> None:
-        await self.record_failure()
-
 
 class CircuitBreakerRegistry:
     """Process-wide pool of :class:`CircuitBreaker` keyed by endpoint.

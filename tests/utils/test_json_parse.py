@@ -68,3 +68,22 @@ def test_extract_json_recovers_after_invalid_brace() -> None:
 def test_extract_json_performance_with_many_unmatched_braces() -> None:
     raw = "{" * 500 + ' ["found"]'
     assert extract_json(raw) == ["found"]
+
+
+def test_extract_json_bounded_on_unterminated_nesting() -> None:
+    assert extract_json('{"a":' * 5000) is None
+
+
+def test_extract_json_recovers_after_long_unterminated_prefix() -> None:
+    raw = '{"a":' * 2000 + '{"ok": 1}'
+    assert extract_json(raw) == {"ok": 1}
+
+
+def test_extract_json_braces_inside_strings_do_not_truncate() -> None:
+    raw = '{"code": "if (a[b] { return; }", "n": 2}'
+    assert extract_json(raw) == {"code": "if (a[b] { return; }", "n": 2}
+
+
+def test_extract_json_first_candidate_wins_despite_prose_quotes() -> None:
+    raw = 'he said " {"a": 1} " and then {"b": 2}'
+    assert extract_json(raw) == {"a": 1}

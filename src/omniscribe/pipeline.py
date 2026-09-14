@@ -51,6 +51,25 @@ if TYPE_CHECKING:
 
 
 class OCRPipeline:
+    """High-level façade over the hybrid / grounded OCR engines.
+
+    Constructor chooses the engine:
+
+    * ``grounded_backend=`` → :class:`GroundedEngine` (latency-optimal,
+      bbox-native VLM path).
+    * ``aligner=`` + ``ocr_processor=`` → :class:`HybridEngine` (Surya
+      layout + VLM OCR + DP alignment; optionally refine).
+
+    ``pdf_handler`` is required for output writing. ``output_writer``
+    is auto-resolved to ``pdf_handler`` itself when it implements the
+    :class:`DocumentResultWriter` protocol, falling back to the legacy
+    ``embed_structured_text`` callable otherwise.
+
+    The pipeline is the supported in-process programmatic entry point
+    (the user-facing ``omniscribe`` CLI script was retired in favour
+    of the FastAPI surface; see ``omniscribe.server``).
+    """
+
     def __init__(
         self,
         aligner=None,
@@ -63,6 +82,13 @@ class OCRPipeline:
         block_callbacks: BlockCallbackSet | None = None,
         trust_orchestrator: TrustOrchestrator | None = None,
     ):
+        """Construct the pipeline and build the appropriate engine.
+
+        See the class docstring for parameter semantics. Raises
+        :class:`ValueError` if ``pdf_handler`` is missing or if the
+        hybrid path is selected without both ``aligner`` and
+        ``ocr_processor``.
+        """
         self.grounded_backend = grounded_backend
         if pdf_handler is None:
             raise ValueError("pdf_handler is required (used for output writing)")
@@ -143,10 +169,12 @@ class OCRPipeline:
 
     @property
     def last_document_result(self):
+        """Return the most recent ``DocumentResult`` emitted by the engine."""
         return self._engine.last_document_result
 
     @property
     def last_failed_pages(self):
+        """Return the most recent run's list of failed page numbers."""
         return self._engine.last_failed_pages
 
     async def run(
@@ -174,6 +202,16 @@ class OCRPipeline:
         repair_options: RepairOptions | None = None,
         cancel_check: CancelCheck | None = None,
     ) -> dict[int, list[str]]:
+        """Run OCR on ``input_path`` → ``output_path``.
+
+        Dispatches to whichever engine was chosen at construction
+        time. Hybrid-only parameters (``pages``, ``concurrency``,
+        ``refine``, ``max_image_dim``, ``dense_*``, ``self_correction``,
+        ``binarize``, ``dual_engine``, ``preprocessing_options``,
+        ``quality_routing_options``) are silently ignored on the
+        grounded path; ``trust_model_id`` defaults to ``"unknown"``
+        so the trust layer stays off unless explicitly opted in.
+        """
         # Phase 2 — `trust_model_id` is the model identifier the trust
         # layer calibrates against (e.g. ``"qwen2_5_vl_72b"``). When
         # ``None`` (default), no per-model calibration lookup happens
