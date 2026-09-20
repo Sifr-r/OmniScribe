@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from omniscribe.core.block_tree import (
     BlockNode,
     BlockType,
@@ -205,3 +207,30 @@ def test_docx_tree_writer_renders_all_block_types():
     assert "Confidential Header Should Be Skipped" not in all_paragraph_text
     assert "Footer Note Should Be Skipped" not in all_paragraph_text
     assert "Page 42 Should Be Skipped" not in all_paragraph_text
+
+
+def test_docx_tree_writer_figure_image_failure_logs_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import logging
+
+    tree = DocumentTree(
+        pages=[
+            PageTree(
+                page_idx=0,
+                children=[
+                    BlockNode(
+                        block_type=BlockType.FIGURE,
+                        bbox=(0.0, 0.0, 1.0, 0.5),
+                        text="A broken figure",
+                        metadata={"image_bytes": b"not_a_valid_image"},
+                        page_idx=0,
+                    )
+                ],
+            )
+        ]
+    )
+    with caplog.at_level(logging.WARNING):
+        convert_tree_to_docx(tree)
+
+    assert any("Failed to embed figure image" in rec.message for rec in caplog.records)

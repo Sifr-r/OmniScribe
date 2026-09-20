@@ -22,7 +22,12 @@ from fastapi.responses import JSONResponse
 if TYPE_CHECKING:
     from omniscribe.plugins.errors import PluginError
 
-__all__ = ["bearer_token", "envelope", "plugin_error_exception_handler"]
+__all__ = [
+    "bearer_token",
+    "envelope",
+    "extract_token",
+    "plugin_error_exception_handler",
+]
 
 
 def envelope(status_code: int, error: str, detail: str) -> JSONResponse:
@@ -45,6 +50,28 @@ def bearer_token(authorization: str | None) -> str | None:
     """
     if authorization and authorization.startswith("Bearer "):
         return authorization.removeprefix("Bearer ").strip()
+    return None
+
+
+def extract_token(
+    *,
+    token: str | None = None,
+    authorization: str | None = None,
+    x_artifact_token: str | None = None,
+    x_job_token: str | None = None,
+) -> str | None:
+    """Extract capability token from query parameter or headers."""
+    if token and token.strip():
+        return token.strip()
+    if x_job_token and x_job_token.strip():
+        return x_job_token.strip()
+    if x_artifact_token and x_artifact_token.strip():
+        return x_artifact_token.strip()
+    if authorization and authorization.strip():
+        auth = authorization.strip()
+        if auth.startswith("Bearer "):
+            return auth.removeprefix("Bearer ").strip()
+        return auth
     return None
 
 

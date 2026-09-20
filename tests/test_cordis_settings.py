@@ -214,15 +214,13 @@ def test_state_backend_sqlite_allowed(monkeypatch: pytest.MonkeyPatch) -> None:
     assert settings.state_backend == "sqlite"
 
 
-def test_state_backend_redis_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
-    from pydantic import ValidationError
-
+def test_state_backend_redis_allowed(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("OMNISCRIBE_STATE_BACKEND", "redis")
-    with pytest.raises(
-        ValidationError,
-        match="state backend 'redis' is not yet implemented in the plugin harness; supported backends are 'memory' and 'sqlite'",
-    ):
-        RuntimeSettings()
+    assert RuntimeSettings().state_backend == "redis"
+
+
+def test_state_backend_blank_preserves_sqlite_default() -> None:
+    assert RuntimeSettings(state_backend="").state_backend == "sqlite"
 
 
 def test_state_backend_unsupported_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -231,6 +229,6 @@ def test_state_backend_unsupported_rejected(monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.setenv("OMNISCRIBE_STATE_BACKEND", "unsupported")
     with pytest.raises(
         ValidationError,
-        match="state backend 'unsupported' is not yet implemented in the plugin harness; supported backends are 'memory' and 'sqlite'",
+        match="unsupported state backend 'unsupported'",
     ):
         RuntimeSettings()

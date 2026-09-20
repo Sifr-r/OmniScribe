@@ -421,8 +421,8 @@ async def _drive_loop(state: TranslationState) -> TranslationState:
     """Drive the real nodes through the same cycle the compiled graph wires."""
     settings = state["settings"]
     for _ in range(settings.max_attempts):
-        state.update(await translate_node(state))  # type: ignore[arg-type]
-        state.update(await evaluate_node(state))  # type: ignore[arg-type]
+        state.update(await translate_node(state))  # type: ignore[typeddict-item]
+        state.update(await evaluate_node(state))  # type: ignore[typeddict-item]
         if should_refine(state) == "end":
             break
     return state
@@ -552,6 +552,70 @@ def test_run_translation_raises_translation_error_on_failed_state(
 
     with pytest.raises(TranslationError, match="Translation failed"):
         run_translation("Hello world", target_language="French")
+
+
+def test_run_translation_raises_on_blank_translation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """run_translation raises TranslationError when translated chunk is blank for non-empty text."""
+    mock_app = MagicMock()
+    mock_app.ainvoke = AsyncMock(
+        return_value={"failed": False, "translated_chunk": "   "}
+    )
+    monkeypatch.setattr(
+        "omniscribe.core.translate.workflow.get_translation_app",
+        lambda: mock_app,
+    )
+
+    with pytest.raises(TranslationError, match="Empty translation received"):
+        run_translation("Hello non-empty world", target_language="French")
+
+
+async def test_evaluate_node_rejects_blank_translation_for_non_empty_source() -> None:
+    """evaluate_node treats blank translation of non-empty source as failure (score=0.0)."""
+    state: TranslationState = {
+        "source_chunk": "Important document paragraph.",
+        "translated_chunk": "   ",
+        "attempts": 1,
+        "settings": TranslationSettings(max_attempts=3, evaluate_enabled=True),
+    }
+    result = await evaluate_node(state)
+    assert result["evaluation_score"] == 0.0
+    assert result["feedback"] == "Empty translation received"
+
+
+async def test_evaluate_node_blank_translation_marks_failed_at_max_attempts() -> None:
+    """evaluate_node marks failed=True when attempts reach max_attempts on blank translation."""
+    state: TranslationState = {
+        "source_chunk": "Important document paragraph.",
+        "translated_chunk": "",
+        "attempts": 3,
+        "settings": TranslationSettings(max_attempts=3, evaluate_enabled=True),
+    }
+    result = await evaluate_node(state)
+    assert result["evaluation_score"] == 1.0
+    assert result.get("failed") is True
+
+
+def test_chunk_text_splits_oversized_single_token() -> None:
+    """chunk_text forcibly splits tokens that exceed max_chunk_size."""
+    long_token = "A" * 100
+    chunks = chunk_text(long_token, max_chunk_size=25)
+    assert len(chunks) == 4
+    assert all(len(c) <= 25 for c in chunks)
+    assert "".join(chunks) == long_token
+
+
+def test_chunker_add_splits_oversized_text() -> None:
+    """_Chunker.add splits text exceeding max_chunk_size into slices."""
+    chunker = _Chunker(max_chunk_size=10)
+    chunker.add("hello", " ")
+    chunker.add("1234567890ABCDEFGH", " ")
+    chunks = chunker.finalize()
+    assert all(len(c) <= 10 for c in chunks)
+    assert chunks[0] == "hello"
+    assert chunks[1] == "1234567890"
+    assert chunks[2] == "ABCDEFGH"
 
 
 # ---------------------------------------------------------------------------

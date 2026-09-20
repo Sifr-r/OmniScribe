@@ -8,8 +8,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from omniscribe.core.lexicon.lancedb_store import GlossaryNotFoundError
 from omniscribe.core.lexicon.store import (
+    GlossaryNotFoundError,
     LexiconEntry,
     LexiconStore,
     normalize_term,

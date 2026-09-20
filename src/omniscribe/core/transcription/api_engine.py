@@ -32,11 +32,15 @@ class GenericAudioAPIEngine:
         api_base: str = "https://api.openai.com/v1",
         api_key: str | None = None,
         timeout: float = 300.0,
+        resolved_ip: str | None = None,
+        transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
         self.model = model.strip() if model else "whisper-1"
         self.api_base = (api_base or "https://api.openai.com/v1").rstrip("/")
         self.api_key = api_key
         self.timeout = timeout
+        self.resolved_ip = resolved_ip
+        self.transport = transport
 
     async def transcribe(
         self,
@@ -47,6 +51,10 @@ class GenericAudioAPIEngine:
         temperature: float = 0.0,
     ) -> TranscriptionResult:
         """Send audio bytes to `/v1/audio/transcriptions` with retries on transient errors."""
+        from urllib.parse import urlsplit
+
+        from omniscribe.utils.security import _PinnedIPTransport
+
         url = f"{self.api_base}/audio/transcriptions"
         headers = {}
         if self.api_key:
@@ -67,9 +75,21 @@ class GenericAudioAPIEngine:
         max_attempts = 3
         last_exception: Exception | None = None
 
+        if self.transport is not None:
+            effective_transport: httpx.AsyncBaseTransport | None = self.transport
+        elif self.resolved_ip:
+            target_host = urlsplit(self.api_base).hostname or ""
+            effective_transport = _PinnedIPTransport(target_host, self.resolved_ip)
+        else:
+            effective_transport = None
+
+        client_kwargs: dict[str, Any] = {"timeout": self.timeout}
+        if effective_transport is not None:
+            client_kwargs["transport"] = effective_transport
+
         # One client across all attempts — connection pooling and no
         # per-attempt socket churn.
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
+        async with httpx.AsyncClient(**client_kwargs) as client:
             for attempt in range(1, max_attempts + 1):
                 try:
                     response = await client.post(

@@ -186,9 +186,14 @@ class LexiconStore(Protocol):
     def close(self) -> None: ...
 
 
+class GlossaryNotFoundError(KeyError):
+    """Raised when an operation targets a glossary id that does not exist."""
+
+
 __all__ = [
     "EMBEDDING_DIM",  # re-exported from .embedding
     "GlossaryMeta",
+    "GlossaryNotFoundError",
     "LexiconEntry",
     "LexiconHit",
     "LexiconQuery",

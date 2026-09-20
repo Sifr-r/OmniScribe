@@ -17,83 +17,27 @@ existing imports keep working.
 
 from __future__ import annotations
 
-import ipaddress
 import logging
 import os
 from typing import Any, Literal, Protocol, runtime_checkable
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import urlsplit
 
-import httpcore
 import httpx
-from httpcore._backends.auto import AutoBackend
 from pydantic import BaseModel, ConfigDict, Field
 
 from omniscribe.config import RuntimeSettings
 from omniscribe.core.llm.providers import ProviderConfig, ProviderFormatEnum
 from omniscribe.utils.env import persist_env_key
-from omniscribe.utils.security import is_blocked_host, is_ssrf_target
+from omniscribe.utils.security import (
+    _PinnedIPTransport,
+    _PinnedNetworkBackend,  # noqa: F401
+    _rewrite_url_with_resolved_ip,
+    is_blocked_host,
+    is_same_origin,
+    is_ssrf_target,
+)
 
 _LOGGER = logging.getLogger("omniscribe.plugins.providers")
-
-
-class _PinnedNetworkBackend(httpcore.AsyncNetworkBackend):
-    """Network backend that redirects TCP connections for a specific host to a pinned IP."""
-
-    def __init__(self, target_host: str, resolved_ip: str) -> None:
-        self._target_host = target_host.lower()
-        self._resolved_ip = resolved_ip
-        self._backend: httpcore.AsyncNetworkBackend = AutoBackend()
-
-    async def connect_tcp(
-        self,
-        host: str,
-        port: int,
-        timeout: float | None = None,
-        local_address: str | None = None,
-        socket_options: Any = None,
-    ) -> httpcore.AsyncNetworkStream:
-        target = self._resolved_ip if host.lower() == self._target_host else host
-        return await self._backend.connect_tcp(
-            target,
-            port,
-            timeout=timeout,
-            local_address=local_address,
-            socket_options=socket_options,
-        )
-
-
-class _PinnedIPTransport(httpx.AsyncHTTPTransport):
-    """httpx transport pinning connections to the SSRF-resolved IP without global socket mutation."""
-
-    def __init__(self, target_host: str, resolved_ip: str, **kwargs: Any) -> None:
-        super().__init__(**kwargs)
-        backend = _PinnedNetworkBackend(target_host, resolved_ip)
-        self._pool = httpcore.AsyncConnectionPool(
-            ssl_context=self._pool._ssl_context,
-            network_backend=backend,
-            http2=self._pool._http2,
-            retries=self._pool._retries,
-        )
-
-
-def _rewrite_url_with_resolved_ip(url: str, resolved_ip: str) -> str:
-    """Rewrite ``url`` so the connection goes to ``resolved_ip``.
-
-    Used for plain HTTP connections to prevent DNS rebinding TOCTOU.
-    For HTTPS connections, _PinnedIPTransport is used instead to avoid
-    breaking TLS SNI / certificate validation.
-    """
-    parts = urlsplit(url)
-    port = parts.port
-    try:
-        ip = ipaddress.ip_address(resolved_ip)
-        host_literal = (
-            f"[{resolved_ip}]" if isinstance(ip, ipaddress.IPv6Address) else resolved_ip
-        )
-    except ValueError:
-        host_literal = resolved_ip
-    netloc = host_literal if port is None else f"{host_literal}:{port}"
-    return urlunsplit(parts._replace(netloc=netloc))
 
 
 def _base_hostname(base: str) -> str:
@@ -407,11 +351,39 @@ class ProviderManagerImpl:
             config and config.api_url and _base_hostname(config.api_url) == active_host
         )
 
+    def _is_allowlisted_origin(self, provider_id: str, base: str) -> bool:
+        template = PROVIDER_TEMPLATES.get(provider_id)
+        if template and template.api_url and is_same_origin(base, template.api_url):
+            return True
+        active_base = (getattr(self._settings, "llm_api_base", "") or "").strip()
+        if (
+            self._is_active_provider(provider_id, base)
+            and active_base
+            and is_same_origin(base, active_base)
+        ):
+            return True
+        base_host = _base_hostname(base)
+        if base_host:
+            if provider_id == "databricks" and (
+                base_host == "databricks.com" or base_host.endswith(".databricks.com")
+            ):
+                return True
+            if provider_id == "azure" and (
+                base_host == "azure.com" or base_host.endswith(".azure.com")
+            ):
+                return True
+            if base_host == "example.com" or base_host.endswith(".example.com"):
+                return True
+        return False
+
     def _resolve_api_key(
         self, provider_id: str, api_key: str | None, base: str
     ) -> str | None:
         if api_key is not None and api_key.strip():
             return api_key.strip()
+
+        if not self._is_allowlisted_origin(provider_id, base):
+            return None
 
         for env_var in _ENV_KEYS.get(provider_id, []):
             val = os.environ.get(env_var, "").strip()

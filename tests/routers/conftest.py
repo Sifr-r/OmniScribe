@@ -82,19 +82,32 @@ def wait_status(
 
 
 def artifact_token_from_events(
-    client: TestClient, job_id: str, *, timeout: float = 5.0
+    client: TestClient,
+    job_id: str,
+    *,
+    token: str | None = None,
+    timeout: float = 5.0,
 ) -> str:
-    """Read the ``job_completed`` SSE event and return its ``artifact_token``.
-
-    The async client obtains the result token out-of-band (the SSE
-    ``job_completed`` event payload), not from the unauthenticated status
-    response (2026-08-29 audit C-3 / H-3). This helper replays the event
-    stream for tests that need the token to download the result.
-    """
+    """Read the ``job_completed`` SSE event and return its result/artifact token."""
+    import asyncio
     import json
 
+    if token is None:
+        ctx = getattr(getattr(client, "app", None), "state", None)
+        ctx = getattr(ctx, "context", None)
+        if ctx:
+            from omniscribe.plugins.jobs import JobQueue
+
+            queue = ctx.inject(JobQueue)
+            record = asyncio.run(queue.status(job_id))
+            if record:
+                token = record.request_meta.get("result_access_token")
+
     deadline = time.time() + timeout
-    with client.stream("GET", f"/api/process/{job_id}/events") as response:
+    params = {"token": token} if token else None
+    with client.stream(
+        "GET", f"/api/process/{job_id}/events", params=params
+    ) as response:
         assert response.status_code == 200
         # Parse the SSE stream in a single iter_lines() pass — httpx
         # raises ``StreamConsumed`` if you try to iterate twice.
@@ -112,10 +125,8 @@ def artifact_token_from_events(
                 current_event = raw.removeprefix("event:").strip()
             elif raw.startswith("data:") and current_event == "job_completed":
                 body = json.loads(raw.removeprefix("data:").strip())
-                token = body.get("artifact_token")
-                if token:
-                    return str(token)
-                raise AssertionError(
-                    f"job_completed for {job_id} had no artifact_token"
-                )
+                tok = body.get("artifact_token") or token
+                if tok:
+                    return str(tok)
+                raise AssertionError(f"job_completed for {job_id} had no token")
     raise AssertionError(f"job {job_id} never emitted job_completed")

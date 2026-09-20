@@ -16,6 +16,7 @@ import asyncio
 import json
 import time
 from collections.abc import AsyncIterator
+from dataclasses import replace
 from typing import Any
 
 import fakeredis.aioredis
@@ -25,6 +26,7 @@ from omniscribe.harness.context import Context
 from omniscribe.plugins import artifacts as art_plugin
 from omniscribe.plugins.artifacts import ArtifactStore
 from omniscribe.plugins.jobs import (
+    JobFailed,
     JobHandle,
     JobOutcome,
     JobQueue,
@@ -33,16 +35,19 @@ from omniscribe.plugins.jobs import (
 from omniscribe.plugins.jobs_redis import (
     KEY_ACTIVE,
     KEY_HEARTBEAT_PREFIX,
+    KEY_PAYLOAD_PREFIX,
     KEY_QUEUE,
     RedisJobQueue,
 )
+from omniscribe.plugins.ocr.schemas import OCRRequest
+from omniscribe.plugins.ocr.service import _OcrPayload
 from omniscribe.plugins.progress import (
     ProgressService,
     ProgressServiceImpl,
 )
 from omniscribe.plugins.state_backend_redis import RedisStateBackend
 from omniscribe.plugins.state_backend_types import StateBackend
-from omniscribe.worker import _execute_job
+from omniscribe.worker import _execute_job, _handle_job_failure
 
 
 @pytest.fixture
@@ -177,18 +182,40 @@ async def test_job_queue_cancellation(harness: dict[str, Any]) -> None:
 async def test_job_queue_clear(harness: dict[str, Any]) -> None:
     queue: RedisJobQueue = harness["queue"]
     fake_redis = harness["redis"]
+    backend = harness["backend"]
 
-    for i in range(3):
-        await queue.submit({"i": i})
+    # Submit jobs: 2 will be completed, 1 cancelled, 1 remains pending
+    await queue.submit({"i": 1})
+    await queue.submit({"i": 2})
+    h3 = await queue.submit({"i": 3})
+    pending_h = await queue.submit({"i": 4})
 
+    c1 = await queue.claim()
+    assert c1 is not None
+    await queue.complete(c1[0])
+    rec1 = await queue.status(c1[0])
+    assert rec1 is not None
+    await backend.upsert_job(replace(rec1, status="complete", updated_at=time.time()))
+
+    c2 = await queue.claim()
+    assert c2 is not None
+    await queue.complete(c2[0])
+    rec2 = await queue.status(c2[0])
+    assert rec2 is not None
+    await backend.upsert_job(replace(rec2, status="complete", updated_at=time.time()))
+
+    await queue.cancel(h3.job_id)
+
+    # clear() must only delete terminal jobs (h1, h2, h3) and keep queued/active ones
     count = await queue.clear()
     assert count == 3
 
     jobs_left = await queue.list_jobs()
-    assert len(jobs_left) == 0
+    assert len(jobs_left) == 1
+    assert jobs_left[0].job_id == pending_h.job_id
 
-    # Verify Redis keys cleared
-    assert await fake_redis.zcard(KEY_QUEUE) == 0
+    # Verify pending job is still in KEY_QUEUE and active is unchanged
+    assert await fake_redis.zcard(KEY_QUEUE) == 1
     assert await fake_redis.zcard(KEY_ACTIVE) == 0
 
 
@@ -367,6 +394,62 @@ async def test_visibility_timeout_retry_exhaustion_fails_job(
     assert await fake_redis.zcard(KEY_QUEUE) == 0
 
 
+async def test_worker_lease_renewal_prevents_duplicate_recovery(
+    harness: dict[str, Any],
+) -> None:
+    """A running worker's renewed lease must not be recovered by another."""
+    queue: RedisJobQueue = harness["queue"]
+
+    handle = await queue.submit({"long_running": True})
+    claim = await queue.claim(worker_id="worker-a", visibility_timeout=0.05)
+    assert claim is not None
+
+    await asyncio.sleep(0.03)
+    assert await queue.renew_lease(handle.job_id, "worker-a", 0.1)
+    await asyncio.sleep(0.03)
+
+    assert await queue.recover_stale_jobs(max_retries=3) == []
+    assert await queue.complete(handle.job_id, lease_owner="worker-a")
+
+
+async def test_expired_worker_cannot_finish_recovered_claim(
+    harness: dict[str, Any],
+) -> None:
+    """A late worker cannot remove a newer claim's payload or active lease."""
+    queue: RedisJobQueue = harness["queue"]
+    fake_redis = harness["redis"]
+
+    handle = await queue.submit({"recover": True})
+    assert await queue.claim(worker_id="worker-a", visibility_timeout=0.01)
+    await asyncio.sleep(0.02)
+    assert handle.job_id in await queue.recover_stale_jobs(max_retries=3)
+    assert await queue.claim(worker_id="worker-b", visibility_timeout=1.0)
+
+    assert not await queue.complete(handle.job_id, lease_owner="worker-a")
+    assert await fake_redis.get(f"{KEY_PAYLOAD_PREFIX}{handle.job_id}") is not None
+    assert await queue.complete(handle.job_id, lease_owner="worker-b")
+
+
+async def test_redis_ocr_payload_carries_job_id_to_other_workers(
+    harness: dict[str, Any], tmp_path: Any
+) -> None:
+    """Redis deserialization preserves the job ID needed for cancellation."""
+    queue: RedisJobQueue = harness["queue"]
+    payload = _OcrPayload(
+        submission_id="submission",
+        input_path=tmp_path / "input.pdf",
+        filename="input.pdf",
+        request=OCRRequest(),
+    )
+
+    handle = await queue.submit(payload)
+    claim = await queue.claim(worker_id="worker-a")
+    assert claim is not None
+    _claimed_id, claimed_payload = claim
+    assert isinstance(claimed_payload, _OcrPayload)
+    assert claimed_payload.job_id == handle.job_id
+
+
 # -- 5. Worker Heartbeat -------------------------------------------------------
 
 
@@ -506,3 +589,61 @@ async def test_standalone_worker_runner_graceful_drain(harness: dict[str, Any]) 
     worker_task.cancel()
     with contextlib.suppress(asyncio.CancelledError):
         await worker_task
+
+
+async def test_worker_execution_failure_handling(harness: dict[str, Any]) -> None:
+    ctx: Context = harness["ctx"]
+    queue: RedisJobQueue = harness["queue"]
+    backend: StateBackend = harness["backend"]
+    artifacts: ArtifactStore = harness["artifacts"]
+
+    events: list[Any] = []
+
+    async def on_failed(ev: Any) -> None:
+        events.append(ev)
+
+    ctx.on(JobFailed, on_failed)
+
+    async def failing_runner(req: Any) -> JobOutcome:
+        raise ValueError("Simulated runner crash")
+
+    ctx.service(JobRunner, failing_runner)
+
+    await queue.submit({"filename": "bad.pdf"})
+    claim = await queue.claim()
+    assert claim is not None
+    job_id, payload = claim
+
+    await _execute_job(job_id, payload, ctx, queue, backend, artifacts)
+
+    record = await queue.status(job_id)
+    assert record is not None
+    assert record.status == "error"
+    assert "Simulated runner crash" in (record.error or "")
+    assert len(events) == 1
+    assert events[0].job_id == job_id
+
+
+async def test_handle_job_failure_lease_lost(harness: dict[str, Any]) -> None:
+    ctx: Context = harness["ctx"]
+    queue: RedisJobQueue = harness["queue"]
+    backend: StateBackend = harness["backend"]
+
+    await queue.submit({"filename": "lease_loss.pdf"})
+    claim = await queue.claim(worker_id="real-owner")
+    assert claim is not None
+    job_id, _ = claim
+
+    # Calling with a different lease_owner should detect lease loss and no-op
+    await _handle_job_failure(
+        job_id,
+        RuntimeError("Should be ignored"),
+        ctx,
+        queue,
+        backend,
+        lease_owner="stale-owner",
+    )
+
+    record = await queue.status(job_id)
+    assert record is not None
+    assert record.status == "queued"

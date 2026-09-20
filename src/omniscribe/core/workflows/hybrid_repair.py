@@ -30,6 +30,7 @@ from PIL import Image
 from omniscribe.core.callbacks import BlockCallbackSet
 from omniscribe.core.imaging.utils import decode_base64_image
 from omniscribe.core.ocr import OCRProcessor
+from omniscribe.core.ocr.exceptions import LLMBalanceError
 from omniscribe.core.ocr.resilience import CircuitOpenError
 from omniscribe.core.workflows.base import (
     PageBoxes,
@@ -267,6 +268,8 @@ async def repair_single_page(
                 crop_b64, repair_hint=hint or None, temperature=temperature
             )
         except CircuitOpenError:
+            raise
+        except LLMBalanceError:
             raise
         except Exception as exc:
             if on_warning is not None:

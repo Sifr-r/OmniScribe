@@ -18,11 +18,10 @@ final providerBrowserProvider =
 );
 
 class ProviderBrowserNotifier extends Notifier<ProviderBrowserState> {
-  late final ProviderRepository _repo;
+  ProviderRepository get _repo => ref.read(providerRepositoryProvider);
 
   @override
   ProviderBrowserState build() {
-    _repo = ref.watch(providerRepositoryProvider);
     return const ProviderBrowserState.initial();
   }
 

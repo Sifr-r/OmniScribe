@@ -40,7 +40,9 @@ class _StubGroundedBackend:
         self.response = response or GroundedResponse(blocks=[])
         self.calls: list[str] = []
 
-    async def ocr_document(self, pdf_path, progress=None, on_warning=None):
+    async def ocr_document(
+        self, pdf_path, progress=None, on_warning=None, *, pages=None
+    ):
         self.calls.append(pdf_path)
         return self.response
 
@@ -491,3 +493,65 @@ class TestGroundedRepair:
         assert [page_idx for _, page_idx, _ in backend.crop_args] == [0, 1]
         assert blocks[0].text == "The quick brown fox jumps over the lazy dog"
         assert blocks[1].text == "The quick brown fox jumps over the lazy dog"
+
+
+# ---------------------------------------------------------------------------
+# Page Selection & Forwarding
+# ---------------------------------------------------------------------------
+
+
+class TestGroundedPageSelection:
+    async def test_page_selection_forwarded_to_writer_and_preserves_blank_pages(
+        self, tmp_path
+    ) -> None:
+        import pymupdf as fitz
+
+        from omniscribe.core.workflows.base import DocumentResultWriter
+
+        pdf_path = tmp_path / "three_pages.pdf"
+        doc = fitz.open()
+        doc.new_page(width=200, height=300)
+        doc.new_page(width=200, height=300)
+        doc.new_page(width=200, height=300)
+        doc.save(str(pdf_path))
+        doc.close()
+
+        captured: dict = {}
+
+        class _RecordingWriter(DocumentResultWriter):
+            def write_document_result(self, inp, out, doc_res, dpi, page_nums=None):
+                captured["input"] = inp
+                captured["output"] = out
+                captured["document_result"] = doc_res
+                captured["dpi"] = dpi
+                captured["page_nums"] = page_nums
+
+        backend = _StubGroundedBackend(GroundedResponse(blocks=[]))
+        engine = GroundedEngine(
+            grounded_backend=backend, output_writer=_RecordingWriter()
+        )
+
+        result = await engine.execute(str(pdf_path), "out.pdf", dpi=150, pages="2")
+
+        assert captured["page_nums"] == [1]
+        assert [p.page_index for p in captured["document_result"].pages] == [1]
+        assert len(captured["document_result"].pages[0].blocks) == 0
+        assert result == {1: []}
+
+    async def test_page_selection_stub_path_preserves_requested_pages(self) -> None:
+        from omniscribe.core.workflows.base import DocumentResultWriter
+
+        captured: dict = {}
+
+        class _RecordingWriter(DocumentResultWriter):
+            def write_document_result(self, inp, out, doc_res, dpi, page_nums=None):
+                captured["page_nums"] = page_nums
+
+        backend = _StubGroundedBackend(GroundedResponse(blocks=[]))
+        engine = GroundedEngine(
+            grounded_backend=backend, output_writer=_RecordingWriter()
+        )
+
+        await engine.execute("nonexistent_stub.pdf", "out.pdf", dpi=150, pages="1,3")
+
+        assert captured["page_nums"] == [0, 2]

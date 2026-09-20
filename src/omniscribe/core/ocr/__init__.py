@@ -2,7 +2,8 @@
 
 Sub-package layout:
 
-- :mod:`.exceptions` — :class:`LLMCallError`, :class:`ModelNotLoadedError`
+- :mod:`.exceptions` — :class:`LLMCallError`, :class:`ModelNotLoadedError`,
+  :class:`LLMBalanceError`
 - :mod:`.prompts` — prompt constants and selection/fill helpers
 - :mod:`.filters` — output sanitization (YAML strip, fallback suppression,
   runaway-repetition clip)
@@ -24,7 +25,11 @@ from omniscribe.core.ocr.client import (
     _list_loaded_model_ids,
     _model_in_loaded,
 )
-from omniscribe.core.ocr.exceptions import LLMCallError, ModelNotLoadedError
+from omniscribe.core.ocr.exceptions import (
+    LLMBalanceError,
+    LLMCallError,
+    ModelNotLoadedError,
+)
 from omniscribe.core.ocr.filters import (
     _HALLUCINATION_PATTERNS,
     _is_fallback_response,
@@ -67,6 +72,7 @@ __all__ = [
     "DUAL_ENGINE_PAGE_PROMPT",
     "HANDWRITING_CROP_PROMPT",
     "HANDWRITING_PAGE_PROMPT",
+    "LLMBalanceError",
     "LLMCallError",
     "ModelNotLoadedError",
     "OCRProcessor",

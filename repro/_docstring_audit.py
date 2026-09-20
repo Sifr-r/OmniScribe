@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import ast
-import os
 import sys
 from pathlib import Path
 
@@ -13,9 +12,11 @@ def has_docstring(node: ast.AST) -> bool:
     if not body:
         return False
     first = body[0]
-    if isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant) and isinstance(first.value.value, str):
-        return True
-    return False
+    return (
+        isinstance(first, ast.Expr)
+        and isinstance(first.value, ast.Constant)
+        and isinstance(first.value.value, str)
+    )
 
 
 def iter_public_defs(tree: ast.AST) -> list[ast.AST]:
@@ -50,7 +51,7 @@ def main() -> int:
     print(f"{'file':<70} {'defs':>5} {'docs':>5} {'%':>6}")
     for rel, n, w, r in rows[:50]:
         flag = "" if r > 0.5 else " <-- low"
-        print(f"{rel:<70} {n:>5} {w:>5} {r*100:>5.1f}%{flag}")
+        print(f"{rel:<70} {n:>5} {w:>5} {r * 100:>5.1f}%{flag}")
     return 0
 
 

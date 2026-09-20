@@ -13,6 +13,7 @@ import secrets
 import uuid
 from typing import Any
 
+import pytest
 from fastapi.testclient import TestClient
 
 from omniscribe.plugins.state_backend import StateBackend
@@ -57,6 +58,28 @@ def _seed_text_artifact(
 
 def _bearer(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
+
+
+@pytest.mark.parametrize("route", ["text", "metadata", "export"])
+def test_artifact_download_keeps_server_and_artifact_credentials_separate(
+    cordis_env: None, monkeypatch: pytest.MonkeyPatch, route: str
+) -> None:
+    from omniscribe.server import create_app
+
+    monkeypatch.setenv("OMNISCRIBE_AUTH_TOKEN", "server-secret")
+    with TestClient(create_app()) as client:
+        artifact_id, token = _seed_text_artifact(client, {"0": "Recognized text"})
+        url = f"/api/{route}/{artifact_id}"
+        headers = {
+            "Authorization": "Bearer server-secret",
+            "X-Artifact-Token": token,
+        }
+        response = client.get(url, headers=headers)
+        assert response.status_code == 200
+        assert response.json() == {"0": "Recognized text"}
+        assert client.get(url, headers={"X-Artifact-Token": token}).status_code == 401
+        headers["X-Artifact-Token"] = "wrong-artifact-token"
+        assert client.get(url, headers=headers).status_code == 404
 
 
 def test_documents_plugin_is_mounted(api_client: TestClient) -> None:
@@ -230,6 +253,35 @@ def test_export_docx_empty_text_is_lenient(api_client: TestClient) -> None:
     response = api_client.post("/api/export/docx", json={"text": ""})
     assert response.status_code == 200
     assert response.content[:2] == b"PK"
+
+
+def test_export_docx_whitespace_only_text_emits_visible_placeholder(
+    api_client: TestClient,
+) -> None:
+    """Empty / whitespace-only input must not produce a content-free DOCX.
+
+    Without the placeholder guard, the markdown parser skips every line and
+    Word opens the file as a blank page — indistinguishable from a
+    successful export that "lost" the OCR text. Verify the placeholder
+    text is actually present in the document XML.
+    """
+    import io
+    import re
+    import zipfile
+
+    for payload in ("", "   ", "\n\n\n", "  \n  \n  "):
+        response = api_client.post("/api/export/docx", json={"text": payload})
+        assert response.status_code == 200
+        assert response.content[:2] == b"PK"
+        with zipfile.ZipFile(io.BytesIO(response.content)) as zf:
+            doc_xml = zf.read("word/document.xml").decode("utf-8")
+        # The placeholder paragraph should be in the body and contain
+        # an explanatory run with the "No text recognized" cue.
+        texts = re.findall(r"<w:t[^>]*>([^<]*)</w:t>", doc_xml)
+        joined = "".join(texts)
+        assert "No text recognized" in joined, (
+            f"expected placeholder text for payload {payload!r}, got: {joined!r}"
+        )
 
 
 def test_get_text_artifact_token_semantics(api_client: TestClient) -> None:

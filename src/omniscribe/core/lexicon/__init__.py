@@ -21,6 +21,7 @@ import logging
 import os
 from functools import lru_cache
 from pathlib import Path
+from typing import Any
 
 from .embedding import (
     EMBEDDING_DIM,
@@ -33,10 +34,7 @@ from .helpers import (
     merged_enabled_glossary,
     preview,
 )
-from .lancedb_store import (
-    EmbeddingModelMismatchError,
-    LanceDBLexiconStore,
-)
+from .query_terms import candidate_terms
 from .store import (
     GlossaryMeta,
     LexiconEntry,
@@ -78,6 +76,8 @@ def get_default_store() -> LexiconStore:
     cached instance. Tests should pass an explicit ``path=`` to a
     temporary location rather than relying on the env var.
     """
+    from .lancedb_store import LanceDBLexiconStore
+
     return LanceDBLexiconStore(
         path=_default_lexicon_path(),
         embedding_model=get_default_embedding_model(),
@@ -87,6 +87,14 @@ def get_default_store() -> LexiconStore:
 def reset_default_store() -> None:
     """Clear the cached default store (for tests that swap the env var)."""
     get_default_store.cache_clear()
+
+
+def __getattr__(name: str) -> Any:
+    if name in ("LanceDBLexiconStore", "EmbeddingModelMismatchError"):
+        from . import lancedb_store
+
+        return getattr(lancedb_store, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 __all__ = [
@@ -101,6 +109,7 @@ __all__ = [
     "LexiconHit",
     "LexiconQuery",
     "LexiconStore",
+    "candidate_terms",
     "entry_hash",
     "get_default_embedding_model",
     "get_default_store",

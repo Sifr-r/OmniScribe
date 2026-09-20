@@ -23,6 +23,7 @@ from omniscribe.core.callbacks import (
     BlockRetryCallback,
     BlockRevisedCallback,
 )
+from omniscribe.core.ocr.exceptions import LLMBalanceError
 from omniscribe.core.ocr.resilience import CircuitOpenError
 from omniscribe.core.recall.text_layer import (
     TEXT_LAYER_AGREEMENT_TARGET,
@@ -155,6 +156,8 @@ class QualityRepairLoop:
                     # Infrastructure-level fail-fast: never swallow the
                     # breaker signal — the whole run aborts just like
                     # the refine stage does.
+                    raise
+                except LLMBalanceError:
                     raise
                 except Exception as e:
                     logger.warning(

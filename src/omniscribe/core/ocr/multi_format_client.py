@@ -14,7 +14,7 @@ from typing import Any, Protocol
 import httpx
 
 from omniscribe.core.llm.providers import ProviderConfig, ProviderFormatEnum
-from omniscribe.core.ocr.exceptions import LLMCallError
+from omniscribe.core.ocr.exceptions import LLMBalanceError, LLMCallError
 from omniscribe.core.ocr.resilience import RETRYABLE_STATUS_CODES, is_transient_error
 
 logger = logging.getLogger(__name__)
@@ -35,6 +35,53 @@ _shared_client: httpx.AsyncClient | None = None
 # current loop. The abandoned client is GC'd (its sockets eventually
 # close via httpx's transport teardown).
 _shared_client_loop: asyncio.AbstractEventLoop | None = None
+
+
+_BACKGROUND_TASKS: set[asyncio.Task[Any]] = set()
+
+
+def _safe_close_client(
+    client: httpx.AsyncClient, loop: asyncio.AbstractEventLoop | None
+) -> None:
+    """Safely close an abandoned or cross-loop AsyncClient."""
+    if client.is_closed:
+        return
+
+    # If the event loop the client was created on is still running, schedule aclose() on it
+    if loop is not None and loop.is_running():
+        try:
+            asyncio.run_coroutine_threadsafe(client.aclose(), loop)
+            return
+        except Exception as exc:
+            logger.debug("Failed to schedule aclose on client loop: %s", exc)
+
+    # If current loop is running and distinct, schedule aclose() on it
+    try:
+        current = asyncio.get_running_loop()
+        if current.is_running():
+            task = current.create_task(client.aclose())
+            _BACKGROUND_TASKS.add(task)
+            task.add_done_callback(_BACKGROUND_TASKS.discard)
+            return
+    except RuntimeError:
+        pass
+
+    # If no running event loop, close underlying transport / pool synchronously
+    try:
+        transport = getattr(client, "_transport", None)
+        if transport is not None:
+            pool = getattr(transport, "_pool", None)
+            if pool is not None and hasattr(pool, "_close_connections"):
+                connections = getattr(pool, "_connections", None)
+                if connections:
+                    for conn in list(connections):
+                        try:
+                            if hasattr(conn, "close"):
+                                conn.close()
+                        except Exception:
+                            pass
+    except Exception as exc:
+        logger.debug("Failed closing client transport pool: %s", exc)
 
 
 def _get_shared_client() -> httpx.AsyncClient:
@@ -73,6 +120,8 @@ def _get_shared_client() -> httpx.AsyncClient:
             or _shared_client_loop is not current_loop
             or _shared_client.is_closed
         ):
+            if _shared_client is not None and _shared_client_loop is not current_loop:
+                _safe_close_client(_shared_client, _shared_client_loop)
             _shared_client = httpx.AsyncClient(timeout=_DEFAULT_CLIENT_TIMEOUT_S)
             _shared_client_loop = current_loop
     return _shared_client
@@ -401,6 +450,12 @@ async def _execute_http_with_retry(
                 )
                 await asyncio.sleep(retry_base_delay * (2 ** (attempt - 1)))
                 continue
+
+            if resp.status_code == 402:
+                # Account-level exhaustion: deterministic and permanent,
+                # so give it a dedicated type the engines and API layer
+                # can act on instead of masking it as a generic failure.
+                raise LLMBalanceError(err_msg)
 
             raise LLMCallError(err_msg)
 

@@ -32,6 +32,7 @@ void main() {
   late _MockWsClient wsClient;
   late _MockSamplePdfRepository samplePdfRepo;
   late StreamController<WsEnvelope> wsStreamController;
+  late StreamController<void> wsClosedController;
 
   setUpAll(() {
     registerFallbackValue(Uint8List(0));
@@ -43,8 +44,10 @@ void main() {
     wsClient = _MockWsClient();
     samplePdfRepo = _MockSamplePdfRepository();
     wsStreamController = StreamController<WsEnvelope>.broadcast();
+    wsClosedController = StreamController<void>.broadcast();
 
     when(() => wsClient.stream).thenAnswer((_) => wsStreamController.stream);
+    when(() => wsClient.closedStream).thenAnswer((_) => wsClosedController.stream);
     when(() => wsClient.connect(
           channelId: any(named: 'channelId'),
           sessionToken: any(named: 'sessionToken'),
@@ -58,6 +61,7 @@ void main() {
 
   tearDown(() {
     wsStreamController.close();
+    wsClosedController.close();
   });
 
   ProviderContainer makeContainer() {
@@ -622,6 +626,72 @@ void main() {
       expect(_job(container).error, isNull);
     });
 
+    test('ignores a reentrant OCR start while submission is in flight',
+        () async {
+      final container = makeContainer();
+      addTearDown(container.dispose);
+      final notifier = container.read(workstationProvider.notifier);
+      notifier.loadDocument(Uint8List.fromList([1, 2]), 'doc.pdf');
+
+      final submitted = Completer<AsyncSubmitResponse>();
+      when(() => ocrRepo.openProgressSession(clientId: any(named: 'clientId')))
+          .thenAnswer((_) async => const ProgressSessionHandle(
+                channelId: 'ch-reentrant',
+                sessionToken: 'tok-reentrant',
+              ));
+      when(() => ocrRepo.processOcrAsync(
+            fileBytes: any(named: 'fileBytes'),
+            filename: any(named: 'filename'),
+            settings: any(named: 'settings'),
+            progressChannel: any(named: 'progressChannel'),
+            progressToken: any(named: 'progressToken'),
+            onSendProgress: any(named: 'onSendProgress'),
+          )).thenAnswer((_) => submitted.future);
+
+      final first = notifier.processOcrAsync();
+      await notifier.processOcrSync();
+      verify(() =>
+              ocrRepo.openProgressSession(clientId: any(named: 'clientId')))
+          .called(1);
+
+      submitted.complete(const AsyncSubmitResponse(
+        jobId: 'job-reentrant',
+        status: 'queued',
+      ));
+      await first;
+    });
+
+    test('ignores a synchronous result that arrives after cancellation',
+        () async {
+      final container = makeContainer();
+      addTearDown(container.dispose);
+      final notifier = container.read(workstationProvider.notifier);
+      final original = Uint8List.fromList([1, 2]);
+      notifier.loadDocument(original, 'doc.pdf');
+
+      final result = Completer<ProcessOcrResult>();
+      when(() => ocrRepo.processOcrSync(
+            fileBytes: any(named: 'fileBytes'),
+            filename: any(named: 'filename'),
+            settings: any(named: 'settings'),
+            progressChannel: any(named: 'progressChannel'),
+            progressToken: any(named: 'progressToken'),
+            onSendProgress: any(named: 'onSendProgress'),
+            receiveTimeout: any(named: 'receiveTimeout'),
+          )).thenAnswer((_) => result.future);
+
+      final processing = notifier.processOcrSync();
+      await notifier.cancelOcr();
+      result.complete(ProcessOcrResult(
+        pdfBytes: Uint8List.fromList([9, 9]),
+        headers: const <String, String>{},
+      ));
+      await processing;
+
+      expect(container.read(workstationProvider).loadedBytes, original);
+      expect(_job(container).stage, 'Cancelled');
+    });
+
     test('cancelOcr cancels active progress and job', () async {
       final container = makeContainer();
       addTearDown(container.dispose);
@@ -842,8 +912,9 @@ void main() {
       await notifier.processOcrAsync();
       expect(_job(container).activeJobId, 'job-stale');
       expect(_job(container).channelId, 'ch-stale');
+      await notifier.cancelOcr();
 
-      // ---- 2. Sync run must clear stale activeJobId/channelId/trustSummary ----
+      // ---- 2. A new run after cancellation clears stale job metadata. ----
       when(() => ocrRepo.openProgressSession(clientId: any(named: 'clientId')))
           .thenAnswer((_) async => const ProgressSessionHandle(
                 channelId: 'ch-fresh',
@@ -975,8 +1046,13 @@ void main() {
             textArtifactId: 'art-xyz',
           ),
         );
-        when(() => ocrRepo.downloadResult('job-done-1'))
-            .thenAnswer((_) async => expectedBytes);
+        when(() => ocrRepo.downloadProcessedResult('job-done-1', token: null))
+            .thenAnswer((_) async => ProcessOcrResult(
+                  pdfBytes: expectedBytes,
+                  headers: const {},
+                  textArtifactId: 'art-xyz',
+                  textArtifactToken: 'art-token-xyz',
+                ));
 
         await notifier.handleWsClosed();
 
@@ -986,6 +1062,57 @@ void main() {
         expect(_job(container).percent, 100);
         expect(state.loadedBytes, expectedBytes);
         expect(_job(container).textArtifactId, 'art-xyz');
+      });
+
+      test('a closed WebSocket settles a completed job once', () async {
+        final container = makeContainer();
+        addTearDown(container.dispose);
+        final notifier = container.read(workstationProvider.notifier);
+        notifier.loadDocument(Uint8List.fromList([1, 2, 3]), 'doc.pdf');
+
+        when(() => ocrRepo.openProgressSession(
+              clientId: any(named: 'clientId'),
+            )).thenAnswer((_) async => const ProgressSessionHandle(
+              channelId: 'ch-closed',
+              sessionToken: 'tok-closed',
+            ));
+        when(() => ocrRepo.processOcrAsync(
+              fileBytes: any(named: 'fileBytes'),
+              filename: any(named: 'filename'),
+              settings: any(named: 'settings'),
+              progressChannel: any(named: 'progressChannel'),
+              progressToken: any(named: 'progressToken'),
+              onSendProgress: any(named: 'onSendProgress'),
+            )).thenAnswer((_) async => const AsyncSubmitResponse(
+              jobId: 'job-closed',
+              status: 'queued',
+            ));
+        when(() => ocrRepo.getJobStatus('job-closed')).thenAnswer(
+          (_) async => const OcrJobStatusResponse(
+            jobId: 'job-closed',
+            filename: 'doc.pdf',
+            status: 'complete',
+            createdAt: 1000.0,
+          ),
+        );
+        when(() => ocrRepo.downloadProcessedResult('job-closed',
+                  token: any(named: 'token')))
+            .thenAnswer((_) async => ProcessOcrResult(
+                  pdfBytes: Uint8List.fromList([9, 9]),
+                  headers: const {},
+                ));
+
+        await notifier.processOcrAsync();
+        wsClosedController.add(null);
+        await untilCalled(() => ocrRepo.downloadProcessedResult('job-closed',
+            token: any(named: 'token')));
+        await Future<void>.delayed(Duration.zero);
+        wsClosedController.add(null);
+        await Future<void>.delayed(Duration.zero);
+
+        expect(_job(container).stage, 'Complete');
+        verify(() => ocrRepo.downloadProcessedResult('job-closed',
+            token: any(named: 'token'))).called(1);
       });
 
       test('when job is cancelled, updates state to cancelled', () async {
@@ -1082,7 +1209,8 @@ void main() {
         await notifier.handleWsClosed();
 
         verifyNever(() => ocrRepo.getJobStatus(any()));
-        verifyNever(() => ocrRepo.downloadResult(any()));
+        verifyNever(() => ocrRepo.downloadProcessedResult(any(),
+            token: any(named: 'token')));
       });
     });
   });

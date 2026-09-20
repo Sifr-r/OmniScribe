@@ -9,8 +9,8 @@ upstream can confirm the bug in 30 lines of spec instead of 235.
 """
 
 import anyio.abc
-import anyio.streams
 import anyio.from_thread
+import anyio.streams
 
 
 def main() -> int:

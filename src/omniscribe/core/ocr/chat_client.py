@@ -38,7 +38,7 @@ import logging
 
 from omniscribe.core.llm.client import call_llm
 from omniscribe.core.llm.temperatures import TEMPERATURE_OCR
-from omniscribe.core.ocr.exceptions import LLMCallError
+from omniscribe.core.ocr.exceptions import LLMBalanceError, LLMCallError
 from omniscribe.core.ocr.resilience import (
     CircuitBreaker,
     is_context_length_error,
@@ -176,6 +176,10 @@ class ChatClient:
 
         if last_exc is None:  # pragma: no cover - unreachable defensive guard
             raise RuntimeError("retry loop exited without capturing an exception")
+        if isinstance(last_exc, LLMBalanceError):
+            # Re-raise with type identity intact: the engines fail fast on
+            # balance exhaustion and the API layer maps it to a 402 envelope.
+            raise last_exc
         if is_context_length_error(last_exc):
             raise LLMCallError(
                 f"Model context length exceeded on endpoint {self.api_base} (Context Size Limit). "

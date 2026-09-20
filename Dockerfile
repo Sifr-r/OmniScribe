@@ -44,15 +44,21 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 # ``sh``). ``test -s`` guards against an empty file; a non-2xx would
 # also fail because the installer script exits 1.
 ARG UV_VERSION=0.11.16
+ARG TARGETARCH
 RUN apt-get update \
  && apt-get install -y --no-install-recommends curl ca-certificates \
  && rm -rf /var/lib/apt/lists/* \
- && curl -fsSL "https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/uv-x86_64-unknown-linux-gnu.tar.gz" -o /tmp/uv.tar.gz \
+ && case "${TARGETARCH:-amd64}" in \
+      amd64) uv_target="x86_64-unknown-linux-gnu" ;; \
+      arm64) uv_target="aarch64-unknown-linux-gnu" ;; \
+      *) echo "Unsupported Docker target architecture: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac \
+ && curl -fsSL "https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/uv-${uv_target}.tar.gz" -o /tmp/uv.tar.gz \
  && test -s /tmp/uv.tar.gz \
  && tar -xzf /tmp/uv.tar.gz -C /tmp \
- && install -m 0755 /tmp/uv-x86_64-unknown-linux-gnu/uv /usr/local/bin/uv \
- && install -m 0755 /tmp/uv-x86_64-unknown-linux-gnu/uvx /usr/local/bin/uvx \
- && rm -rf /tmp/uv.tar.gz /tmp/uv-x86_64-unknown-linux-gnu \
+ && install -m 0755 "/tmp/uv-${uv_target}/uv" /usr/local/bin/uv \
+ && install -m 0755 "/tmp/uv-${uv_target}/uvx" /usr/local/bin/uvx \
+ && rm -rf /tmp/uv.tar.gz "/tmp/uv-${uv_target}" \
  && rm -rf /root/.cache
 
 WORKDIR /app
@@ -150,14 +156,10 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=10s --retries=3 --start-period=30s \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health')" || exit 1
 
-# Default: bind on loopback only (audit S11). The container is
-# reachable from the host via Docker's port mapping
-# (``-p 127.0.0.1:8000:8000``) and from other containers on the same
-# Docker network via the container's IP. Operators who explicitly
-# need LAN exposure should run with ``--network host`` and override
-# the CMD (``docker run --network host omniscribe --host 0.0.0.0``)
-# — the default of 0.0.0.0 was a footgun for unauthenticated
-# deployments and is gone as of v0.2.0. ``tini`` forwards SIGTERM to
-# the web server for a clean shutdown.
+# Listen on all container interfaces so Docker can forward the published
+# loopback host port. Host exposure remains controlled by Compose's
+# ``127.0.0.1:8000:8000`` mapping; deployments that publish beyond loopback
+# must set ``OMNISCRIBE_AUTH_TOKEN``. ``tini`` forwards SIGTERM to the web
+# server for a clean shutdown.
 ENTRYPOINT ["/usr/bin/tini", "--"]
-CMD ["omniscribe-server", "--host", "127.0.0.1", "--port", "8000"]
+CMD ["omniscribe-server", "--host", "0.0.0.0", "--port", "8000"]

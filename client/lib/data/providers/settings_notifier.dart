@@ -9,18 +9,21 @@ final settingsStateProvider = NotifierProvider<SettingsNotifier, SettingsState>(
 );
 
 class SettingsNotifier extends Notifier<SettingsState> {
-  late final ConfigRepository _repo;
+  ConfigRepository get _repo => ref.read(configRepositoryProvider);
+  int _loadEpoch = 0;
 
   @override
   SettingsState build() {
-    _repo = ref.watch(configRepositoryProvider);
     return const SettingsState.initial();
   }
 
   Future<void> load() async {
+    final epoch = ++_loadEpoch;
+    final repo = _repo;
     state = state.copyWith(isLoading: true, clearError: true);
     try {
-      final config = await _repo.getConfig();
+      final config = await repo.getConfig();
+      if (!ref.mounted || epoch != _loadEpoch) return;
       // Resolve the active provider from the freshly-fetched config BEFORE
       // the model call so the first load() doesn't use the previous
       // (initial-default) activeProviderId.
@@ -28,8 +31,9 @@ class SettingsNotifier extends Notifier<SettingsState> {
       // api_base, not the provider id, decides which endpoint is probed:
       // /api/config never reports a provider, so activeProviderId can be a
       // stale client-side default.
-      final ocrModels = await _repo.getModelsForProvider(activeProviderId,
+      final ocrModels = await repo.getModelsForProvider(activeProviderId,
           apiBase: config.apiBase);
+      if (!ref.mounted || epoch != _loadEpoch) return;
 
       state = state.copyWith(
         isLoading: false,
@@ -38,6 +42,7 @@ class SettingsNotifier extends Notifier<SettingsState> {
         ocrModels: ocrModels,
       );
     } catch (e) {
+      if (!ref.mounted || epoch != _loadEpoch) return;
       state = state.copyWith(
         isLoading: false,
         error: e.toString(),
@@ -57,8 +62,9 @@ class SettingsNotifier extends Notifier<SettingsState> {
   }
 
   void setServerBaseUrl(String url) {
-    state = state.copyWith(serverBaseUrl: url);
-    ref.read(apiBaseUrlProvider.notifier).set(url);
+    final normalized = url.trim();
+    ref.read(apiBaseUrlProvider.notifier).set(normalized);
+    state = state.copyWith(serverBaseUrl: normalized, clearRuntimeConfig: true);
     // Trigger a config refresh against the new URL.
     load();
   }

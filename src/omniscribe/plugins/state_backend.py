@@ -28,6 +28,7 @@ from pydantic import BaseModel
 
 from omniscribe.config import load_settings
 from omniscribe.harness.plugin import Plugin
+from omniscribe.utils.security import redact_redis_url as _redact_redis_url
 
 if TYPE_CHECKING:
     # ``Context`` is only used as a type annotation; ``from __future__
@@ -151,25 +152,6 @@ class StateBackendPlugin(Plugin):
             )
         ctx.service(StateBackend, backend)
         ctx.effect(backend.aclose)
-
-
-def _redact_redis_url(url: str) -> str:
-    """Strip the password component from a ``redis://user:pass@host:port/db`` URL.
-
-    The password is the only sensitive bit; the host/port/db
-    are useful for log triage. Returns the URL with ``:***@``
-    replacing ``:password@``.
-    """
-    if "@" not in url:
-        return url
-    scheme, _, rest = url.partition("://")
-    if "@" not in rest:
-        return url
-    userinfo, _, hostpart = rest.partition("@")
-    if ":" in userinfo:
-        _, _, _ = userinfo.partition(":")
-        return f"{scheme}://:***@{hostpart}"
-    return url
 
 
 plugin = StateBackendPlugin()

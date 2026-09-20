@@ -12,6 +12,7 @@ from omniscribe.core.grounded import (
     GroundedResponse,
     RepairableGroundedBackend,
 )
+from omniscribe.core.ocr.exceptions import LLMBalanceError
 from omniscribe.core.ocr.resilience import CircuitOpenError
 from omniscribe.core.ocr_quality import TrustOrchestrator
 from omniscribe.core.processors import DocumentProcessor
@@ -39,6 +40,22 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
+
+
+def _get_document_total_pages(input_path: str) -> int:
+    try:
+        import pymupdf as fitz
+        from PIL import Image
+
+        from omniscribe.core.pdf.rasterizer import _is_image_path
+
+        if _is_image_path(input_path):
+            with Image.open(input_path) as img:
+                return getattr(img, "n_frames", 1)
+        with fitz.open(input_path) as doc:
+            return len(doc)
+    except Exception:
+        return 0
 
 
 class GroundedEngine(EngineBase):
@@ -172,6 +189,7 @@ class GroundedEngine(EngineBase):
             document_result=document_result,
             dpi=dpi,
             progress=progress,
+            page_nums=list(page_nums),
         )
 
     async def execute(
@@ -180,6 +198,7 @@ class GroundedEngine(EngineBase):
         output_path: str,
         *,
         dpi: int,
+        pages: str | None = None,
         spellcheck: SpellcheckMode = SpellcheckMode.NONE,
         cross_page: bool = False,
         progress: ProgressCallback | None = None,
@@ -206,14 +225,52 @@ class GroundedEngine(EngineBase):
         if cancel_check is not None and cancel_check():
             raise OCRCancelled("Grounded OCR cancelled before backend call.")
 
-        response = await self.grounded_backend.ocr_document(
-            input_path, progress=progress, on_warning=on_warning
-        )
+        if pages:
+            import inspect
+
+            sig = inspect.signature(self.grounded_backend.ocr_document)
+            if "pages" in sig.parameters:
+                response = await self.grounded_backend.ocr_document(
+                    input_path, progress=progress, on_warning=on_warning, pages=pages
+                )
+            else:
+                response = await self.grounded_backend.ocr_document(
+                    input_path, progress=progress, on_warning=on_warning
+                )
+        else:
+            response = await self.grounded_backend.ocr_document(
+                input_path, progress=progress, on_warning=on_warning
+            )
         if response.failed_pages:
             self.last_failed_pages.extend(response.failed_pages)
 
         pages_data = self._accumulate_pages(response.blocks)
-        page_nums = sorted(pages_data)
+
+        if pages:
+            total_doc_pages = _get_document_total_pages(input_path)
+            from omniscribe.core.pdf.page_range import (
+                parse_page_range,
+                parse_page_range_with_total,
+            )
+
+            if total_doc_pages > 0:
+                page_nums = parse_page_range_with_total(pages, total_doc_pages)
+            else:
+                ranges = parse_page_range(pages)
+                if ranges is None:
+                    raise ValueError(f"Invalid page range syntax: '{pages}'")
+                req_set: set[int] = set()
+                for start, end in ranges:
+                    req_set.update(range(start - 1, end))
+                page_nums = sorted(req_set)
+            for pn in page_nums:
+                pages_data.setdefault(pn, [])
+        else:
+            total_doc_pages = _get_document_total_pages(input_path)
+            if total_doc_pages > 0:
+                page_nums = list(range(total_doc_pages))
+            else:
+                page_nums = sorted(pages_data)
 
         # Phase B review M2 — drive per-block / per-page observers so
         # the grounded path emits the same WebSocket frames as the
@@ -246,6 +303,9 @@ class GroundedEngine(EngineBase):
             # Re-accumulate so DocumentResult and embedding see the
             # repaired text (blocks were mutated in place).
             pages_data = self._accumulate_pages(response.blocks)
+            if pages:
+                for pn in page_nums:
+                    pages_data.setdefault(pn, [])
 
         return await self._finalize(
             input_path=input_path,
@@ -339,6 +399,8 @@ class GroundedEngine(EngineBase):
                         attempt=attempt,
                     )
                 except CircuitOpenError:
+                    raise
+                except LLMBalanceError:
                     raise
                 except Exception as exc:
                     # Spec §3.2 graceful degradation: warning frame out,

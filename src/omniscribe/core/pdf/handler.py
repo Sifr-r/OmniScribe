@@ -44,6 +44,7 @@ class PDFHandler:
         dpi: int = 150,
         max_image_dim: int = 1024,
         parallelism: int = _DEFAULT_RASTERIZER_WORKERS,
+        pages: str | None = None,
     ) -> dict[int, str]:
         """
         Render every page to a base64-encoded JPEG, capped at `max_image_dim`
@@ -61,6 +62,7 @@ class PDFHandler:
             dpi=dpi,
             max_image_dim=max_image_dim,
             parallelism=parallelism,
+            pages=pages,
         )
 
     def convert(
@@ -81,6 +83,7 @@ class PDFHandler:
         return convert_pdf_to_images(
             source,
             dpi=dpi,
+            pages=pages,
             max_image_dim=max_image_dim,
             parallelism=parallelism,
         )

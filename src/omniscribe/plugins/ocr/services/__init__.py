@@ -22,11 +22,12 @@ from __future__ import annotations
 
 from .config_seeding import CONFIG_KEY_SET, seed_config
 from .content_sniff import guess_suffix
-from .error_sanitization import sanitize_job_error
+from .error_sanitization import redact_exception, sanitize_job_error
 
 __all__ = [
     "CONFIG_KEY_SET",
     "guess_suffix",
+    "redact_exception",
     "sanitize_job_error",
     "seed_config",
 ]

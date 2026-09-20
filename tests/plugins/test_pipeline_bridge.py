@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 
-from omniscribe.config import load_settings
+from omniscribe.config import RuntimeSettings, load_settings
 from omniscribe.core.document import DenseMode, SpellcheckMode
 from omniscribe.core.imaging.page_preprocess import (
     LocalPagePreprocessor,
@@ -105,6 +105,50 @@ def test_build_pipeline_rejects_localhost_when_ssrf_local_disabled(
     assert "SSRF blocked" in excinfo.value.detail
 
 
+def test_build_pipeline_foreign_origin_does_not_attach_settings_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from types import SimpleNamespace
+
+    settings = load_settings()
+    settings.llm_api_base = "http://localhost:1234/v1"
+    settings.llm_api_key = "server-super-secret"
+
+    # Mock SSRF check to allow the custom URL
+    monkeypatch.setattr(
+        pipeline_bridge,
+        "check_ssrf_target_sync",
+        lambda url: SimpleNamespace(allowed=True, resolved_ip="192.168.1.50"),
+    )
+
+    # 1. Foreign origin without request.api_key receives empty api_key
+    request = OCRRequest(
+        pipeline_mode="grounded",
+        api_base="http://custom-host:8000/v1",
+    )
+    pipeline = pipeline_bridge.build_pipeline(settings, request)
+    assert pipeline.grounded_backend.api_key == ""  # type: ignore[union-attr]
+    # Plain HTTP URL is rewritten with resolved IP
+    assert pipeline.grounded_backend.api_base == "http://192.168.1.50:8000/v1"  # type: ignore[union-attr]
+
+    # 2. Foreign origin with user key receives user key
+    request_with_key = OCRRequest(
+        pipeline_mode="grounded",
+        api_base="http://custom-host:8000/v1",
+        api_key="user-provided-key",
+    )
+    pipeline2 = pipeline_bridge.build_pipeline(settings, request_with_key)
+    assert pipeline2.grounded_backend.api_key == "user-provided-key"  # type: ignore[union-attr]
+
+    # 3. Same origin receives settings key
+    request_same = OCRRequest(
+        pipeline_mode="grounded",
+        api_base="http://localhost:1234/v1/custom",
+    )
+    pipeline3 = pipeline_bridge.build_pipeline(settings, request_same)
+    assert pipeline3.grounded_backend.api_key == "server-super-secret"  # type: ignore[union-attr]
+
+
 # -- resolve_run_kwargs -----------------------------------------------------------
 
 
@@ -157,6 +201,53 @@ def test_resolve_run_kwargs_grounded_skips_preprocessing_options() -> None:
         OCRRequest(pipeline_mode="grounded", denoise="true"),  # type: ignore[arg-type]
     )
     assert "preprocessing_options" not in kwargs
+
+
+def test_processing_defaults_and_request_overrides_reach_both_engines() -> None:
+    settings = RuntimeSettings(
+        ocr_dpi=300, ocr_concurrency=4, ocr_max_image_dim=2048, ocr_dense_threshold=200
+    )
+    expected = {
+        "dpi": 300,
+        "concurrency": 4,
+        "max_image_dim": 2048,
+        "dense_threshold": 200,
+    }
+    kwargs = pipeline_bridge.resolve_run_kwargs(settings, OCRRequest())
+    assert {key: kwargs[key] for key in expected} == expected
+    request = OCRRequest(
+        pipeline_mode="grounded",
+        dpi=400,
+        concurrency=2,
+        max_image_dim=1536,
+        dense_threshold=100,
+    )
+    kwargs = pipeline_bridge.resolve_run_kwargs(settings, request)
+    assert kwargs["dense_threshold"] == 100
+    pipeline = pipeline_bridge.build_pipeline(settings, request)
+    backend = pipeline.grounded_backend
+    assert backend is not None
+    assert backend.dpi == kwargs["dpi"] == 400  # type: ignore[attr-defined]
+    assert backend.concurrency == kwargs["concurrency"] == 2  # type: ignore[attr-defined]
+    assert backend.max_image_dim == kwargs["max_image_dim"] == 1536  # type: ignore[attr-defined]
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [("dpi", 0), ("concurrency", 33), ("max_image_dim", -1), ("dense_threshold", 0)],
+)
+def test_processing_options_reject_invalid_limits(field: str, value: int) -> None:
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        OCRRequest.model_validate({field: value})
+
+
+def test_page_selection_rejects_invalid_syntax() -> None:
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError, match="positive page range"):
+        OCRRequest(pages="3-1")
 
 
 # -- run_pipeline -----------------------------------------------------------------

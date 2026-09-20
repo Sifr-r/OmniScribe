@@ -10,12 +10,78 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    import pymupdf as fitz
+
     from omniscribe.core.document import DocumentResult
 
-__all__ = ["render_synthetic_pdf"]
+__all__ = ["render_pdf_from_document_result", "render_synthetic_pdf"]
 
 
-def render_synthetic_pdf(document_result: DocumentResult) -> bytes:
+def _find_fitting_chunk(
+    rect: fitz.Rect,
+    text: str,
+    fontsize: float,
+    fontname: str,
+) -> tuple[str, str]:
+    """Find the largest prefix of `text` that fits in `rect` using line/word/char binary search."""
+    import pymupdf as fitz
+
+    tdoc = fitz.open()
+    try:
+        tpage = tdoc.new_page(
+            width=max(rect.x1 + 50.0, 200.0),
+            height=max(rect.y1 + 50.0, 200.0),
+        )
+
+        def _fits(cand: str) -> bool:
+            return (
+                tpage.insert_textbox(rect, cand, fontsize=fontsize, fontname=fontname)
+                >= 0
+            )
+
+        lines = text.splitlines(keepends=True)
+        if len(lines) > 1:
+            low, high, best = 1, len(lines), 0
+            while low <= high:
+                mid = (low + high) // 2
+                cand = "".join(lines[:mid])
+                if _fits(cand):
+                    best = mid
+                    low = mid + 1
+                else:
+                    high = mid - 1
+            if best > 0:
+                return "".join(lines[:best]), "".join(lines[best:])
+
+        words = text.split(" ")
+        if len(words) > 1:
+            low, high, best = 1, len(words), 0
+            while low <= high:
+                mid = (low + high) // 2
+                cand = " ".join(words[:mid])
+                if _fits(cand):
+                    best = mid
+                    low = mid + 1
+                else:
+                    high = mid - 1
+            if best > 0:
+                return " ".join(words[:best]), " ".join(words[best:])
+
+        low, high, best = 1, len(text), 1
+        while low <= high:
+            mid = (low + high) // 2
+            cand = text[:mid]
+            if _fits(cand):
+                best = mid
+                low = mid + 1
+            else:
+                high = mid - 1
+        return text[:best], text[best:]
+    finally:
+        tdoc.close()
+
+
+def render_pdf_from_document_result(document_result: DocumentResult) -> bytes:
     """Render a DocumentResult into PDF bytes with an embedded text layer."""
     import pymupdf as fitz
 
@@ -88,16 +154,14 @@ def render_synthetic_pdf(document_result: DocumentResult) -> bytes:
                         fontsize=fontsize,
                         fontname=fontname,
                     )
-                    if rc < 0:
-                        # Fallback if box is too tight: draw at start point
-                        pdf_page.insert_text(
-                            (rect.x0, min(page_h - 20.0, rect.y0 + fontsize)),
-                            text.splitlines()[0],
-                            fontsize=fontsize,
-                            fontname=fontname,
-                        )
-                else:
-                    # Flow sequentially down the page
+                    if rc >= 0:
+                        continue
+                    # Fallback if custom box is too tight: flow sequentially
+                    # so no overflowing text is dropped.
+
+                # Flow sequentially down the page with pagination and splitting
+                remaining_text = text
+                while remaining_text:
                     if y_cursor + 25.0 > page_h - 40.0:
                         pdf_page = doc.new_page(width=page_w, height=page_h)
                         y_cursor = 50.0
@@ -110,18 +174,44 @@ def render_synthetic_pdf(document_result: DocumentResult) -> bytes:
                     )
                     rc = pdf_page.insert_textbox(
                         rect,
-                        text,
+                        remaining_text,
                         fontsize=fontsize,
                         fontname=fontname,
                     )
                     if rc >= 0:
                         used_h = (page_h - 35.0 - y_cursor) - rc
                         y_cursor += max(fontsize + 2.0, used_h) + spacing
-                    else:
-                        # Overflow: increment cursor by conservative estimate
-                        lines = len(text.splitlines())
-                        y_cursor += (lines * (fontsize + 2.0)) + spacing
+                        remaining_text = ""
+                        break
+
+                    # rc < 0: did not fit
+                    if y_cursor > 50.0:
+                        # Start a fresh page and retry
+                        pdf_page = doc.new_page(width=page_w, height=page_h)
+                        y_cursor = 50.0
+                        continue
+
+                    # On a fresh page (y_cursor <= 50.0) and rc < 0:
+                    # Split into fitting chunk and leftover
+                    chunk, leftover = _find_fitting_chunk(
+                        rect,
+                        remaining_text,
+                        fontsize=fontsize,
+                        fontname=fontname,
+                    )
+                    pdf_page.insert_textbox(
+                        rect,
+                        chunk,
+                        fontsize=fontsize,
+                        fontname=fontname,
+                    )
+                    pdf_page = doc.new_page(width=page_w, height=page_h)
+                    y_cursor = 50.0
+                    remaining_text = leftover.lstrip("\r\n")
 
         return bytes(doc.tobytes())
     finally:
         doc.close()
+
+
+render_synthetic_pdf = render_pdf_from_document_result

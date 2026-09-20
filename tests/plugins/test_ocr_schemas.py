@@ -105,11 +105,14 @@ def test_preprocessing_enabled_master_flag_wins() -> None:
 
 
 def test_response_shapes_match_frontend_contracts() -> None:
-    submit = AsyncSubmitResponse(job_id="j1", status_url="/api/process/status/j1")
+    submit = AsyncSubmitResponse(
+        job_id="j1", status_url="/api/process/status/j1", result_token="result-access"
+    )
     assert submit.model_dump() == {
         "job_id": "j1",
         "status": "pending",
         "status_url": "/api/process/status/j1",
+        "result_token": "result-access",
     }
 
     # 2026-08-29 audit C-3 / H-3: the result token is intentionally

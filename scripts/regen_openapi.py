@@ -10,6 +10,7 @@ checked against (``api_client`` boots from it), so we feed the same
 YAML through here to avoid drift from the ``resources/cordis.yml``
 defaults.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -22,14 +23,16 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from fastapi.testclient import TestClient  # noqa: E402
+from fastapi.testclient import TestClient
 
 
 def regen(snapshot_path: Path) -> tuple[int, int]:
     """Boot the app under the conftest's contract YAML and write the
     resulting OpenAPI schema to ``snapshot_path``. Returns
     ``(byte_count, path_count)``."""
-    from tests.conftest import _TEST_CORDIS_YML  # noqa: E402,F401  (intentional late import)
+    from tests.conftest import (
+        _TEST_CORDIS_YML,
+    )
 
     with tempfile.TemporaryDirectory() as artifact_dir:
         cordis_path = Path(artifact_dir) / "cordis.yml"
@@ -45,7 +48,7 @@ def regen(snapshot_path: Path) -> tuple[int, int]:
         ):
             os.environ.pop(name, None)
 
-        from omniscribe.server import create_app  # noqa: E402
+        from omniscribe.server import create_app
 
         with TestClient(create_app()) as client:
             schema = client.app.openapi()

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Header
 from fastapi.responses import JSONResponse
 
 from omniscribe.plugins._http import envelope
@@ -74,11 +74,13 @@ def build_translate_router(service: TranslationService) -> APIRouter:
         """
         # The artifact pair is optional-with-bounds on the schema, so a
         # missing pair never 422s; the route owns the 400 contract.
-        if not (body.text_artifact_id and body.text_artifact_token):
+        if not body.text.strip() and not (
+            body.text_artifact_id and body.text_artifact_token
+        ):
             return envelope(
                 400,
                 "bad_request",
-                "'text_artifact_id'/'text_artifact_token' is required",
+                "'text' or 'text_artifact_id'/'text_artifact_token' is required",
             )
         try:
             return await service.submit(body)
@@ -103,6 +105,7 @@ def build_translate_router(service: TranslationService) -> APIRouter:
     async def translate_result(
         job_id: str,
         token: str = "",
+        x_artifact_token: str | None = Header(None, alias="X-Artifact-Token"),
     ) -> dict[str, Any] | JSONResponse:
         """Fetch the token-bound translation result for a completed job.
 
@@ -110,7 +113,7 @@ def build_translate_router(service: TranslationService) -> APIRouter:
         to the same 404 (no existence leak — see C-3/H-3 semantics in
         ``docs/SECURITY.md``).
         """
-        body = await service.result(job_id, token)
+        body = await service.result(job_id, x_artifact_token or token)
         if body is None:
             # Missing/wrong token, unknown job, or incomplete job all map to
             # the same 404 (no existence leak; C-3/H-3 semantics).

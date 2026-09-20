@@ -5,11 +5,9 @@ Provides PyMuPDF AGPL licensing warning emission, safe DPI calculations,
 image extension validation, and rasterization of PDF pages and images
 (JPEG, PNG, BMP, WebP, TIFF, AVIF) into base64 JPEGs.
 
-The module also wires a small thread pool for parallel page rasterization:
-PyMuPDF's ``Document`` and ``Page`` are documented as thread-safe for
-read-only operations, so fanning per-page ``get_pixmap`` calls across
-worker threads gives a near-linear speedup on multi-core hosts without
-introducing a second PDF pass.
+The module provides safe serial rasterization of PDF pages and images
+into base64 JPEGs. PyMuPDF documents are not thread-safe, so per-page
+rendering is performed serially.
 """
 
 from __future__ import annotations
@@ -20,7 +18,6 @@ import logging
 import os
 import threading
 from collections.abc import Iterator
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pymupdf as fitz  # PyMuPDF
@@ -226,11 +223,7 @@ def _rasterize_one_page(
     dpi: int,
     max_image_dim: int,
 ) -> tuple[int, Image.Image, str]:
-    """Rasterize a single page of an open :class:`fitz.Document`.
-
-    PyMuPDF's ``Page.get_pixmap`` is thread-safe across pages of the
-    same document, so this can be called from a :class:`ThreadPoolExecutor`.
-    """
+    """Rasterize a single page of an open :class:`fitz.Document`."""
     page = doc[page_num]
     effective = _effective_dpi(page.rect.width, page.rect.height, dpi, max_image_dim)
     pix = page.get_pixmap(dpi=effective)
@@ -277,25 +270,8 @@ def _generator_from_pdf_source(
         if not page_nums:
             return
 
-        if parallelism <= 1:
-            for page_num in page_nums:
-                yield _rasterize_one_page(doc, page_num, dpi, max_image_dim)
-            return
-
-        # Fan out across a small thread pool. PyMuPDF is C-bound; more
-        # than ~8 workers starts to lose to context-switch overhead.
-        workers = min(parallelism, len(page_nums))
-        with ThreadPoolExecutor(
-            max_workers=workers, thread_name_prefix="raster"
-        ) as pool:
-            # Submit in input order; ``results`` preserves that order so
-            # callers see pages in document order.
-            futures = [
-                pool.submit(_rasterize_one_page, doc, pn, dpi, max_image_dim)
-                for pn in page_nums
-            ]
-            for fut in futures:
-                yield fut.result()
+        for page_num in page_nums:
+            yield _rasterize_one_page(doc, page_num, dpi, max_image_dim)
     finally:
         doc.close()
 
@@ -438,6 +414,7 @@ def convert(
     dpi: int = 150,
     max_image_dim: int = 1024,
     parallelism: int = _DEFAULT_RASTERIZER_WORKERS,
+    pages: str | None = None,
 ) -> dict[int, str]:
     """Backward-compatible alias for :func:`convert_pdf_to_images`.
 
@@ -447,7 +424,11 @@ def convert(
     or :func:`convert_generator` (single-page streaming).
     """
     return convert_pdf_to_images(
-        pdf_path, dpi=dpi, max_image_dim=max_image_dim, parallelism=parallelism
+        pdf_path,
+        dpi=dpi,
+        max_image_dim=max_image_dim,
+        parallelism=parallelism,
+        pages=pages,
     )
 
 
@@ -456,6 +437,7 @@ def convert_pdf_to_images(
     dpi: int = 150,
     max_image_dim: int = 1024,
     parallelism: int = _DEFAULT_RASTERIZER_WORKERS,
+    pages: str | None = None,
 ) -> dict[int, str]:
     """
     Render every page to a base64-encoded JPEG, capped at `max_image_dim`
@@ -465,34 +447,13 @@ def convert_pdf_to_images(
     :func:`convert_batches` (bounded peak memory) or
     :func:`convert_generator` (single-page streaming).
     """
-    if _is_image_path(pdf_path):
-        return _images_from_image_file(pdf_path, max_image_dim)
-
-    _emit_pymupdf_agpl_notice()
-
-    images: dict[int, str] = {}
-    doc = fitz.open(pdf_path)
-    try:
-        page_nums = list(range(len(doc)))
-        # Audit P2-9: same hard page-count cap as the streaming paths.
-        _check_page_cap(len(page_nums))
-        if parallelism <= 1 or len(page_nums) <= 1:
-            for page_num in page_nums:
-                _, _, b64 = _rasterize_one_page(doc, page_num, dpi, max_image_dim)
-                images[page_num] = b64
-        else:
-            workers = min(parallelism, len(page_nums))
-            with ThreadPoolExecutor(
-                max_workers=workers, thread_name_prefix="raster"
-            ) as pool:
-                results = list(
-                    pool.map(
-                        lambda pn: _rasterize_one_page(doc, pn, dpi, max_image_dim),
-                        page_nums,
-                    )
-                )
-            for page_num, _, b64 in results:
-                images[page_num] = b64
-    finally:
-        doc.close()
-    return images
+    return {
+        page_num: b64
+        for page_num, _img, b64 in convert_generator(
+            pdf_path,
+            dpi=dpi,
+            pages=pages,
+            max_image_dim=max_image_dim,
+            parallelism=parallelism,
+        )
+    }

@@ -163,7 +163,9 @@ class OCRProcessor:
         self.api_base: str = (
             api_base or settings.llm_api_base or "http://localhost:1234/v1"
         )
-        self.api_key: str = api_key or settings.llm_api_key or "lm-studio"
+        self.api_key: str = (
+            api_key if api_key is not None else (settings.llm_api_key or "lm-studio")
+        )
         self.model: str = model or settings.llm_model or "allenai/olmocr-2-7b"
         self.client: AsyncOpenAI | None = None
         # Optional TrOCR specialist (lazy-loaded). When set, low-confidence

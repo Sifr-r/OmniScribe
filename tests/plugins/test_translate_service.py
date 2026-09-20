@@ -307,11 +307,27 @@ async def test_run_translate_job_translates_tree_and_stores_artifact(
     assert summary["blocks_translated"] >= 2
     translated_id = summary["translated_artifact_id"]
     assert translated_id in store.blobs
-    # The status result must never carry the translated artifact token.
-    assert "translated_artifact_token" not in summary
+    # The artifact id/token pair is delivered through the authorized
+    # result channel (``/api/translate/result/{job_id}`` with a valid
+    # token). The token must therefore appear in the outcome blob so
+    # the client can redeem it; the unauthenticated status endpoint
+    # still strips both — see ``job_status_sync`` and the
+    # ``test_translate_status_does_not_leak_tokens`` contract.
+    translated_token = summary["translated_artifact_token"]
+    assert translated_token and translated_token == store.blobs[translated_id][0]
     translated_blob = store.blobs[translated_id][1]
     assert "traduit" in translated_blob.decode("utf-8")
     assert calls, "translator hook must reach call_llm"
+
+    # Confirm the unauthenticated status surface still never leaks the
+    # token, even though the job outcome carries it.
+    status = impl.job_status_sync(
+        types.SimpleNamespace(
+            job_id="s-1",
+            status="complete",
+        )
+    )
+    assert "translated_artifact_token" not in json.dumps(status)
 
 
 async def test_run_translate_job_missing_artifact_raises(
@@ -464,3 +480,24 @@ async def test_translate_text_translates_max_tokens_passed(monkeypatch) -> None:
         _settings(),
     )
     assert calls[0]["max_tokens"] == 2048
+
+
+def test_resolve_llm_trio_guards_foreign_origin() -> None:
+    settings = _settings()
+    # 1. Matching origin gets settings api key
+    _base, key, _model = translate_service._resolve_llm_trio(
+        "http://localhost:1234/custom/v1", None, None, settings
+    )
+    assert key == "lm-studio"
+
+    # 2. Foreign origin does NOT attach settings api key
+    _base, key, _model = translate_service._resolve_llm_trio(
+        "http://127.0.0.1:5678/v1", None, None, settings
+    )
+    assert key == ""
+
+    # 3. Explicit request key is preserved on foreign origin
+    _base, key, _model = translate_service._resolve_llm_trio(
+        "http://127.0.0.1:5678/v1", "user-supplied-key", None, settings
+    )
+    assert key == "user-supplied-key"

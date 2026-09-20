@@ -172,7 +172,7 @@ def test_save_rejects_invalid_priority(store: LanceDBLexiconStore) -> None:
             name="X",
             format="json_pairs",
             entries=[{"source": "a", "target": "A"}],
-            priority="not-a-number",  # type: ignore[arg-type]
+            priority="not-a-number",
         )
 
 
@@ -185,7 +185,7 @@ def test_toggle_glossary(store: LanceDBLexiconStore) -> None:
     meta = store.save_glossary(
         name="Toggle me", format="json_pairs", entries=[{"source": "a", "target": "A"}]
     )
-    assert store.get_glossary(meta.id).enabled is True  # type: ignore[union-attr]
+    assert store.get_glossary(meta.id).enabled is True
     updated = store.toggle_glossary(meta.id, enabled=False)
     assert updated.enabled is False
     # Round-trip back

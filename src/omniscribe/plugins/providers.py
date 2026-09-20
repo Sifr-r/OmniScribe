@@ -22,7 +22,6 @@ from fastapi import APIRouter, Header, HTTPException
 from omniscribe.config import load_settings
 from omniscribe.harness.context import Context
 from omniscribe.harness.plugin import Plugin
-from omniscribe.plugins._http import bearer_token
 from omniscribe.plugins.providers_service import (
     PROVIDER_TEMPLATES,
     ProviderManager,
@@ -89,19 +88,16 @@ def build_providers_router(manager: ProviderManagerImpl) -> APIRouter:
         api_base: str | None = None,
         api_key: str | None = None,
         x_provider_api_key: str | None = Header(None, alias="X-Provider-Api-Key"),
-        authorization: str | None = Header(None),
     ) -> dict[str, Any]:
         """Live model-list discovery against the provider's ``/v1/models``.
 
-        The api-key resolution order is: explicit ``X-Provider-Api-Key``
-        header → standard ``Authorization: Bearer`` header → query
-        ``api_key`` parameter. The first non-empty wins so the Flutter
-        client can keep its secrets in the header without leaking them
-        to the URL (which lands in proxy access logs).
+        Provider credentials use ``X-Provider-Api-Key`` or the legacy
+        ``api_key`` query parameter. ``Authorization`` belongs exclusively
+        to OmniScribe authentication and must never reach the provider.
         """
         if manager.get_provider(provider_id) is None:
             raise HTTPException(status_code=404, detail="unknown provider")
-        resolved_api_key = x_provider_api_key or bearer_token(authorization) or api_key
+        resolved_api_key = x_provider_api_key or api_key
         return await manager.discover_models(
             provider_id, api_base=api_base, api_key=resolved_api_key
         )

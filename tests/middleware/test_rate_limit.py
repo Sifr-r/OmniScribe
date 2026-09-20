@@ -65,6 +65,14 @@ def test_extract_client_ip_when_client_is_none() -> None:
     assert _extract_client_ip(scope) == "unknown"
 
 
+def test_extract_client_ip_unknown_direct_ip_ignores_forwarded() -> None:
+    scope = _scope(
+        client=None,
+        headers=[(b"x-forwarded-for", b"203.0.113.195")],
+    )
+    assert _extract_client_ip(scope) == "unknown"
+
+
 def test_extract_client_ip_trusted_proxy_uses_x_forwarded_for() -> None:
     scope = _scope(
         client=("127.0.0.1", 8000),

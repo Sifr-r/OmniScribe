@@ -112,6 +112,17 @@ class PayloadTooLargeException extends ApiException {
   final int? maxBytes;
 }
 
+/// Thrown when the LLM provider account cannot pay for the request
+/// (HTTP 402, e.g. cloud provider out of credits).
+class PaymentRequiredException extends ApiException {
+  const PaymentRequiredException({
+    required super.message,
+    super.statusCode = 402,
+    super.error = 'payment_required',
+    super.detail,
+  });
+}
+
 /// Thrown when upstream LLM or backend rate limit is encountered (HTTP 429).
 class RateLimitException extends ApiException {
   const RateLimitException({

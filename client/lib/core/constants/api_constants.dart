@@ -53,6 +53,7 @@ abstract final class ApiConstants {
   static const String translateAsync = '/api/translate/async';
   static String translationStatus(String jobId) =>
       '/api/translate/status/$jobId';
+  static String translationResult(String jobId) => '/api/translate/result/$jobId';
   static const String translateNllb = '/api/translate/nllb';
 
   // Feature Endpoints - Transcription

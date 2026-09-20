@@ -92,8 +92,9 @@ cordis.yml
 │                 the 5,000-entry estimate dispatch on the harness JobQueue;
 │                 the LanceDB lexicon store loads lazily — routes 503 with
 │                 an install hint when the `lexicon` extra is missing
-└─ ocr            OCRService + JobRunner; /api/process*, /api/jobs*, /api/config*,
-                  SSE /api/process/{job_id}/events; seeds the quality-loop defaults
+├─ ocr            OCRService + JobRunner; /api/process*, /api/jobs*, /api/config*,
+│                 SSE /api/process/{job_id}/events; seeds the quality-loop defaults
+├─ sample_pdfs    SamplePdfsPlugin: GET /api/sample-pdf/{name} allowlisted test fixture distribution
 ```
 
 Every plugin declares a pydantic `Schema` for its config row; the Loader
@@ -131,7 +132,7 @@ Protocol (`ctx.inject(JobQueue)`), never by module singleton.
 | `src/omniscribe/core/glossary_sources/` | Terminology import parsers for XLIFF (1.2 / 2.0), TBX, TMX, CSV, TSV, JSON pairs, SQL tables, and Git repositories with encoding auto-detection (BOMs, UTF-8/16/32, Windows-1252, and ISO-8859-1 fallbacks) |
 | `src/omniscribe/core/writers/markdown.py` | `MarkdownWriter` & `MarkdownExporter` — RAG-ready markdown rendering from `DocumentTree` and `DocumentResult` (headings with hierarchy levels, GFM pipe tables, equation blocks/inlines, figure caption/bbox references, page break markers `<!-- PageBreak: <page_idx> -->`, text normalization) |
 | `src/omniscribe/core/writers/tree_json.py` | Hierarchical block-tree export builder |
-| `src/omniscribe/core/writers/exporter_base.py` | Thin `DocumentExportProtocol` + `BaseDocumentExporter` ABC. **Implementations are co-located with the writers they wrap** (DOCX in `core/writers/docx.py`, tree-DOCX in `core/writers/docx_tree.py`, HTML in `core/writers/html.py`) — the module ships only the abstraction, not the exporters. To add a new format, subclass `BaseDocumentExporter` in the same file as the existing writer, then register it on `PDFHandler` (or the relevant writer) |
+| `src/omniscribe/core/writers/exporter_base.py` | `BaseDocumentExporter` ABC. **Implementations are co-located with the writers they wrap** (DOCX in `core/writers/docx.py`, tree-DOCX in `core/writers/docx_tree.py`, HTML in `core/writers/html.py`) — the module ships only the abstraction, not the exporters. To add a new format, subclass `BaseDocumentExporter` in the same file as the existing writer, then register it on `PDFHandler` (or the relevant writer) |
 | `src/omniscribe/core/writers/docx_tree.py` | Hierarchical block-tree to `.docx` converter |
 | `src/omniscribe/core/writers/html.py` | Semantic HTML document writer from `DocumentResult` |
 | `src/omniscribe/core/chunking/` | RAG-ready semantic chunking sub-package: `taxonomy.py` (`RAGElementCategory` deterministic element mapping), `chunker.py` (`DocumentChunk` dataclass with boundary hierarchy, atomic table preservation, intra-section overlap, and provenance metadata; `SectionAwareChunker`), `__init__.py` |
@@ -146,7 +147,8 @@ Protocol (`ctx.inject(JobQueue)`), never by module singleton.
 | `src/omniscribe/core/imaging/handwriting.py` | Local handwriting image preprocessor for specialized handwriting pipeline paths |
 | `src/omniscribe/core/ocr_quality/routing.py` | Quality routing recommendation metadata and policy recorder |
 | `src/omniscribe/core/evaluation.py` | Lightweight `EvaluationMetrics` dataclass and `evaluate_document` helper for in-process processor result scoring |
-| `src/omniscribe/core/writers/docx.py` | Markdown → `.docx` converter used by the docx export route |
+| `src/omniscribe/core/lexicon/schema.py` | LanceDB PyArrow schema definitions, dataset versioning, metadata table compatibility, and corrupted table self-healing recreation |
+| `src/omniscribe/core/writers/docx.py` | Markdown → `.docx` converter used by the docx export route with native GFM pipe table rendering, cell alignment, and heading hierarchy |
 | `src/omniscribe/core/translate/config.py` | Core-owned typed settings (judge toggle, lexicon result count / min score, max tokens, entity-memory cap) and optional-feature errors for async translation |
 | `src/omniscribe/core/translate/workflow.py` | Optional LangGraph translation workflow — retrieve → translate → evaluate loop with LLM-as-judge, best-attempt tracking, deterministic adequacy checks (URL/acronym/number preservation), script-aware length bands, and fail-safe acceptance on unparseable judge output |
 | `src/omniscribe/core/workflows/base.py` | `EngineBase`, `OutputWriter`, `ProgressCallback`, `WarningCallback` shared by both engines |
@@ -159,13 +161,14 @@ Protocol (`ctx.inject(JobQueue)`), never by module singleton.
 | `src/omniscribe/resources/dictionaries/` | Packaged compiled spellcheck dictionaries loaded before legacy repository-root dictionaries |
 | `src/omniscribe/resources/calibration/` | Pre-trained model confidence calibration files (e.g. `qwen2_5_vl_72b.json`) |
 | `src/omniscribe/core/ocr/multi_format_client.py` | Multi-format LLM completion dispatcher (`openai_compatible`, `anthropic_compatible`, `ollama_compatible`), vision base64 payloads, exponential backoff resilience retries, and timeout boundaries |
-| `src/omniscribe/harness/` | Cordis-style plugin harness: `context.py` (Protocol-keyed services, LIFO effects, event bus, router queue, duplicate protection, and non-shadowing rollback), `loader.py` (YAML tree + patches + env overrides, fails loud), `plugin.py` (Plugin base), plus `errors.py` (hierarchical domain exceptions: `DuplicateServiceError`, `DuplicatePluginError`, `ContextDisposedError`, `ServiceNotFoundError`, `PluginLoadError`), `events.py`, `effects.py`, `service.py`, `config.py` |
-| `src/omniscribe/plugins/` | The thirteen boot plugins (runtime, logging, state_backend, artifacts, jobs, progress, providers, health, documents, translate, transcribe, glossary, ocr) that register services and mount every `/api` router; see the Plugin Tree section |
+| `src/omniscribe/harness/` | Cordis-style plugin harness: `context.py` (Protocol-keyed services, LIFO effects, event bus, router queue, duplicate protection, and non-shadowing rollback), `loader.py` (YAML tree + patches + env overrides, fails loud), `plugin.py` (Plugin base), plus `errors.py` (hierarchical domain exceptions: `DuplicateServiceError`, `DuplicatePluginError`, `ContextDisposedError`, `ServiceNotFoundError`, `PluginLoadError`), `events.py`, `effects.py`, `config.py` |
+| `src/omniscribe/plugins/` | The fourteen boot plugins (runtime, logging, state_backend, artifacts, jobs, progress, providers, health, documents, translate, transcribe, glossary, ocr, sample_pdfs) that register services and mount every `/api` router; see the Plugin Tree section |
 | `src/omniscribe/plugins/state_backend_types.py` | Isolated state backend domain dataclasses (ArtifactBlob, ChannelRecord, JobRecord, ArtifactRecord) and StateBackend protocol |
 | `src/omniscribe/plugins/documents/` | Documents plugin: `schemas.py` (extraction/export request models reproducing the pre-harness contract, plus `ExportMarkdownRequest`, `ExportChunksRequest`, `DocumentChunkPayload`, `ExportChunksResponse`), `prompts.py` (extraction prompts re-homed verbatim from the pre-harness `api/services/ai.py`; `PROMPT_VERSION 2026-08-15.v1`; invoice/resume/academic/table/table_extraction/custom templates), `service.py` (LLM extraction runner, text/markdown/json/docling-compatible/mineru-compatible export builders, `build_markdown_export`, `build_chunks_export`, and on-demand block-tree building from the stored text artifact — no tree sidecars), `routes.py` (`POST /api/extract`, `POST /api/export/document`, `GET|POST /api/export/docx`, `POST /api/export/html`, `POST /api/export/docx-tree`, `POST /api/export/blocktree`, `GET|POST /api/export/markdown`, `GET|POST /api/export/chunks`, token-bound `GET /api/export/{artifact_id}`, `GET /api/text/{artifact_id}`, `GET /api/metadata/{artifact_id}`), and `plugin.py` (mounts the router; no configurable fields) |
 | `src/omniscribe/plugins/translate/` | Translate plugin: `schemas.py` (translation request models + client response contracts), `service.py` (`TranslationService` — sync single-shot `translate_text` re-home with service-level judge loop and LRU translation cache, JobQueue runner (`TranslationJobRunner` seam) that walks the stored text artifact's tree with `translate_tree`, and client status mapping PENDING/PROGRESS/SUCCESS/FAILURE), `routes.py` (`POST /api/translate`, `POST /api/translate/async`, `GET /api/translate/status/{job_id}`, `GET /api/translate/result/{job_id}` token-redeeming fetch, `POST /api/translate/nllb`), and `plugin.py` (mounts the router; no configurable fields) |
 | `src/omniscribe/plugins/transcribe/` | Transcribe plugin: `schemas.py` (form-field and config request models + client response contracts), `service.py` (`TranscriptionService` — sync multipart transcription through the core transcription engines; transcript and metadata serialized JSON using the text-artifact convention and stored as token-bound artifacts), `config_store.py` (always-writable in-memory transcription config store with masked keys; SSRF-guarded endpoint model discovery falling back to the canned whisper list), `routes.py` (`POST /api/transcribe`, `GET|POST /api/config/transcription`, `GET /api/models/transcription`), and `plugin.py` (mounts the router; no configurable fields) |
 | `src/omniscribe/plugins/glossary/` | Glossary plugin: `schemas.py` (import/library request models covering dual-shape imports and toggle bodies), `service.py` (`GlossaryImportService` — parse → entry-count estimate → sync import or JobQueue dispatch above the 5,000-entry estimate, plus `ensure_store_ready`, library/sources CRUD, toggle flipping, reorder, and query-filtered/paginated entries), `store.py` (lazy `LexiconStore` provider — routes 503 with the `uv sync --extra lexicon` install hint when the `lexicon` extra is missing), `http_fetch.py` (SSRF-guarded, IP-pinned URL fetch with manual redirect following for `/api/glossary/import/url`), `routes.py` (the /api/glossary* routes; dual-shape imports, sources CRUD, toggle, entries search/pagination, preview/merged), and `plugin.py` (mounts the router; registers `GlossaryJobRunner`) |
+| `src/omniscribe/plugins/sample_pdfs.py` | `SamplePdfsPlugin`: mounts allowlisted `GET /api/sample-pdf/{name}` test fixture distribution to verify fresh installs without authentication |
 | `src/omniscribe/middleware/auth.py` | ASGI 3.0 bearer authentication middleware enforcing `OMNISCRIBE_AUTH_TOKEN` constant-time verification |
 | `src/omniscribe/middleware/rate_limit.py` | ASGI 3.0 sliding-window rate-limiting middleware enforcing request limits per client IP with Retry-After responses |
 | `src/omniscribe/middleware/upload_limit.py` | ASGI 3.0 request body size limiting middleware enforcing payload limits via Content-Length inspection and streaming accumulation |
@@ -205,7 +208,7 @@ Protocol (`ctx.inject(JobQueue)`), never by module singleton.
 | `client/lib/presentation/workstation/canvas/document_viewport.dart` | Full-height GPU interactive document canvas with zoom, pan, spatial grid, bounding box overlays, and floating viewport controls |
 | `client/lib/presentation/workstation/workstation_screen.dart` | Primary OCR workstation screen orchestrating unified top header bar, left vertical page strip rail, viewport canvas, BBox inspector, right controls dock, and progress dock |
 | `client/lib/presentation/providers/ai_setup_wizard_modal.dart` | 3-step beginner-friendly guided AI setup wizard for local (Ollama/LM Studio) and cloud (OpenAI/Gemini/Claude/Groq) engine configuration |
-| `src/omniscribe/plugins/ocr/routes.py` | FastAPI route definitions, multipart upload parsing, preview caching, and HTTP endpoint handlers for the OCR plugin (`POST /api/process`, `POST /api/process/async`, job status/listing/cancelling/deletion, SSE event streaming, config GET/POST, preflight, and page previews) |
+| `src/omniscribe/plugins/ocr/routes.py` | FastAPI route definitions, multipart upload parsing, full-content-addressed preview caching, and HTTP endpoint handlers for the OCR plugin (`POST /api/process`, `POST /api/process/async`, job status/listing/cancelling/deletion, SSE event streaming, config GET/POST, preflight, and page previews) |
 | `src/omniscribe/plugins/ocr/services/` | Modular OCR service sub-components (`error_sanitization.py`, `content_sniff.py`, `config_seeding.py`) extracted from the former monolithic `service.py` to isolate concerns |
 | `scripts/build_windows.py` | PyInstaller build orchestrator generating standalone Windows server bundle with icon and spec integration |
 | `scripts/run_server.py` | Argument-parsing executable entrypoint wrapper for the server binary and source execution |
@@ -226,8 +229,8 @@ Protocol (`ctx.inject(JobQueue)`), never by module singleton.
 | `src/omniscribe/core/readers/markdown_reader.py` | Markdown reader parsing headings, paragraphs, tables, lists, blockquotes, and code fences into DocumentResult |
 | `src/omniscribe/core/readers/dispatch.py` | Reader registry and factory mapping file extensions (.docx, .html, .htm, .md, .markdown) |
 | `src/omniscribe/core/readers/pdf_renderer.py` | PyMuPDF synthetic PDF renderer creating searchable PDF output from DocumentResult |
-| `src/omniscribe/plugins/jobs_redis.py` | `RedisJobQueue` distributed job queue implementing `JobQueue` protocol with atomic Lua claims, visibility timeout recovery, worker heartbeats, and Redis Pub/Sub integration (RFC 004 R3) |
-| `src/omniscribe/worker.py` | Standalone `omniscribe-worker` multi-worker process dispatching OCR, Translation, and Glossary jobs from Redis with graceful shutdown and heartbeat monitoring (RFC 004 R3) |
+| `src/omniscribe/plugins/jobs_redis.py` | `RedisJobQueue` distributed job queue implementing `JobQueue` protocol with owner-bound atomic claims, renewable visibility leases, stale-lease-safe recovery/finish, worker heartbeats, and Redis Pub/Sub integration (RFC 004 R3) |
+| `src/omniscribe/worker.py` | Standalone `omniscribe-worker` multi-worker process dispatching OCR, Translation, and Glossary jobs from Redis with graceful shutdown, owner-bound lease renewal, and heartbeat monitoring (RFC 004 R3) |
 | `scripts/migrate_sqlite_to_redis.py` | Standalone migration utility transferring jobs, artifacts, and channels from SQLite state database to Redis (RFC 003 / RFC 004) |
 | `tests/core/chunking/test_chunker_props.py` | Hypothesis property-based tests for `SectionAwareChunker` invariants, element boundaries, table preservation, chunk sizing |
 | `tests/core/processors/test_table_fallback.py` | Unit and heuristic tests for `TableFallbackProcessor` grid reconstruction, row/col detection, and fail-open table repair |
@@ -244,6 +247,10 @@ Protocol (`ctx.inject(JobQueue)`), never by module singleton.
 | `docs/benchmarks.md` | External comparative benchmark documentation (OmniDocBench, Docling, Marker, Unstructured, Nougat) with evaluation protocol and reproduction commands |
 | `docs/deployment/windows-bundle.md` | Operator and user guide for running the standalone Windows PyInstaller bundle |
 | `docs/TROUBLESHOOTING.md` | Central first-run troubleshooting guide covering top 10 failure modes, cross-linked from `make doctor` and README |
+| `scripts/verify_live_functionality.py` | Live non-mocked functional verification harness validating FastAPI runtime lifecycle, HTTP status envelopes, rich DOCX export with native tables, artifact previews, and WebSocket connectivity |
+| `tests/core/ocr/test_llm_balance_error.py` | Unit tests validating `LLMBalanceError` status code mapping (402 Payment Required) and error propagation across VLM client tiers |
+| `tests/core/workflows/test_llm_balance_propagation.py` | Integration tests verifying `LLMBalanceError` propagation through GroundedEngine, HybridEngine, and OCR workflow stages |
+| `docs/audits/2026-09-15-edge-case-remediation.md` | Audit ledger documenting edge cases identified, live reproduction scripts, structural fixes, and end-to-end verification results |
 
 ## Extension Points
 
@@ -1299,7 +1306,7 @@ Implements Profile 4 Redis state backend tooling and documentation clarification
 | `src/omniscribe/plugins/state_backend_redis.py` | Support TLS connection (`ssl=True`) in `RedisStateBackend` when `redis_url.startswith("rediss://")` or `redis_tls=True`, accept `redis_tls` in `__init__`, and expose `redis_tls` property. |
 | `src/omniscribe/plugins/state_backend_types.py` | Smell 6.26: Document memory and storage caps on `StateBackend` protocol across in-memory (256 MB heap cap), SQLite (filesystem-bound on disk), and Redis (server `maxmemory` / eviction policy). |
 | `src/omniscribe/plugins/state_backend.py` | Wire `redis_tls=settings.redis_tls` when constructing `RedisStateBackend` in `StateBackendPlugin`. |
-| `scripts/migrate_sqlite_to_redis.py` | Standalone CLI and async migration utility to transfer artifacts (with disk blob resolution and remaining TTL), jobs (with index ZSET), and progress channels (with expiration ZSET and consumed status preservation) from SQLite to Redis with batching and dry-run support. |
+| `scripts/migrate_sqlite_to_redis.py` | Standalone CLI and async migration utility: private helpers read SQLite records and migrate artifacts, jobs, and progress channels, while `migrate()` owns Redis client lifecycle, cross-category batching, dry-run behavior, and the migration summary. |
 | `tests/scripts/test_migrate_sqlite_to_redis.py` | Comprehensive test suite for SQLite-to-Redis migration covering full entity migration, dry-run safety, missing blob handling, non-existent database handling, CLI execution, and `RedisStateBackend` readability. |
 | `tests/plugins/test_state_backend_redis.py` | Tests verifying `redis_tls` flag, `rediss://` scheme automatic SSL activation, unencrypted default, and `RuntimeSettings.redis_tls` parsing. |
 
@@ -1413,6 +1420,127 @@ Decomposed the 1049-line `WorkstationNotifier` god-class into three single-domai
 | `client/integration_test/app_workstation_test.dart` | `integration_test/` golden path against an in-process `stub_omniscribe_server.dart` (real WebSocket upgrade + streamed `block_complete` frame + artifact headers). |
 | `client/integration_test/app_real_server_test.dart` | `integration_test/` real-server variant: spawns a live `omniscribe-server` child process (`uv run`, free-port pick, `/api/health` polling, skip-guard without Python tooling), fetches the sample fixture, and asserts the server-side preview rasterization round-trip. |
 
+### 2026-09-16: Functional diagnosis & repair
+
+| File | Single Responsibility |
+| --- | --- |
+| `docs/audits/2026-09-15-functional-diagnosis.md` | Record client/API/pipeline integration defects, reproduction evidence, validation limits, and a prioritized repair order. |
+| `docs/audits/2026-09-16-functional-repair.md` | Record implementation details, ownership boundaries, and verification results for the ten functional repairs diagnosed on 2026-09-15. |
+
+### 2026-09-16: Master Comprehensive Codebase Audit Consolidation
+
+Consolidates all repository audits (`2026-09-04-five-lens-audit.md`, `2026-09-13-code-complexity-report.md`, `2026-09-13-remediation-roadmap.md`, `code-duplication.md`, `2026-09-15-edge-case-remediation.md`, `2026-09-15-functional-diagnosis.md`, and `2026-09-16-functional-repair.md`) into a single living, authoritative master audit ledger:
+
+| File | Single Responsibility |
+| --- | --- |
+| `docs/audits/COMPREHENSIVE-AUDIT.md` | Master unified audit report synthesizing live macro-architecture, security posture, AST complexity, duplication/DRY compliance, functional defect fixes, Flutter client health, QA testing posture, product packaging, and the 137-item master unified cross-reference matrix. |
+| `tests/core/ocr/test_llm_balance_error.py` | Unit regression test verifying `LLMBalanceError` classification, payload extraction, and zero retry loop on upstream HTTP 402 payment errors. |
+| `tests/core/workflows/test_llm_balance_propagation.py` | Workflow regression test verifying rapid error propagation of upstream payment exhaustion without silent corruption or retry loops. |
+| `scripts/verify_live_functionality.py` | Standalone end-to-end integration and smoke verification suite validating 10 non-mocked functional server pathways (health, auth, OCR preview, jobs, exports, errors, and WebSockets). |
+
+### 2026-09-19: Repository Hygiene & Simplification Cleanups
+
+Removes unused marker protocols and dead abstractions across harness and core interfaces, and restores deprecation alias documentation:
+
+| File | Single Responsibility |
+| --- | --- |
+| `README.md` | Re-added `memory` extra deprecation alias documentation pointing to canonical `lexicon` extra. |
+| `src/omniscribe/harness/__init__.py` | Removed unused `Service` Protocol marker import and export (`service.py` and `test_service.py` deleted). |
+| `src/omniscribe/core/interfaces.py` | Removed redundant unused `StateBackendProtocol` definition. |
+| `src/omniscribe/core/writers/exporter_base.py` | Removed redundant `DocumentExportProtocol` definition, standardizing on `BaseDocumentExporter` inheritance across all exporters. |
+| `tests/core/writers/test_document_exporters.py` | Updated exporter tests to assert `BaseDocumentExporter` inheritance directly. |
+
+### 2026-09-19: OCR Routes, Jobs & State Backends Capability Isolation & Integrity
+
+Implemented comprehensive security and integrity hardening across OCR routes, job queues, and state backends:
+
+| File | Single Responsibility |
+| --- | --- |
+| `src/omniscribe/utils/security.py` | Centralized `redact_redis_url(url: str) -> str` to mask credentials in Redis URLs across logs, errors, and status outputs without side effects. |
+| `src/omniscribe/plugins/state_backend_redis.py` | Integrated `redact_redis_url` to redact connection string passwords in cluster connection failure logs. |
+| `src/omniscribe/plugins/jobs.py` | Integrated `redact_redis_url` in Redis queue logging; updated `InMemoryJobQueue.clear()` to strictly delete terminal jobs (`complete`, `failed`/`error`, `cancelled`), preserving queued and running work. |
+| `src/omniscribe/plugins/jobs_redis.py` | Integrated `redact_redis_url` in error formatting; wrapped `submit()` in transactional pipeline error handling to roll back (delete) orphaned backend job records on Redis pipeline failure; updated `clear()` to selectively clear only terminal jobs and their payload/lease keys while preserving `KEY_QUEUE` and `KEY_ACTIVE`. |
+| `src/omniscribe/plugins/state_backend_memory.py` | Enforced strict TTL expiration checks (`now >= created_at + ttl_seconds`) on `get_artifact`, `get_channel`, and `consume_channel` to prevent access to expired credentials or handshakes. |
+| `src/omniscribe/plugins/state_backend_sqlite.py` | Enforced strict TTL expiration checks on `get_artifact`, `get_channel`, and `consume_channel` in persistent SQLite queries and records. |
+| `src/omniscribe/plugins/ocr/service.py` | Updated `event_entry` to stop broadcasting `artifact_token` in `JobCompleted` SSE events, enforcing capability isolation via the initial submit response's `result_token`. |
+### 2026-09-19: Core PDF Concurrency, Rendering & Grounded Page Selection
+
+Resolved release-blocking concurrency crash, text overflow data loss, and page selection propagation:
+
+| File | Single Responsibility |
+| --- | --- |
+| `src/omniscribe/core/pdf/rasterizer.py` | PyMuPDF serial rendering per document; eliminated multithreaded document sharing across worker threads to avoid C-level heap corruption and interpreter crashes (P0); added `pages` argument to `convert_pdf_to_images`. |
+| `src/omniscribe/core/pdf/embedder.py` | Serial page rasterization and text layer embedding; eliminated multithreaded document sharing across worker threads (P0). |
+| `src/omniscribe/core/pdf/handler.py` | Forwarded `pages` parameter in `convert()` and `convert_to_images()` to underlying rasterizer (P2 #10). |
+| `src/omniscribe/core/readers/pdf_renderer.py` | Bounded text splitting and multi-page pagination for overflowing text in synthetic PDF generation, preventing silent dropping of large paragraphs (P1 #5). |
+| `src/omniscribe/core/workflows/grounded.py` | Forwarded `page_nums` in `_finalize()` to `_emit()`; preserved requested blank pages in grounded OCR and defaulted to total document pages when `pages` is None (P1 #6). |
+
+### 2026-09-19: Security, Origin Credential Binding, SSRF & DNS Rebinding Hardening
+
+Implemented strict origin credential binding, centralized IP pinning, and process argument sanitization:
+
+| File | Single Responsibility |
+| --- | --- |
+| `src/omniscribe/utils/security.py` | Added `is_same_origin` normalization and comparison; centralized `_PinnedIPTransport`, `_PinnedNetworkBackend`, and `_rewrite_url_with_resolved_ip` (P1 #1, P1 #3). |
+| `src/omniscribe/plugins/providers_service.py` | Bound credentials strictly to allowlisted provider origins, requiring explicit caller keys for custom URLs (P1 #1); re-exported `_PinnedNetworkBackend` for backward compatibility. |
+| `src/omniscribe/plugins/ocr/pipeline_bridge.py` | Disallowed sending server API key to custom `api_base` without explicit request key; pinned IP / rewritten URL to prevent DNS rebinding (P1 #1, P1 #3). |
+| `src/omniscribe/plugins/translate/service.py` | Disallowed sending server API key to custom `request_base` without explicit request key; rewritten URL to prevent DNS rebinding (P1 #1, P1 #3). |
+| `src/omniscribe/plugins/transcribe/service.py` | Disallowed sending server API key to custom `request.api_base` without explicit request key (P1 #1). |
+| `src/omniscribe/plugins/transcribe/config_store.py` | Pinned connection to validated resolved IP in `discover_transcription_models` (P1 #3). |
+| `src/omniscribe/core/glossary_sources/git_repo.py` | Removed credentials from child process command line (`ps` leak), passed securely via Git `http.extraHeader` environment; enforced strict git host allowlist against DNS rebinding (P1 #3, P2 #5). |
+
+### 2026-09-19: Document Parsers, Translation, Transcription & Lexicon Integrity
+
+Hardened document parsing, translation robustness, confidence calculation, and optional dependency isolation:
+
+| File | Single Responsibility |
+| --- | --- |
+| `src/omniscribe/core/translate/nodes.py` | Evaluated blank/empty translation responses as failure (`0.0`), triggering retry loops (P1 #7). |
+| `src/omniscribe/core/translate/workflow.py` | Prevented silent deletion of source text on blank translation; bounded single token lengths in `_Chunker.add` and `chunk_text` (P1 #7, P2 #8). |
+| `src/omniscribe/plugins/transcribe/schemas.py` | Strictly validated `engine` field in request schemas against allowed engine enum (P1 #8). |
+| `src/omniscribe/core/transcription/factory.py` | Rejected unknown transcription engines with `ValueError` instead of silent fallback to OpenAI (P1 #8). |
+| `src/omniscribe/core/readers/html_reader.py` | Formatted HTML table cells ancestor check preserving formatted tags (`b`, `i`, `span`) inside table cells without paragraph leaks (P2 #6). |
+| `src/omniscribe/core/readers/docx_reader.py` | Split paragraph runs across explicit inline page breaks (`w:br[w:type="page"]`) (P2 #7). |
+| `src/omniscribe/core/ocr/multi_format_client.py` | Cleaned up abandoned HTTP clients across event loop changes (P2 #9). |
+| `src/omniscribe/core/transcription/types.py` | Handled NaN and overflow safety `[0.0, 1.0]` in `logprob_to_confidence` (P2 #11). |
+| `src/omniscribe/core/writers/docx_tree.py` | Added warning logging for figure image embedding failures instead of silent suppression (P2 #12). |
+| `src/omniscribe/core/lexicon/__init__.py` | Lazily imported `lancedb_store` and re-exported `candidate_terms` to allow import without optional `pyarrow`/`lancedb` (P2 #13). |
+| `src/omniscribe/core/translate/tree.py` | Recorded source character length before translation mutation in callbacks (P2 #14). |
+
+### 2026-09-20: Error Redaction and Sanitization (Worker & Jobs Queue)
+
+Centralized job error sanitization and exception scrubbing into core errors, preventing secret, traceback, and internal path leaks into state backends, logs, and WebSocket events:
+
+| File | Single Responsibility |
+| --- | --- |
+| `src/omniscribe/core/errors.py` | Canonical home for `sanitize_job_error` and `redact_exception`, scrubbing tracebacks, DB errors, authorization headers, bearer tokens, secret keys, API keys, and internal filesystem paths. |
+| `src/omniscribe/plugins/ocr/services/error_sanitization.py` | Re-exports `sanitize_job_error` and `redact_exception` from `omniscribe.core.errors` for backwards compatibility. |
+| `src/omniscribe/worker.py` | Routes runner exceptions through `redact_exception` in `_handle_job_failure` before persisting state and emitting `JobFailed`. |
+| `src/omniscribe/plugins/jobs.py` | Routes runner exceptions through `redact_exception` in worker loop and `_process_one` before persisting error states and emitting `JobFailed`. |
+
+### 2026-09-20: Rate Limiting Security, Transport Hardening & Server Hygiene
+
+Hardened rate limiting client IP extraction, transport pool attribute access, and server startup hygiene:
+
+| File | Single Responsibility |
+| --- | --- |
+| `src/omniscribe/middleware/rate_limit.py` | Disallowed honoring forwarded headers when direct socket IP is unknown or absent, preventing spoofed bypass of sliding-window limits. |
+| `src/omniscribe/utils/security.py` | Hardened `_PinnedIPTransport` constructor to safely inspect connection pool attributes with fallbacks and support explicit SSL/HTTP2/retries parameters. |
+| `src/omniscribe/server.py` | Cleaned up duplicate docstring on `_detect_bind_host`. |
+
+### 2026-09-20: SSRF IP-Pinning for Transcription, Provider ID Routing & Capability Token Helper
+
+Hardened transcription connections against DNS rebinding / TOCTOU via socket-level IP pinning, added explicit provider ID routing and robust URL parsing to LLM client, and centralized capability token extraction:
+
+| File | Single Responsibility |
+| --- | --- |
+| `src/omniscribe/core/transcription/api_engine.py` | Added optional `resolved_ip` and `transport` injection to `GenericAudioAPIEngine`; dynamically attaches `_PinnedIPTransport` to pin outbound requests at socket level while preserving TLS SNI. |
+| `src/omniscribe/core/transcription/factory.py` | Updated `get_transcription_engine` to accept and forward `resolved_ip` and `transport` to `GenericAudioAPIEngine`. |
+| `src/omniscribe/plugins/transcribe/service.py` | Forwarded SSRF-resolved IP to `get_transcription_engine` without plain-HTTP URL rewriting; eliminated redundant URL splitting and TOCTOU risks. |
+| `src/omniscribe/core/llm/client.py` | Added explicit `provider` parameter routing and URL parsing (port 1234/11434 and hostname matching) with auto-detection info logging in `_resolve_provider_config`, `call_vlm`, and `call_llm`. |
+| `src/omniscribe/plugins/_http.py` | Exported `extract_token` helper for unified capability token resolution from query parameters (`token`), headers (`x-job-token`, `x-artifact-token`), and `Authorization: Bearer`. |
+| `src/omniscribe/plugins/documents/routes.py` | Migrated document export, text, and metadata download endpoints to use `extract_token` helper. |
+
 ## See Also
 
 - [README.md](../README.md) — feature overview, install, web workspace
@@ -1420,9 +1548,9 @@ Decomposed the 1049-line `WorkstationNotifier` god-class into three single-domai
 - [DEPLOYMENT.md](DEPLOYMENT.md) — local / LAN / public-internet deployment profiles
 - [SECURITY.md](SECURITY.md) — threat model, hardening checklist, vulnerability disclosure
 - [AGENTS.md](AGENTS.md) — contributor guide and full env-var reference
+- [COMPREHENSIVE-AUDIT.md](audits/COMPREHENSIVE-AUDIT.md) — master unified codebase audit, health scorecard, and living roadmap
 - `docs/audits/` — historical and comprehensive domain audit logs
 
-_Last updated: 2026-09-13_
-
+_Last updated: 2026-09-20_
 
 

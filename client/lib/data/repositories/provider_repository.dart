@@ -66,13 +66,13 @@ class ProviderRepositoryImpl implements ProviderRepository {
     if (apiBase != null && apiBase.isNotEmpty) {
       queryParams['api_base'] = apiBase;
     }
-    if (apiKey != null && apiKey.isNotEmpty) {
-      queryParams['api_key'] = apiKey;
-    }
 
     final json = await _apiClient.get<Map<String, dynamic>>(
       ApiConstants.providerModels(providerId),
       queryParameters: queryParams.isNotEmpty ? queryParams : null,
+      headers: apiKey == null || apiKey.trim().isEmpty
+          ? null
+          : {'X-Provider-Api-Key': apiKey.trim()},
     );
     return ProviderModelsResponse.fromJson(json);
   }

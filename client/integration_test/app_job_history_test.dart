@@ -1,12 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:integration_test/integration_test.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:omniscribe_client/core/enums/app_tab.dart';
 import 'package:omniscribe_client/core/enums/server_health.dart';
 import 'package:omniscribe_client/data/models/job_record.dart';
-import 'package:omniscribe_client/data/providers/repository_providers.dart';
 import 'package:omniscribe_client/presentation/jobs/job_history_screen.dart';
 import 'package:omniscribe_client/presentation/shell/shell_state.dart';
 
@@ -39,7 +37,7 @@ void main() {
     testWidgets('renders each job row when the repository returns records',
         (tester) async {
       final jobs = [
-        JobRecord(
+        const JobRecord(
           id: 'job-1',
           filename: 'q3-report.pdf',
           model: 'deepseek-ocr-2',
@@ -48,7 +46,7 @@ void main() {
           timestamp: '2026-01-15T10:00:00Z',
           status: 'completed',
         ),
-        JobRecord(
+        const JobRecord(
           id: 'job-2',
           filename: 'invoice-2025.pdf',
           model: 'deepseek-ocr-2',
@@ -74,7 +72,7 @@ void main() {
         (tester) async {
       var callCount = 0;
       final jobs = [
-        JobRecord(
+        const JobRecord(
           id: 'job-1',
           filename: 'doc.pdf',
           model: 'deepseek-ocr-2',

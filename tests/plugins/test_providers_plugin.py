@@ -388,20 +388,34 @@ def test_provider_models_accepts_x_provider_api_key_header() -> None:
         assert headers["Authorization"] == "Bearer sk-header-key"
 
 
-def test_provider_models_accepts_authorization_bearer_header() -> None:
-    manager, http = _manager(FakeHttpClient({"data": [{"id": "model-a"}]}))
+def test_provider_models_never_forwards_server_bearer() -> None:
+    from omniscribe.middleware.auth import BearerAuthMiddleware
+
+    manager, _ = _manager()
+    mock_discover = AsyncMock(return_value={"models": ["model-a"], "error": None})
+    manager.discover_models = mock_discover  # type: ignore[method-assign]
     app = FastAPI()
+    app.add_middleware(BearerAuthMiddleware, expected_token="server-secret")
     app.include_router(build_providers_router(manager))
     with TestClient(app) as client:
         response = client.get(
             "/api/providers/openai/models",
-            headers={"Authorization": "Bearer sk-bearer-key"},
+            headers={"Authorization": "Bearer server-secret"},
         )
         assert response.status_code == 200
         assert response.json() == {"models": ["model-a"], "error": None}
-        assert len(http.calls) == 1
-        _, headers = http.calls[0]
-        assert headers["Authorization"] == "Bearer sk-bearer-key"
+        mock_discover.assert_awaited_with("openai", api_base=None, api_key=None)
+        response = client.get(
+            "/api/providers/openai/models",
+            headers={
+                "Authorization": "Bearer server-secret",
+                "X-Provider-Api-Key": "provider-secret",
+            },
+        )
+        assert response.status_code == 200
+        mock_discover.assert_awaited_with(
+            "openai", api_base=None, api_key="provider-secret"
+        )
 
 
 def test_provider_models_passes_resolved_key_to_discover_models() -> None:
@@ -424,15 +438,13 @@ def test_provider_models_passes_resolved_key_to_discover_models() -> None:
             "openai", api_base=None, api_key="header-x-key"
         )
 
-        # 2. Authorization: Bearer takes precedence over query param
+        # Server authentication cannot override the provider credential.
         resp2 = client.get(
             "/api/providers/openai/models?api_key=query-key",
             headers={"Authorization": "Bearer header-bearer-key"},
         )
         assert resp2.status_code == 200
-        mock_discover.assert_awaited_with(
-            "openai", api_base=None, api_key="header-bearer-key"
-        )
+        mock_discover.assert_awaited_with("openai", api_base=None, api_key="query-key")
 
         # 3. Non-Bearer Authorization falls back to query param
         resp3 = client.get(
@@ -844,3 +856,48 @@ async def test_auto_discover_does_not_use_settings_for_inactive_provider(
     _, headers = http.calls[0]
     assert "x-api-key" not in headers
     assert "Authorization" not in headers
+
+
+def test_is_same_origin() -> None:
+    from omniscribe.utils.security import is_same_origin
+
+    assert is_same_origin("http://localhost:1234/v1", "http://localhost:1234")
+    assert is_same_origin("http://localhost:1234", "http://localhost:1234/models")
+    assert is_same_origin("https://api.openai.com/v1", "https://api.openai.com:443")
+    assert is_same_origin("http://example.com:80", "http://example.com")
+    assert not is_same_origin("http://example.com", "https://example.com")
+    assert not is_same_origin("http://example.com:80", "http://example.com:8080")
+    assert not is_same_origin("http://example.com", "http://evil.com")
+    assert not is_same_origin("", "http://example.com")
+    assert not is_same_origin(None, "http://example.com")
+
+
+def test_resolve_api_key_guards_against_foreign_origin(monkeypatch) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-secret-env-key")
+    manager, _ = _manager()
+    # 1. Allowlisted template URL returns server key
+    key1 = manager._resolve_api_key("openai", None, "https://api.openai.com/v1")
+    assert key1 == "sk-secret-env-key"
+
+    # 2. Foreign origin does NOT return server key
+    key2 = manager._resolve_api_key("openai", None, "https://attacker.com/v1")
+    assert key2 is None
+
+    # 3. Explicit caller-provided key is honored on foreign origin
+    key3 = manager._resolve_api_key("openai", "sk-user-key", "https://attacker.com/v1")
+    assert key3 == "sk-user-key"
+
+    # 4. Settings key for active provider on foreign origin is NOT returned
+    manager._settings.llm_api_key = "sk-settings-key"
+    manager.set_active(
+        provider_id="openai",
+        api_base="https://api.openai.com/v1",
+    )
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    # Origin matching active base returns settings key
+    assert (
+        manager._resolve_api_key("openai", None, "https://api.openai.com/v1")
+        == "sk-settings-key"
+    )
+    # Foreign origin returns None
+    assert manager._resolve_api_key("openai", None, "https://foreign.com/v1") is None

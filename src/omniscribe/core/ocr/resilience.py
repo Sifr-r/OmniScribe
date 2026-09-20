@@ -25,6 +25,7 @@ from enum import StrEnum
 from typing import Final
 
 from omniscribe.config import RuntimeSettings, load_settings
+from omniscribe.core.ocr.exceptions import LLMBalanceError
 
 logger = logging.getLogger(__name__)
 
@@ -149,6 +150,12 @@ def is_transient_error(exc: BaseException) -> bool:
     """
     # Always-not-transient exception types (programming bugs).
     if isinstance(exc, _PYTHON_BUG_EXCEPTION_TYPES):
+        return False
+
+    # Balance exhaustion (upstream HTTP 402) is account-level and
+    # permanent — every identical call will fail until the operator
+    # tops up, so it must not fall into the default-retryable branch.
+    if isinstance(exc, LLMBalanceError):
         return False
 
     # ValueError is a permanent caller-side error (audit D13) — the

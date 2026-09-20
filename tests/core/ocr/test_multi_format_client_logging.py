@@ -165,3 +165,30 @@ async def test_C1_ollama_logs_warning_on_malformed_response(
         f"Expected WARNING referencing 'ollama-test', "
         f"got: {[r.message for r in caplog.records]}"
     )
+
+
+def test_get_shared_client_cross_loop_closes_old_client() -> None:
+    import asyncio
+
+    from omniscribe.core.ocr import multi_format_client
+
+    loop1 = asyncio.new_event_loop()
+    loop2 = asyncio.new_event_loop()
+    try:
+
+        async def _get() -> Any:
+            return multi_format_client._get_shared_client()
+
+        client1 = loop1.run_until_complete(_get())
+        assert multi_format_client._shared_client is client1
+        assert multi_format_client._shared_client_loop is loop1
+
+        with patch.object(multi_format_client, "_safe_close_client") as mock_close:
+            client2 = loop2.run_until_complete(_get())
+            assert client2 is not client1
+            mock_close.assert_called_once_with(client1, loop1)
+    finally:
+        loop1.close()
+        loop2.close()
+        multi_format_client._shared_client = None
+        multi_format_client._shared_client_loop = None

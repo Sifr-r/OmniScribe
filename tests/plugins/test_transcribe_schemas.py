@@ -34,6 +34,25 @@ def test_transcribe_request_coerces_numeric_temperature() -> None:
     assert req.temperature == 0.5
 
 
+def test_transcribe_request_validates_engine() -> None:
+    req = TranscribeRequest(engine="local")
+    assert req.engine == "local"
+
+    with pytest.raises(pydantic.ValidationError):
+        TranscribeRequest(engine="locall")
+
+
+def test_update_transcription_config_request_validates_engine() -> None:
+    from omniscribe.plugins.transcribe.schemas import UpdateTranscriptionConfigRequest
+
+    update = UpdateTranscriptionConfigRequest(engine=TranscriptionEngineType("local"))
+    assert update.engine == "local"
+
+    # Deliberately pass an invalid engine string to verify validation rejects it.
+    with pytest.raises(pydantic.ValidationError):
+        UpdateTranscriptionConfigRequest(engine="locall")  # type: ignore[arg-type]
+
+
 def test_engine_enum_covers_factory_vocabulary() -> None:
     values = {member.value for member in TranscriptionEngineType}
     assert values == {

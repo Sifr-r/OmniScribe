@@ -264,6 +264,22 @@ async def evaluate_node(state: Any) -> dict[str, float | str | bool]:
             }
         return {"evaluation_score": 0.0, "feedback": "Translation API call failed."}
 
+    if source.strip() and not translated.strip():
+        if best_translation and best_translation.strip():
+            return {
+                "evaluation_score": 1.0,
+                "translated_chunk": best_translation,
+                "feedback": "Reverted to best attempt.",
+            }
+        if attempts >= settings.max_attempts:
+            return {
+                "evaluation_score": 1.0,
+                "failed": True,
+                "translated_chunk": translated,
+                "feedback": "Empty translation received after max attempts.",
+            }
+        return {"evaluation_score": 0.0, "feedback": "Empty translation received"}
+
     if not settings.evaluate_enabled:
         return {"evaluation_score": 1.0, "feedback": "Evaluation disabled."}
 
@@ -502,3 +518,6 @@ def should_refine(state: Any) -> str:
     if state.get("evaluation_score", 1.0) < settings.acceptance_score:
         return "translate"
     return "end"
+
+
+evaluate_chunk = evaluate_node

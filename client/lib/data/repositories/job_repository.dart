@@ -57,6 +57,7 @@ class JobRepositoryImpl implements JobRepository {
   Future<int> clearJobs() async {
     final json = await _apiClient.delete<Map<String, dynamic>>(
       ApiConstants.jobs,
+      queryParameters: const {'confirm': true},
     );
     return (json['cleared'] as num?)?.toInt() ?? 0;
   }
@@ -74,7 +75,7 @@ class JobRepositoryImpl implements JobRepository {
     final token = await _ocrRepository.getJobArtifactToken(jobId);
     return _apiClient.getBytes(
       ApiConstants.jobResult(jobId),
-      headers: {'Authorization': 'Bearer $token'},
+      headers: {'X-Artifact-Token': token},
     );
   }
 

@@ -83,6 +83,8 @@ class MemoryStateBackend:
             record = self._artifacts.get(id)
             if record is None or not secrets.compare_digest(record.token, token):
                 return None
+            if time.time() >= record.created_at + record.ttl_seconds:
+                return None
             return ArtifactBlob(record=record, blob=self._blobs[id])
 
     async def delete_artifact(self, id: str) -> None:
@@ -154,7 +156,12 @@ class MemoryStateBackend:
     async def get_channel(self, channel_id: str) -> ChannelRecord | None:
         """Return the channel record or ``None``. Does NOT consume."""
         async with self._lock:
-            return self._channels.get(channel_id)
+            record = self._channels.get(channel_id)
+            if record is None:
+                return None
+            if time.time() >= record.created_at + record.ttl_seconds:
+                return None
+            return record
 
     async def consume_channel(
         self, channel_id: str, session_token: str
@@ -167,6 +174,8 @@ class MemoryStateBackend:
                 or record.consumed
                 or not secrets.compare_digest(record.session_token, session_token)
             ):
+                return None
+            if time.time() >= record.created_at + record.ttl_seconds:
                 return None
             self._channels[channel_id] = replace(record, consumed=True)
             return record

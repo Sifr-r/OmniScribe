@@ -69,6 +69,24 @@ def _create_synthetic_page_images(
     return [(f"{fake_b64}_{idx}", width, height) for idx in range(count)]
 
 
+async def test_page_selection_only_calls_selected_pages_with_original_indices() -> None:
+    backend = PromptedGroundedOCR()
+    images = _create_synthetic_page_images(3)
+    call = AsyncMock(return_value='[{"bbox":[0,0,100,100],"text":"selected"}]')
+    with (
+        patch.object(backend, "_get_page_images", AsyncMock(return_value=images)),
+        patch.object(backend, "_call_with_retry", call),
+    ):
+        result = await backend.ocr_document("source.pdf", pages="2,2")
+        call.assert_awaited_once_with(images[1][0])
+        assert [block.page_index for block in result.blocks] == [1]
+        assert len(result.page_sizes) == 3
+        call.reset_mock()
+        with pytest.raises(ValueError, match="no document pages"):
+            await backend.ocr_document("source.pdf", pages="4-999999999")
+        call.assert_not_awaited()
+
+
 # ---------------------------------------------------------------------------
 # 1. Prompt Builder Tests
 # ---------------------------------------------------------------------------

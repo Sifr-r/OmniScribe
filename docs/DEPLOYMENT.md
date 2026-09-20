@@ -69,7 +69,7 @@ requires re-entering it.
 
 **What changed from profile 1:**
 
-- `OMNISCRIBE_AUTH_TOKEN` gates every HTTP route except the liveness probes (`/api/health`, `/health`, `/healthz`, `/ready`, `/readyz`). The middleware is wired unconditionally in `src/omniscribe/server.py:184-202`; placeholder tokens are rejected on non-loopback binds with a clear `SystemExit`. The WebSocket handshake uses per-channel session tokens on top of the same bearer.
+- `OMNISCRIBE_AUTH_TOKEN` gates every HTTP route except the liveness probes (`/api/health`, `/health`, `/healthz`, `/ready`, `/readyz`). The middleware is wired unconditionally in `src/omniscribe/server.py:240-256`; placeholder tokens are rejected on non-loopback binds with a clear `SystemExit` (`server.py:485+`). The WebSocket handshake uses per-channel session tokens on top of the same bearer.
 - `ALLOW_SSRF_LOCAL=false` blocks the URL fetcher from reaching
   `localhost` / private IPs. Only public URLs work.
 - The upload cap drops to 2 GB and the rate limit to 30/min — adjust
@@ -184,6 +184,15 @@ and as a potential future multi-worker dispatch transport.
 uv sync --extra web --extra preprocessing --extra async-translation
 docker compose up -d   # api + redis
 ```
+
+Before starting Compose, set both `REDIS_PASSWORD` and
+`OMNISCRIBE_AUTH_TOKEN` in the project `.env` (see `.env.example`). Generate
+independent values with `python -c "import secrets; print(secrets.token_urlsafe(32))"`.
+Compose forwards the auth token to the API container and rejects an empty
+value. The server requires authentication because it listens on `0.0.0.0`
+inside the container, even with a loopback-only host port. Enter the same
+`OMNISCRIBE_AUTH_TOKEN` in the Flutter client's backend Bearer Token setting;
+provider API keys remain separate.
 
 The `async-translation` extra installs the LangGraph translation core
 (`async-translation`) dependencies; translated output is stored as a

@@ -17,22 +17,16 @@ from omniscribe.core.document import DocumentBlock, DocumentPage, DocumentResult
 from omniscribe.core.workflows.utils import validate_bbox_coordinates
 from omniscribe.core.writers.docx import DocxMarkdownExporter
 from omniscribe.core.writers.docx_tree import DocxTreeExporter, convert_tree_to_docx
-from omniscribe.core.writers.exporter_base import (
-    BaseDocumentExporter,
-    DocumentExportProtocol,
-)
+from omniscribe.core.writers.exporter_base import BaseDocumentExporter
 from omniscribe.core.writers.html import HtmlExporter, render_html
 
 
-def test_document_export_protocol_conformance() -> None:
-    """Verify that all exporter implementations satisfy the runtime DocumentExportProtocol."""
+def test_document_exporter_inheritance() -> None:
+    """Verify that all exporter implementations inherit BaseDocumentExporter."""
     tree_exporter = DocxTreeExporter()
     md_exporter = DocxMarkdownExporter()
     html_exporter = HtmlExporter()
 
-    assert isinstance(tree_exporter, DocumentExportProtocol)
-    assert isinstance(md_exporter, DocumentExportProtocol)
-    assert isinstance(html_exporter, DocumentExportProtocol)
     assert isinstance(tree_exporter, BaseDocumentExporter)
     assert isinstance(md_exporter, BaseDocumentExporter)
     assert isinstance(html_exporter, BaseDocumentExporter)

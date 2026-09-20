@@ -260,6 +260,9 @@ class SQLiteStateBackend:
                 ).fetchone()
                 if row is None or not secrets.compare_digest(str(row["token"]), token):
                     return None
+                now = time.time()
+                if now >= row["created_at"] + row["ttl_seconds"]:
+                    return None
                 record = _artifact_from_row(row)
                 path = Path(row["blob_path"])
                 if not path.is_file():
@@ -456,7 +459,12 @@ class SQLiteStateBackend:
                     )
                     .fetchone()
                 )
-                return _channel_from_row(row) if row is not None else None
+                if row is None:
+                    return None
+                now = time.time()
+                if now >= row["created_at"] + row["ttl_seconds"]:
+                    return None
+                return _channel_from_row(row)
 
             return await asyncio.to_thread(_get)
 
@@ -486,6 +494,9 @@ class SQLiteStateBackend:
                         str(row["session_token"]), session_token
                     )
                 ):
+                    return None
+                now = time.time()
+                if now >= row["created_at"] + row["ttl_seconds"]:
                     return None
                 conn.execute(
                     "UPDATE progress_channels SET consumed = 1 WHERE channel_id = ?",

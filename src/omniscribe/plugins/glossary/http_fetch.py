@@ -10,15 +10,12 @@ via `GlossaryError`.
 
 from __future__ import annotations
 
-from typing import Any
 from urllib.parse import urljoin, urlparse
 
-import httpcore
 import httpx
-from httpcore._backends.auto import AutoBackend
 
 from omniscribe.plugins.glossary.service import GlossaryError
-from omniscribe.utils.security import is_ssrf_target
+from omniscribe.utils.security import _PinnedIPTransport, is_ssrf_target
 
 _MAX_REDIRECTS = 5
 MAX_GLOSSARY_BYTES: int = 50 * 1024 * 1024
@@ -54,46 +51,6 @@ def _sanitize_url(url: str) -> str:
         raise GlossaryError(400, "bad_request", "URL must include a valid hostname.")
 
     return cleaned
-
-
-class _PinnedNetworkBackend(httpcore.AsyncNetworkBackend):
-    """Network backend that redirects TCP connections for a specific host to a pinned IP."""
-
-    def __init__(self, target_host: str, resolved_ip: str) -> None:
-        self._target_host = target_host
-        self._resolved_ip = resolved_ip
-        self._backend: httpcore.AsyncNetworkBackend = AutoBackend()
-
-    async def connect_tcp(
-        self,
-        host: str,
-        port: int,
-        timeout: float | None = None,
-        local_address: str | None = None,
-        socket_options: Any = None,
-    ) -> httpcore.AsyncNetworkStream:
-        target = self._resolved_ip if host == self._target_host else host
-        return await self._backend.connect_tcp(
-            target,
-            port,
-            timeout=timeout,
-            local_address=local_address,
-            socket_options=socket_options,
-        )
-
-
-class _PinnedIPTransport(httpx.AsyncHTTPTransport):
-    """httpx transport pinning connections to the SSRF-resolved IP without global socket mutation."""
-
-    def __init__(self, target_host: str, resolved_ip: str, **kwargs: Any) -> None:
-        super().__init__(**kwargs)
-        backend = _PinnedNetworkBackend(target_host, resolved_ip)
-        self._pool = httpcore.AsyncConnectionPool(
-            ssl_context=self._pool._ssl_context,
-            network_backend=backend,
-            http2=self._pool._http2,
-            retries=self._pool._retries,
-        )
 
 
 async def fetch_glossary_url(

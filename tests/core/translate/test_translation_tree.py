@@ -262,7 +262,7 @@ async def test_translate_tree_translates_table_node_cells():
     assert cell_2.text == "Mundo"
     assert cell_2.metadata["translation"] == "Mundo"
     assert len(chunk_events) == 2
-    assert chunk_events[0] == (0, 4, "Hola", "Spanish")
+    assert chunk_events[0] == (0, 5, "Hola", "Spanish")
     assert chunk_events[1] == (1, 5, "Mundo", "Spanish")
 
 

@@ -25,13 +25,13 @@ void main() {
 
     test(
         'resolves the token via the SSE channel (out-of-band) and downloads '
-        'with Bearer auth (2026-08-29 audit C-3 / H-3)', () async {
+        'with a dedicated artifact header', () async {
       final expectedBytes = Uint8List.fromList([1, 2, 3, 4]);
       when(() => ocrRepo.getJobArtifactToken('job-42'))
           .thenAnswer((_) async => 'tok-99');
       when(() => apiClient.getBytes(
             ApiConstants.jobResult('job-42'),
-            headers: {'Authorization': 'Bearer tok-99'},
+            headers: {'X-Artifact-Token': 'tok-99'},
           )).thenAnswer((_) async => expectedBytes);
 
       final result = await repo.downloadResult('job-42');
@@ -40,7 +40,7 @@ void main() {
       verify(() => ocrRepo.getJobArtifactToken('job-42')).called(1);
       verify(() => apiClient.getBytes(
             ApiConstants.jobResult('job-42'),
-            headers: {'Authorization': 'Bearer tok-99'},
+            headers: {'X-Artifact-Token': 'tok-99'},
           )).called(1);
     });
 

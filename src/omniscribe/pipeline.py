@@ -205,7 +205,7 @@ class OCRPipeline:
         """Run OCR on ``input_path`` → ``output_path``.
 
         Dispatches to whichever engine was chosen at construction
-        time. Hybrid-only parameters (``pages``, ``concurrency``,
+        time. Hybrid-only parameters (``concurrency``,
         ``refine``, ``max_image_dim``, ``dense_*``, ``self_correction``,
         ``binarize``, ``dual_engine``, ``preprocessing_options``,
         ``quality_routing_options``) are silently ignored on the
@@ -234,6 +234,7 @@ class OCRPipeline:
             return await grounded_engine.execute(
                 input_path=input_path,
                 output_path=output_path,
+                pages=pages,
                 dpi=dpi,
                 spellcheck=spellcheck,
                 cross_page=cross_page,

@@ -30,9 +30,7 @@ class TranslationRequest(TrimmedModel):
 
 
 class AsyncTranslationRequest(TranslationRequest):
-    """Async (tree-aware) submission: artifact pair required at the route
-    level (400 envelope), legacy defaults, ``text``/``channel_id``
-    accepted and ignored."""
+    """Async submission accepts inline text or a token-bound text artifact."""
 
     text_artifact_id: str | None = Field(default=None, min_length=32, max_length=32)
     text_artifact_token: str | None = Field(default=None, min_length=32, max_length=256)

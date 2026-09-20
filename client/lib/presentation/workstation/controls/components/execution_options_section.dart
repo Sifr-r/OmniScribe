@@ -183,11 +183,6 @@ class _ExecutionOptionsSectionState extends State<ExecutionOptionsSection> {
                         subtitle:
                             'Fast bounding-box layout parsing without VLM pass',
                       ),
-                      AppSelectItem(
-                        value: PipelineMode.groundedNative,
-                        label: 'Grounded Native',
-                        subtitle: 'Direct token-level model grounding',
-                      ),
                     ],
                     onChanged: (mode) {
                       if (mode != null) {

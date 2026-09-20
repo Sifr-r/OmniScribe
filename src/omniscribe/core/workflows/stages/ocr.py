@@ -11,6 +11,7 @@ from omniscribe.core.aligner import HybridAligner
 from omniscribe.core.document import BBox
 from omniscribe.core.imaging.utils import decode_base64_image
 from omniscribe.core.ocr import OCRProcessor
+from omniscribe.core.ocr.exceptions import LLMBalanceError
 from omniscribe.core.ocr.resilience import CircuitOpenError
 from omniscribe.core.workflows.base import (
     CancelCheck,
@@ -72,43 +73,66 @@ class HybridOcrRunner:
         if any(h in api_base for h in ("localhost", "127.0.0.1", "::1", "192.168.")):
             effective_concurrency = min(concurrency, 1)
         semaphore = asyncio.Semaphore(max(1, effective_concurrency))
+        page_semaphore = asyncio.Semaphore(max(1, effective_concurrency))
+        is_cancelled = False
         total = len(page_nums)
 
         async def process_page(
             p_num: int,
         ) -> tuple[int, PageBoxes, Exception | None]:
+            if is_cancelled:
+                raise OCRCancelled(f"OCR cancelled before processing page {p_num}.")
             try:
-                if p_num in per_box_pages:
-                    cached_image = (
-                        decoded_get(p_num) if decoded_get is not None else None
-                    )
-                    aligned = await self.ocr_per_box(
-                        images_dict[p_num],
-                        pages_structured[p_num],
-                        semaphore,
-                        self_correction,
-                        binarize,
-                        dual_engine,
-                        page_image=cached_image,
-                    )
-                    return p_num, aligned, None
-                async with semaphore:
-                    llm_lines = await self.ocr_processor.perform_ocr(
-                        images_dict[p_num],
-                        self_correction=self_correction,
-                        binarize=binarize,
-                        dual_engine=dual_engine,
-                    )
-                    if llm_lines:
-                        aligned = await asyncio.to_thread(
-                            self.aligner.align_text, pages_structured[p_num], llm_lines
+                async with page_semaphore:
+                    if is_cancelled:
+                        raise OCRCancelled(
+                            f"OCR cancelled before processing page {p_num}."
                         )
-                    else:
-                        aligned = pages_structured[p_num]
-                    return p_num, aligned, None
+                    if p_num in per_box_pages:
+                        cached_image = (
+                            decoded_get(p_num) if decoded_get is not None else None
+                        )
+                        aligned = await self.ocr_per_box(
+                            images_dict[p_num],
+                            pages_structured[p_num],
+                            semaphore,
+                            self_correction,
+                            binarize,
+                            dual_engine,
+                            page_image=cached_image,
+                        )
+                        return p_num, aligned, None
+                    async with semaphore:
+                        if is_cancelled:
+                            raise OCRCancelled(
+                                f"OCR cancelled before processing page {p_num}."
+                            )
+                        llm_lines = await self.ocr_processor.perform_ocr(
+                            images_dict[p_num],
+                            self_correction=self_correction,
+                            binarize=binarize,
+                            dual_engine=dual_engine,
+                        )
+                        if is_cancelled:
+                            raise OCRCancelled(
+                                f"OCR cancelled before processing page {p_num}."
+                            )
+                        if llm_lines:
+                            aligned = await asyncio.to_thread(
+                                self.aligner.align_text,
+                                pages_structured[p_num],
+                                llm_lines,
+                            )
+                        else:
+                            aligned = pages_structured[p_num]
+                        return p_num, aligned, None
             except CircuitOpenError:
                 raise
             except OCRCancelled:
+                raise
+            except LLMBalanceError:
+                # Account-level exhaustion fails every page deterministically;
+                # surfacing it beats "successfully" returning an empty document.
                 raise
             except Exception as e:
                 logger.warning(
@@ -142,6 +166,7 @@ class HybridOcrRunner:
                     completed += 1
 
                     if cancel_check is not None and cancel_check():
+                        is_cancelled = True
                         raise OCRCancelled(
                             f"OCR cancelled after page {p_num} ({completed}/{total})."
                         )
@@ -167,6 +192,8 @@ class HybridOcrRunner:
         except* OCRCancelled as eg:
             raise eg.exceptions[0] from None
         except* CircuitOpenError as eg:
+            raise eg.exceptions[0] from None
+        except* LLMBalanceError as eg:
             raise eg.exceptions[0] from None
 
     async def ocr_per_box(
@@ -233,6 +260,8 @@ class HybridOcrRunner:
                 return idx, text
             except CircuitOpenError:
                 raise
+            except LLMBalanceError:
+                raise
             except Exception as e:
                 logger.warning(
                     "Dense OCR failed for box %s: %s: %s",
@@ -251,5 +280,7 @@ class HybridOcrRunner:
                         idx, text = await fut
                         results[idx] = text.strip()
             except* CircuitOpenError as eg:
+                raise eg.exceptions[0] from None
+            except* LLMBalanceError as eg:
                 raise eg.exceptions[0] from None
         return [(bbox, results.get(i, "")) for i, (bbox, _) in enumerate(structured)]

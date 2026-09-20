@@ -1,13 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:integration_test/integration_test.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:omniscribe_client/core/enums/app_tab.dart';
 import 'package:omniscribe_client/core/enums/server_health.dart';
 import 'package:omniscribe_client/data/models/provider_preset.dart';
 import 'package:omniscribe_client/data/providers/provider_notifier.dart';
-import 'package:omniscribe_client/data/providers/repository_providers.dart';
 import 'package:omniscribe_client/presentation/providers/provider_modal.dart';
 import 'package:omniscribe_client/presentation/shell/shell_state.dart';
 
@@ -60,7 +58,7 @@ void main() {
     testWidgets('lists every preset returned by the repository',
         (tester) async {
       final providers = [
-        ProviderPreset(
+        const ProviderPreset(
           id: 'openai',
           name: 'OpenAI',
           category: 'cloud',
@@ -68,7 +66,7 @@ void main() {
           recommendedBaseUrl: 'https://api.openai.com',
           defaultModel: 'gpt-4o',
         ),
-        ProviderPreset(
+        const ProviderPreset(
           id: 'anthropic',
           name: 'Anthropic',
           category: 'cloud',
@@ -98,7 +96,7 @@ void main() {
     testWidgets('typing into the search field filters the list',
         (tester) async {
       final providers = [
-        ProviderPreset(
+        const ProviderPreset(
           id: 'openai',
           name: 'OpenAI',
           category: 'cloud',
@@ -106,7 +104,7 @@ void main() {
           recommendedBaseUrl: 'https://api.openai.com',
           defaultModel: 'gpt-4o',
         ),
-        ProviderPreset(
+        const ProviderPreset(
           id: 'anthropic',
           name: 'Anthropic',
           category: 'cloud',

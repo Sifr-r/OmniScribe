@@ -23,3 +23,15 @@ class ModelNotLoadedError(LLMCallError):
     *before* any OCR work starts so the user sees the mismatch immediately
     instead of debugging strange output later.
     """
+
+
+class LLMBalanceError(LLMCallError):
+    """Raised when the provider rejects a completion call with HTTP 402.
+
+    Account-level exhaustion (cloud provider out of credits) fails every
+    subsequent call deterministically, so it must surface as its own type:
+    the OCR engines treat it like :class:`CircuitOpenError` (fail fast
+    instead of burning the remaining pages), and the API layer maps it to
+    a 402 ``payment_required`` envelope so the UI shows "top up your
+    provider account" instead of a generic 5xx.
+    """

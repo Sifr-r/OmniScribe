@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
@@ -535,6 +536,127 @@ void main() {
 
       expect(response.statusCode, 200);
       expect(capturedTimeout, const Duration(minutes: 30));
+    });
+
+    test('Translates 503 JSON error body delivered as bytes for byte-response routes', () async {
+      final dio = apiClient.rawDio;
+      dio.interceptors.clear();
+      dio.interceptors.add(
+        InterceptorsWrapper(
+          onRequest: (options, handler) {
+            handler.reject(
+              DioException(
+                requestOptions: options,
+                response: Response(
+                  requestOptions: options,
+                  statusCode: 503,
+                  // Byte-response routes (ResponseType.bytes) receive error
+                  // bodies as raw bytes, exactly as dio's badResponse path
+                  // delivers them.
+                  data: Uint8List.fromList(utf8.encode(
+                    '{"error": "service_unavailable", '
+                    '"detail": "Model circuit breaker is open; retry later"}',
+                  )),
+                ),
+              ),
+            );
+          },
+        ),
+      );
+
+      await expectLater(
+        apiClient.postMultipartBytes(
+          '/api/process',
+          formData: FormData.fromMap({'file': 'x'}),
+        ),
+        throwsA(
+          isA<ServiceUnavailableException>()
+              .having((e) => e.statusCode, 'statusCode', 503)
+              .having((e) => e.error, 'error', 'service_unavailable')
+              .having(
+                (e) => e.message,
+                'message',
+                'Model circuit breaker is open; retry later',
+              ),
+        ),
+      );
+    });
+
+    test('Translates 402 payment required to PaymentRequiredException', () async {
+      final dio = apiClient.rawDio;
+      dio.interceptors.clear();
+      dio.interceptors.add(
+        InterceptorsWrapper(
+          onRequest: (options, handler) {
+            handler.reject(
+              DioException(
+                requestOptions: options,
+                response: Response(
+                  requestOptions: options,
+                  statusCode: 402,
+                  data: {
+                    'error': 'payment_required',
+                    'detail':
+                        'LLM provider reported insufficient balance: '
+                            'insufficient balance (1008)',
+                  },
+                ),
+              ),
+            );
+          },
+        ),
+      );
+
+      await expectLater(
+        apiClient.get<dynamic>('/test'),
+        throwsA(
+          isA<PaymentRequiredException>()
+              .having((e) => e.statusCode, 'statusCode', 402)
+              .having((e) => e.error, 'error', 'payment_required')
+              .having(
+                (e) => e.message,
+                'message',
+                contains('insufficient balance'),
+              ),
+        ),
+      );
+    });
+
+    test('Surfaces plain-text bytes error body as the message', () async {
+      final dio = apiClient.rawDio;
+      dio.interceptors.clear();
+      dio.interceptors.add(
+        InterceptorsWrapper(
+          onRequest: (options, handler) {
+            handler.reject(
+              DioException(
+                requestOptions: options,
+                response: Response(
+                  requestOptions: options,
+                  statusCode: 503,
+                  data: Uint8List.fromList(
+                    utf8.encode('Backend down for maintenance'),
+                  ),
+                ),
+              ),
+            );
+          },
+        ),
+      );
+
+      await expectLater(
+        apiClient.postMultipartBytes(
+          '/api/process',
+          formData: FormData.fromMap({'file': 'x'}),
+        ),
+        throwsA(
+          isA<ServiceUnavailableException>().having(
+            (e) => e.message,
+            'message',
+            'Backend down for maintenance',
+          ),
+        ),
+      );
     });
   });
 }

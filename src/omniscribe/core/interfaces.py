@@ -36,24 +36,6 @@ class JobQueueProtocol(Protocol):
         ...
 
 
-@runtime_checkable
-class StateBackendProtocol(Protocol):
-    """Abstract state persistence seam providing key-value operations."""
-
-    async def get(self, key: str) -> Any:
-        """Retrieve stored value by key."""
-        ...
-
-    async def set(self, key: str, value: Any, *, ttl: int | None = None) -> None:
-        """Store or update key with value and optional TTL in seconds."""
-        ...
-
-    async def delete(self, key: str) -> bool | None:
-        """Remove a key from the state backend."""
-        ...
-
-
 __all__ = [
     "JobQueueProtocol",
-    "StateBackendProtocol",
 ]

@@ -28,6 +28,21 @@ def _coerce_float(value: Any) -> Any:
     return value
 
 
+class TranscriptionEngineType(StrEnum):
+    API = "api"
+    WHISPER_API = "whisper_api"
+    LOCAL = "local"
+    WHISPER_LOCAL = "whisper_local"
+    FASTER_WHISPER = "faster_whisper"
+    FASTER_WHISPER_DASH = "faster-whisper"
+    AUTO = "auto"
+
+
+ALLOWED_TRANSCRIBE_ENGINES = frozenset(
+    member.value for member in TranscriptionEngineType
+)
+
+
 class TranscribeRequest(BaseModel):
     """One transcription upload's options, parsed from form fields."""
 
@@ -56,6 +71,15 @@ class TranscribeRequest(BaseModel):
     def _strip(cls, value: Any) -> Any:
         return _validate_optional_string(value)
 
+    @field_validator("engine")
+    @classmethod
+    def _validate_engine(cls, value: str | None) -> str | None:
+        if value is not None and value not in ALLOWED_TRANSCRIBE_ENGINES:
+            raise ValueError(
+                f"engine must be one of {sorted(ALLOWED_TRANSCRIBE_ENGINES)}, got {value!r}"
+            )
+        return value
+
     @field_validator("temperature", mode="before")
     @classmethod
     def _temperature(cls, value: Any) -> Any:
@@ -74,16 +98,6 @@ def unpack_transcribe_options(request: TranscribeRequest) -> dict[str, Any]:
         "temperature": request.temperature,
         "channel_id": request.channel_id,
     }
-
-
-class TranscriptionEngineType(StrEnum):
-    API = "api"
-    WHISPER_API = "whisper_api"
-    LOCAL = "local"
-    WHISPER_LOCAL = "whisper_local"
-    FASTER_WHISPER = "faster_whisper"
-    FASTER_WHISPER_DASH = "faster-whisper"
-    AUTO = "auto"
 
 
 class TranscriptionConfigUpdate(BaseModel):
@@ -137,3 +151,17 @@ class TranscriptionJobResponse(BaseModel):
     metadata_artifact_token: str | None = None
     job_id: str | None = None
     segments: list[dict[str, Any]] = []
+
+
+UpdateTranscriptionConfigRequest = TranscriptionConfigUpdate
+
+__all__ = [
+    "ALLOWED_TRANSCRIBE_ENGINES",
+    "TranscribeRequest",
+    "TranscriptionConfigResponse",
+    "TranscriptionConfigUpdate",
+    "TranscriptionEngineType",
+    "TranscriptionJobResponse",
+    "UpdateTranscriptionConfigRequest",
+    "unpack_transcribe_options",
+]

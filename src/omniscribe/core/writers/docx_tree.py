@@ -8,8 +8,8 @@ tables, embedded images, code blocks, definition lists.
 
 from __future__ import annotations
 
-import contextlib
 import io
+import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, cast
 
@@ -20,6 +20,8 @@ from docx.shared import Inches, Pt, RGBColor
 from omniscribe.core.block_tree import block_type_str
 from omniscribe.core.writers._guard import TableDedup
 from omniscribe.core.writers.exporter_base import BaseDocumentExporter
+
+_LOGGER = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from omniscribe.core.block_tree import BlockNode, DocumentTree, TableNode
@@ -114,8 +116,10 @@ def _render_figure(
     if metadata.get("image_bytes"):
         p = doc.add_paragraph()
         run = p.add_run()
-        with contextlib.suppress(Exception):
+        try:
             run.add_picture(io.BytesIO(metadata["image_bytes"]), width=Inches(5.5))
+        except Exception as exc:
+            _LOGGER.warning("Failed to embed figure image: %s", exc)
     if getattr(node, "text", ""):
         cap = doc.add_paragraph(node.text)
         for r in cap.runs:

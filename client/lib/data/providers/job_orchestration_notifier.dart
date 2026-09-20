@@ -216,6 +216,13 @@ class JobOrchestrationNotifier extends Notifier<JobOrchestrationState> {
   late OcrRepository _ocrRepo;
   late WsClient _wsClient;
   StreamSubscription<WsEnvelope>? _wsSubscription;
+  StreamSubscription<void>? _wsClosedSubscription;
+
+  /// Every start, cancellation, or document reset invalidates older replies.
+  int _runEpoch = 0;
+  int? _statusCheckRunId;
+  Timer? _statusPollTimer;
+  String? _resultToken;
 
   /// Mirrors [JobOrchestrationState.channelId] for teardown — the ref is
   /// already disposed when [ref.onDispose] callbacks fire (Riverpod 3), so
@@ -234,8 +241,12 @@ class JobOrchestrationNotifier extends Notifier<JobOrchestrationState> {
   }
 
   Future<void> _disposeTeardown() async {
+    _runEpoch++;
+    _statusPollTimer?.cancel();
     await _wsSubscription?.cancel();
     _wsSubscription = null;
+    await _wsClosedSubscription?.cancel();
+    _wsClosedSubscription = null;
 
     final channelId = _lastChannelId;
     if (channelId != null && channelId.isNotEmpty) {
@@ -262,12 +273,74 @@ class JobOrchestrationNotifier extends Notifier<JobOrchestrationState> {
   /// The last known [JobOrchestrationState.channelId] stays visible in state,
   /// matching the pre-split cleanup semantics.
   Future<void> teardownProgressChannel() async {
-    await _disposeTeardown();
+    final channelId = _lastChannelId;
+    if (channelId == null || channelId.isEmpty) return;
+    await _teardownProgressChannel(
+      channelId: channelId,
+      sessionToken: _lastSessionToken,
+    );
   }
 
   /// Resets all orchestration state to idle (document load/clear).
   void reset() {
+    _runEpoch++;
+    _statusPollTimer?.cancel();
+    _resultToken = null;
+    final channelId = _lastChannelId;
+    final sessionToken = _lastSessionToken;
+    if (channelId != null && channelId.isNotEmpty) {
+      unawaited(_teardownProgressChannel(
+        channelId: channelId,
+        sessionToken: sessionToken,
+      ));
+    }
     state = JobOrchestrationState();
+  }
+
+  bool _isCurrentRun(int runId) => ref.mounted && runId == _runEpoch;
+
+  void _scheduleStatusCheck(int runId) {
+    _statusPollTimer?.cancel();
+    _statusPollTimer = Timer(const Duration(seconds: 2), () {
+      unawaited(_handleWsClosed(runId));
+    });
+  }
+
+  Future<void> _teardownProgressChannel({
+    required String channelId,
+    required String? sessionToken,
+  }) async {
+    final ownsActiveChannel =
+        _lastChannelId == channelId && _lastSessionToken == sessionToken;
+    if (ownsActiveChannel) {
+      final wsSubscription = _wsSubscription;
+      final wsClosedSubscription = _wsClosedSubscription;
+      await wsSubscription?.cancel();
+      await wsClosedSubscription?.cancel();
+      if (_lastChannelId == channelId && _lastSessionToken == sessionToken) {
+        if (identical(_wsSubscription, wsSubscription)) {
+          _wsSubscription = null;
+        }
+        if (identical(_wsClosedSubscription, wsClosedSubscription)) {
+          _wsClosedSubscription = null;
+        }
+        try {
+          await _wsClient.disconnect();
+        } catch (_) {
+          // The connection may already be closed.
+        }
+        _lastChannelId = null;
+        _lastSessionToken = null;
+      }
+    }
+    try {
+      await _ocrRepo.cancelProgressChannel(
+        channelId,
+        sessionToken: sessionToken ?? '',
+      );
+    } catch (_) {
+      // The server may already have completed the channel.
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -280,6 +353,7 @@ class JobOrchestrationNotifier extends Notifier<JobOrchestrationState> {
     void Function(int sent, int total)? onSendProgress,
     Duration? receiveTimeout,
   }) async {
+    if (state.isProcessing) return;
     final ws = ref.read(workstationProvider);
     if (!ws.hasDocument) {
       state = state.copyWith(error: 'No document loaded to process');
@@ -293,6 +367,7 @@ class JobOrchestrationNotifier extends Notifier<JobOrchestrationState> {
     }
 
     final filename = ws.filename ?? 'document.pdf';
+    final runId = ++_runEpoch;
 
     state = JobOrchestrationState(
       isProcessing: true,
@@ -308,6 +383,13 @@ class JobOrchestrationNotifier extends Notifier<JobOrchestrationState> {
       // 1. Open progress session & attach WebSocket
       try {
         session = await _ocrRepo.openProgressSession();
+        if (!_isCurrentRun(runId)) {
+          await _teardownProgressChannel(
+            channelId: session.channelId,
+            sessionToken: session.sessionToken,
+          );
+          return;
+        }
         _lastChannelId = session.channelId;
         _lastSessionToken = session.sessionToken;
         state = state.copyWith(channelId: session.channelId);
@@ -316,9 +398,12 @@ class JobOrchestrationNotifier extends Notifier<JobOrchestrationState> {
           channelId: session.channelId,
           sessionToken: session.sessionToken,
         );
+        if (!_isCurrentRun(runId)) return;
 
         await _wsSubscription?.cancel();
-        _wsSubscription = _wsClient.stream.listen(handleWsFrame);
+        _wsSubscription = _wsClient.stream.listen(
+          (frame) => _handleWsFrameForRun(frame, runId),
+        );
       } catch (_) {
         // Fail-open for WebSocket progress attach (still run sync OCR)
       }
@@ -334,6 +419,8 @@ class JobOrchestrationNotifier extends Notifier<JobOrchestrationState> {
         receiveTimeout: receiveTimeout,
       );
 
+      if (!_isCurrentRun(runId)) return;
+
       ref.read(workstationProvider.notifier).adoptProcessedDocument(
             result.pdfBytes,
           );
@@ -347,15 +434,22 @@ class JobOrchestrationNotifier extends Notifier<JobOrchestrationState> {
         textArtifactToken: result.textArtifactToken,
       );
     } catch (e) {
-      state = state.copyWith(
-        isProcessing: false,
-        stage: 'Error',
-        statusMessage: 'Processing failed: $e',
-        error: e.toString(),
-      );
+      if (_isCurrentRun(runId)) {
+        state = state.copyWith(
+          isProcessing: false,
+          stage: 'Error',
+          statusMessage: 'Processing failed: $e',
+          error: e.toString(),
+        );
+      }
       rethrow;
     } finally {
-      await teardownProgressChannel();
+      if (session != null) {
+        await _teardownProgressChannel(
+          channelId: session.channelId,
+          sessionToken: session.sessionToken,
+        );
+      }
     }
   }
 
@@ -364,6 +458,7 @@ class JobOrchestrationNotifier extends Notifier<JobOrchestrationState> {
     ProcessSettings? settings,
     void Function(int sent, int total)? onSendProgress,
   }) async {
+    if (state.isProcessing) return;
     final ws = ref.read(workstationProvider);
     if (!ws.hasDocument) {
       state = state.copyWith(error: 'No document loaded to process');
@@ -377,6 +472,7 @@ class JobOrchestrationNotifier extends Notifier<JobOrchestrationState> {
     }
 
     final filename = ws.filename ?? 'document.pdf';
+    final runId = ++_runEpoch;
 
     state = JobOrchestrationState(
       isProcessing: true,
@@ -390,6 +486,13 @@ class JobOrchestrationNotifier extends Notifier<JobOrchestrationState> {
     try {
       // 1. Open progress session
       final session = await _ocrRepo.openProgressSession();
+      if (!_isCurrentRun(runId)) {
+        await _teardownProgressChannel(
+          channelId: session.channelId,
+          sessionToken: session.sessionToken,
+        );
+        return;
+      }
       _lastChannelId = session.channelId;
       _lastSessionToken = session.sessionToken;
       state = state.copyWith(channelId: session.channelId);
@@ -398,11 +501,15 @@ class JobOrchestrationNotifier extends Notifier<JobOrchestrationState> {
         channelId: session.channelId,
         sessionToken: session.sessionToken,
       );
+      if (!_isCurrentRun(runId)) return;
 
       await _wsSubscription?.cancel();
       _wsSubscription = _wsClient.stream.listen(
-        handleWsFrame,
-        onDone: () => _handleWsClosed(),
+        (frame) => _handleWsFrameForRun(frame, runId),
+      );
+      await _wsClosedSubscription?.cancel();
+      _wsClosedSubscription = _wsClient.closedStream.listen(
+        (_) => unawaited(_handleWsClosed(runId)),
       );
 
       // 2. Submit async OCR request
@@ -415,6 +522,19 @@ class JobOrchestrationNotifier extends Notifier<JobOrchestrationState> {
         onSendProgress: onSendProgress,
       );
 
+      if (!_isCurrentRun(runId)) {
+        try {
+          await _ocrRepo.cancelJob(submitResponse.jobId);
+        } catch (_) {
+          // Cancellation is best-effort after the document was replaced.
+        }
+        await _teardownProgressChannel(
+          channelId: session.channelId,
+          sessionToken: session.sessionToken,
+        );
+        return;
+      }
+
       state = state.copyWith(
         isProcessing: true,
         stage: 'Queued',
@@ -422,43 +542,70 @@ class JobOrchestrationNotifier extends Notifier<JobOrchestrationState> {
         lastSubmittedJobId: submitResponse.jobId,
         statusMessage: 'Job queued: ${submitResponse.jobId}',
       );
+      _resultToken = submitResponse.resultToken;
+      _scheduleStatusCheck(runId);
+      if (_statusCheckRunId == runId) {
+        _statusCheckRunId = null;
+        unawaited(_handleWsClosed(runId));
+      }
     } catch (e) {
-      await teardownProgressChannel();
-      state = state.copyWith(
-        isProcessing: false,
-        stage: 'Error',
-        statusMessage: 'Async submission failed: $e',
-        error: e.toString(),
-      );
+      if (_isCurrentRun(runId)) {
+        await teardownProgressChannel();
+        state = state.copyWith(
+          isProcessing: false,
+          stage: 'Error',
+          statusMessage: 'Async submission failed: $e',
+          error: e.toString(),
+        );
+      }
       rethrow;
     }
   }
 
-  /// Handles unexpected WebSocket closure during active asynchronous OCR.
-  Future<void> _handleWsClosed() async {
-    if (!state.isProcessing || state.activeJobId == null) {
+  /// Polls terminal state independently of progress socket lifetime.
+  Future<void> _handleWsClosed([int? requestedRunId]) async {
+    final runId = requestedRunId ?? _runEpoch;
+    if (!_isCurrentRun(runId) || !state.isProcessing) {
       return;
     }
 
-    final jobId = state.activeJobId!;
+    final activeJobId = state.activeJobId;
+    if (activeJobId == null || activeJobId.isEmpty) {
+      _statusCheckRunId = runId;
+      return;
+    }
+    if (_statusCheckRunId == runId) return;
+    _statusCheckRunId = runId;
+    _statusPollTimer?.cancel();
+
+    final jobId = activeJobId;
+    final channelId = state.channelId;
+    final sessionToken = _lastSessionToken;
+    var reachedTerminalState = false;
     try {
       final status = await _ocrRepo.getJobStatus(jobId);
+      if (!_isCurrentRun(runId) || state.activeJobId != jobId) return;
       if (status.isComplete) {
-        final pdfBytes = await _ocrRepo.downloadResult(jobId);
-        ref.read(workstationProvider.notifier).adoptProcessedDocument(pdfBytes);
+        final result = await _ocrRepo.downloadProcessedResult(jobId, token: _resultToken);
+        if (!_isCurrentRun(runId) || state.activeJobId != jobId) return;
+        ref.read(workstationProvider.notifier).adoptProcessedDocument(result.pdfBytes);
         state = state.copyWith(
           isProcessing: false,
           percent: 100,
           stage: 'Complete',
           statusMessage: 'Document OCR complete',
-          textArtifactId: status.textArtifactId,
+          textArtifactId: result.textArtifactId,
+          textArtifactToken: result.textArtifactToken,
+          trustSummary: result.trustSummary,
         );
+        reachedTerminalState = true;
       } else if (status.isCancelled) {
         state = state.copyWith(
           isProcessing: false,
           stage: 'Cancelled',
           statusMessage: 'Job was cancelled',
         );
+        reachedTerminalState = true;
       } else if (status.isError) {
         state = state.copyWith(
           isProcessing: false,
@@ -468,14 +615,34 @@ class JobOrchestrationNotifier extends Notifier<JobOrchestrationState> {
               : 'Processing failed',
           error: status.error ?? 'Job failed with error status',
         );
+        reachedTerminalState = true;
       }
     } catch (e) {
-      state = state.copyWith(
-        isProcessing: false,
-        stage: 'Error',
-        statusMessage: 'Job status check failed: $e',
-        error: e.toString(),
-      );
+      if (_isCurrentRun(runId) && state.activeJobId == jobId) {
+        state = state.copyWith(
+          isProcessing: false,
+          stage: 'Error',
+          statusMessage: 'Job status check failed: $e',
+          error: e.toString(),
+        );
+        reachedTerminalState = true;
+      }
+    } finally {
+      if (reachedTerminalState &&
+          _isCurrentRun(runId) &&
+          channelId != null &&
+          channelId.isNotEmpty) {
+        await _teardownProgressChannel(
+          channelId: channelId,
+          sessionToken: sessionToken,
+        );
+      }
+      if (_statusCheckRunId == runId) {
+        _statusCheckRunId = null;
+      }
+      if (_isCurrentRun(runId) && state.isProcessing && state.activeJobId == jobId) {
+        _scheduleStatusCheck(runId);
+      }
     }
   }
 
@@ -503,6 +670,8 @@ class JobOrchestrationNotifier extends Notifier<JobOrchestrationState> {
   Future<void> cancelOcr() async {
     if (!state.isProcessing) return;
 
+    _runEpoch++;
+    _statusPollTimer?.cancel();
     final channelId = state.channelId;
     final jobId = state.activeJobId;
 
@@ -581,6 +750,15 @@ class JobOrchestrationNotifier extends Notifier<JobOrchestrationState> {
 
   /// Processes an incoming WebSocket progress frame envelope.
   void handleWsFrame(WsEnvelope frame) {
+    _applyWsFrame(frame);
+  }
+
+  void _handleWsFrameForRun(WsEnvelope frame, int runId) {
+    if (!_isCurrentRun(runId) || !state.isProcessing) return;
+    _applyWsFrame(frame);
+  }
+
+  void _applyWsFrame(WsEnvelope frame) {
     switch (frame) {
       case ProgressFrame p:
         final updatedWarnings = p.warning && p.status.isNotEmpty

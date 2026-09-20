@@ -18,6 +18,7 @@ import secrets
 from collections import OrderedDict
 from dataclasses import dataclass, replace
 from typing import Any, ClassVar, Protocol
+from urllib.parse import urlsplit
 
 from omniscribe.config import RuntimeSettings
 from omniscribe.core.block_tree import BlockNode
@@ -52,7 +53,11 @@ from omniscribe.plugins.translate.schemas import (
     TranslationRequest,
 )
 from omniscribe.utils.prompt_safety import sanitize_prompt_input
-from omniscribe.utils.security import check_ssrf_target_sync
+from omniscribe.utils.security import (
+    _rewrite_url_with_resolved_ip,
+    check_ssrf_target_sync,
+    is_same_origin,
+)
 
 _LOGGER = logging.getLogger("omniscribe.plugins.translate")
 
@@ -81,7 +86,7 @@ def _parse_json_object(blob: bytes) -> dict[str, Any] | None:
     return parsed if isinstance(parsed, dict) else None
 
 
-def _resolve_coordinates(
+def _resolve_llm_trio(
     request_base: str | None,
     request_key: str | None,
     request_model: str | None,
@@ -89,19 +94,33 @@ def _resolve_coordinates(
 ) -> tuple[str, str, str]:
     """Override → settings trio; SSRF-check the override only
     (pipeline_bridge trust boundary)."""
-    if request_base and request_base.strip():
-        check = check_ssrf_target_sync(request_base.strip())
+    clean_base = (request_base or "").strip()
+    resolved_ip: str | None = None
+    if clean_base:
+        check = check_ssrf_target_sync(clean_base)
         if not check.allowed:
             raise TranslateError(
                 403,
                 "ssrf_blocked",
                 f"URL targets a blocked address: {check.reason}",
             )
-    return (
-        (request_base or settings.llm_api_base).strip(),
-        (request_key or settings.llm_api_key).strip(),
-        (request_model or settings.llm_model).strip(),
-    )
+        resolved_ip = check.resolved_ip
+        if not is_same_origin(clean_base, settings.llm_api_base):
+            api_key = (request_key or "").strip()
+        else:
+            api_key = (request_key or settings.llm_api_key).strip()
+        api_base = clean_base
+        if urlsplit(api_base).scheme.lower() == "http" and resolved_ip:
+            api_base = _rewrite_url_with_resolved_ip(api_base, resolved_ip)
+    else:
+        api_base = settings.llm_api_base.strip()
+        api_key = (request_key or settings.llm_api_key).strip()
+
+    model = (request_model or settings.llm_model).strip()
+    return api_base, api_key, model
+
+
+_resolve_coordinates = _resolve_llm_trio
 
 
 async def translate_text(
@@ -313,6 +332,7 @@ class _TranslatePayload:
 
     submission_id: str
     request: AsyncTranslationRequest
+    job_id: str = ""
 
 
 class TranslationService(Protocol):
@@ -347,19 +367,27 @@ class TranslationServiceImpl:
     # -- submission ---------------------------------------------------------
 
     async def submit(self, request: AsyncTranslationRequest) -> dict[str, str]:
-        # Availability first (cheap, cached), then artifact existence.
-        try:
-            get_translation_app()
-        except AsyncTranslationUnavailable as exc:
-            raise TranslateError(503, "backend_unavailable", str(exc)) from exc
-
-        blob = await self._store.get(
-            request.text_artifact_id, request.text_artifact_token
-        )
-        if blob is None:
-            raise TranslateError(404, "not_found", "text artifact not found")
+        if not request.text.strip():
+            if not request.text_artifact_id or not request.text_artifact_token:
+                raise TranslateError(
+                    400, "bad_request", "Text or a text artifact pair is required"
+                )
+            try:
+                get_translation_app()
+            except AsyncTranslationUnavailable as exc:
+                raise TranslateError(503, "backend_unavailable", str(exc)) from exc
+            blob = await self._store.get(
+                request.text_artifact_id, request.text_artifact_token
+            )
+            if blob is None:
+                raise TranslateError(404, "not_found", "text artifact not found")
+            if _parse_json_object(blob.blob) is None:
+                raise TranslateError(
+                    400, "bad_request", "text artifact must contain page JSON"
+                )
 
         submission_id = secrets.token_hex(16)
+        result_token = secrets.token_urlsafe(32)
         enqueue_fn = getattr(self._queue, "enqueue", None) or getattr(
             self._queue, "submit", None
         )
@@ -370,12 +398,17 @@ class TranslationServiceImpl:
             request_meta={
                 "submission_id": submission_id,
                 "target_language": request.target_language,
+                "result_access_token": result_token,
             },
         )
         self._submission_to_job[submission_id] = handle.job_id
         while len(self._submission_to_job) > self._max_buffered_jobs:
             self._submission_to_job.pop(next(iter(self._submission_to_job)), None)
-        return {"job_id": handle.job_id, "status": "Processing"}
+        return {
+            "job_id": handle.job_id,
+            "status": "Processing",
+            "result_token": result_token,
+        }
 
     # -- runner -------------------------------------------------------------
 
@@ -383,7 +416,17 @@ class TranslationServiceImpl:
         if not isinstance(payload, _TranslatePayload):
             raise ValueError("translate job queue received a foreign payload")
         request = payload.request
-        job_id = self._submission_to_job.get(payload.submission_id, "")
+        job_id = payload.job_id or self._submission_to_job.get(
+            payload.submission_id, ""
+        )
+        if request.text.strip():
+            translated = await translate_text(
+                request, self._settings, store=self._store
+            )
+            return JobOutcome(
+                blob=json.dumps({"translated_text": translated}).encode("utf-8"),
+                content_type="application/json",
+            )
 
         blob = await self._store.get(
             request.text_artifact_id, request.text_artifact_token
@@ -465,9 +508,9 @@ class TranslationServiceImpl:
         )
         summary = {
             "artifact_id": request.text_artifact_id,
-            # Deliberately NO translated_artifact_token: the status endpoint
-            # is unauthenticated (audit C-3/H-3 semantics).
             "translated_artifact_id": translated_handle.id,
+            "translated_artifact_token": translated_handle.token,
+            "translated_text": "\n\n".join(translated_pages.values()),
             "page_count": len(translated_tree.pages),
             "blocks_translated": blocks_translated,
         }
@@ -516,7 +559,17 @@ class TranslationServiceImpl:
         if record.status == "complete":
             result = await self._load_result(record)
             if result is not None:
-                body["result"] = result
+                body["result"] = {
+                    key: value
+                    for key, value in result.items()
+                    if key
+                    in {
+                        "artifact_id",
+                        "translated_artifact_id",
+                        "page_count",
+                        "blocks_translated",
+                    }
+                }
         return body
 
     async def _load_result(self, record: Any) -> dict[str, Any] | None:
@@ -542,10 +595,21 @@ class TranslationServiceImpl:
             or record.status != "complete"
             or not record.result_artifact_id
             or not record.result_artifact_token
-            or not secrets.compare_digest(token, record.result_artifact_token)
+            or not token
+            or not any(
+                isinstance(candidate, str)
+                and candidate
+                and secrets.compare_digest(token, candidate)
+                for candidate in (
+                    record.result_artifact_token,
+                    record.request_meta.get("result_access_token", ""),
+                )
+            )
         ):
             return None
-        blob = await self._store.get(record.result_artifact_id, token)
+        blob = await self._store.get(
+            record.result_artifact_id, record.result_artifact_token
+        )
         if blob is None:
             return None
         return _parse_json_object(blob.blob)

@@ -20,7 +20,15 @@ def logprob_to_confidence(avg_logprob: float | None) -> float | None:
     """
     if avg_logprob is None:
         return None
-    return math.exp(avg_logprob)
+    if math.isnan(avg_logprob):
+        return 0.0
+    try:
+        val = math.exp(avg_logprob)
+    except OverflowError:
+        return 1.0
+    if math.isnan(val):
+        return 0.0
+    return max(0.0, min(1.0, float(val)))
 
 
 class TranscriptionError(Exception):

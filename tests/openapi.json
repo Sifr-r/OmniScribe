@@ -8,6 +8,17 @@
             "title": "Job Id",
             "type": "string"
           },
+          "result_token": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Result Token"
+          },
           "status": {
             "default": "pending",
             "enum": [
@@ -34,7 +45,7 @@
       },
       "AsyncTranslationRequest": {
         "additionalProperties": false,
-        "description": "Async (tree-aware) submission: artifact pair required at the route\nlevel (400 envelope), legacy defaults, ``text``/``channel_id``\naccepted and ignored.",
+        "description": "Async submission accepts inline text or a token-bound text artifact.",
         "properties": {
           "api_base": {
             "anyOf": [
@@ -2043,6 +2054,22 @@
               ],
               "title": "Authorization"
             }
+          },
+          {
+            "in": "header",
+            "name": "x-artifact-token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Artifact-Token"
+            }
           }
         ],
         "responses": {
@@ -2874,7 +2901,7 @@
     },
     "/api/jobs/{job_id}/pages/{page_index}/preview": {
       "get": {
-        "description": "Render a page of the original upload as PNG bytes.\n\nUsed by the workstation viewport to show the underlying page\nbeneath the bounding-box / heatmap overlays. Returns 404 when\nthe job has no recorded source path (e.g. submitted before this\nroute landed, or whose source has already been cleaned up).",
+        "description": "Render a page of the original upload as PNG bytes.\n\nUsed by the workstation viewport to show the underlying page\nbeneath the bounding-box / heatmap overlays. Requires valid capability\ntoken matching the job.",
         "operationId": "page_preview_api_jobs__job_id__pages__page_index__preview_get",
         "parameters": [
           {
@@ -2893,6 +2920,70 @@
             "schema": {
               "title": "Page Index",
               "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Artifact-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Artifact-Token"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Job-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Job-Token"
             }
           }
         ],
@@ -2966,6 +3057,22 @@
               ],
               "title": "Authorization"
             }
+          },
+          {
+            "in": "header",
+            "name": "X-Artifact-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Artifact-Token"
+            }
           }
         ],
         "responses": {
@@ -3021,6 +3128,22 @@
                 }
               ],
               "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-artifact-token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Artifact-Token"
             }
           }
         ],
@@ -3255,6 +3378,70 @@
             "schema": {
               "title": "Job Id",
               "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Artifact-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Artifact-Token"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Job-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Job-Token"
             }
           }
         ],
@@ -3592,7 +3779,7 @@
     },
     "/api/providers/{provider_id}/models": {
       "get": {
-        "description": "Live model-list discovery against the provider's ``/v1/models``.\n\nThe api-key resolution order is: explicit ``X-Provider-Api-Key``\nheader \u2192 standard ``Authorization: Bearer`` header \u2192 query\n``api_key`` parameter. The first non-empty wins so the Flutter\nclient can keep its secrets in the header without leaking them\nto the URL (which lands in proxy access logs).",
+        "description": "Live model-list discovery against the provider's ``/v1/models``.\n\nProvider credentials use ``X-Provider-Api-Key`` or the legacy\n``api_key`` query parameter. ``Authorization`` belongs exclusively\nto OmniScribe authentication and must never reach the provider.",
         "operationId": "provider_models_api_providers__provider_id__models_get",
         "parameters": [
           {
@@ -3650,22 +3837,6 @@
                 }
               ],
               "title": "X-Provider-Api-Key"
-            }
-          },
-          {
-            "in": "header",
-            "name": "authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
             }
           }
         ],
@@ -3726,6 +3897,22 @@
                 }
               ],
               "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-artifact-token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Artifact-Token"
             }
           }
         ],
@@ -3917,6 +4104,22 @@
               "default": "",
               "title": "Token",
               "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Artifact-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Artifact-Token"
             }
           }
         ],

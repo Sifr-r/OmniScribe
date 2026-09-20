@@ -76,6 +76,8 @@ def seed_config(settings: RuntimeSettings) -> dict[str, Any]:
     seeded["api_base"] = settings.llm_api_base
     seeded["api_key"] = settings.llm_api_key
     seeded["model"] = settings.llm_model
+    for key in ("dpi", "concurrency", "dense_threshold", "max_image_dim"):
+        seeded[key] = getattr(settings, f"ocr_{key}")
     return seeded
 
 

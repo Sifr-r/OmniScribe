@@ -84,8 +84,7 @@ def test_lifespan_dispose_runs_effect_cleanups(
 def test_bad_state_backend_fails_boot_loud(
     boot_env: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # ``redis`` is not implemented in the harness — must fail loud at boot.
-    monkeypatch.setenv("OMNISCRIBE_STATE_BACKEND", "redis")
+    monkeypatch.setenv("OMNISCRIBE_STATE_BACKEND", "unsupported")
     with pytest.raises((PluginLoadError, ValidationError)):
         with TestClient(create_app()):
             pass
@@ -108,6 +107,27 @@ def test_circuit_open_error_handler(boot_env: None) -> None:
             "error": "service_unavailable",
             "detail": "Model circuit breaker is open; retry later",
         }
+
+
+def test_llm_balance_error_handler(boot_env: None) -> None:
+    from omniscribe.core.ocr.exceptions import LLMBalanceError
+
+    app = create_app()
+
+    @app.get("/test-llm-balance")  # type: ignore[attr-defined]
+    async def _fail_balance() -> None:
+        raise LLMBalanceError(
+            "Provider 'custom' (openai_compatible) returned HTTP status 402: "
+            '{"error":{"type":"insufficient_balance_error",'
+            '"message":"insufficient balance (1008)"}}'
+        )
+
+    with TestClient(app) as client:
+        res = client.get("/test-llm-balance")
+        assert res.status_code == 402
+        body = res.json()
+        assert body["error"] == "payment_required"
+        assert "insufficient balance" in body["detail"]
 
 
 # ---------------------------------------------------------------------------
@@ -166,6 +186,32 @@ def test_cors_explicit_origins_allow_credentials(
             == "http://app.example.com"
         )
         assert preflight.headers.get("access-control-allow-credentials") == "true"
+
+
+def test_cors_allows_scoped_credentials_and_exposes_text_artifacts(
+    boot_env: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("OMNISCRIBE_CORS_ORIGINS", "http://app.example.com")
+    with TestClient(create_app()) as client:
+        preflight = client.options(
+            "/api/providers/openai/models",
+            headers={
+                "Origin": "http://app.example.com",
+                "Access-Control-Request-Method": "GET",
+                "Access-Control-Request-Headers": (
+                    "authorization,x-provider-api-key,x-artifact-token,x-session-token"
+                ),
+            },
+        )
+        assert preflight.status_code == 200
+        response = client.get(
+            "/api/health", headers={"Origin": "http://app.example.com"}
+        )
+        exposed = {
+            name.strip().lower()
+            for name in response.headers["access-control-expose-headers"].split(",")
+        }
+        assert {"x-text-artifact-id", "x-text-artifact-token"} <= exposed
 
 
 # ---------------------------------------------------------------------------

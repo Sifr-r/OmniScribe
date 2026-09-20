@@ -20,8 +20,10 @@ class _StubGroundedBackend:
     async def ocr_document(
         self,
         pdf_path: str,
-        progress: Callable[..., Awaitable[None]] | None = None,
-        on_warning: Callable[..., Awaitable[None]] | None = None,
+        progress: Callable[[str, int, int, str], Awaitable[None]] | None = None,
+        on_warning: Callable[[int, BaseException], Awaitable[None]] | None = None,
+        *,
+        pages: str | None = None,
     ) -> GroundedResponse:
         self.ocr_calls += 1
         return GroundedResponse(blocks=self._blocks, page_sizes=[(100, 100)])

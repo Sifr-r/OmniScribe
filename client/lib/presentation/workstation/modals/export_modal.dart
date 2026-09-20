@@ -107,7 +107,17 @@ class _ExportModalState extends ConsumerState<ExportModal> {
     });
 
     try {
-      final docText = wsState.allBBoxes.map((b) => b.text).join('\n\n');
+      // Drop whitespace-only bbox entries before joining. OCR can produce
+      // blocks whose ``text`` is just spaces / newlines (e.g. decorative
+      // gutters, page numbers from layout-only detections). If we joined
+      // them, the server's markdown parser would skip every line and the
+      // resulting DOCX would open as a blank page — invisible to the user
+      // but indistinguishable from a successful export. Filtering here keeps
+      // ``docText`` honest about what we actually have.
+      final bboxesWithContent = wsState.allBBoxes
+          .where((b) => b.text.trim().isNotEmpty)
+          .toList(growable: false);
+      final docText = bboxesWithContent.map((b) => b.text).join('\n\n');
 
       switch (_selectedFormat) {
         case ExportFormat.searchablePdf:
@@ -125,11 +135,14 @@ class _ExportModalState extends ConsumerState<ExportModal> {
           break;
 
         case ExportFormat.docx:
+          // Fall back to the filename when the document carries no
+          // recognisable text. Use the *trimmed* join, not the raw one —
+          // a string of pure whitespace passes ``isNotEmpty`` but produces
+          // a blank DOCX, which is the bug this guard fixes.
+          final fallbackLabel = wsState.filename ?? 'Document text';
           final bytes = await repo.exportDocx(
             ExportDocxRequest(
-              text: docText.isNotEmpty
-                  ? docText
-                  : (wsState.filename ?? 'Document text'),
+              text: docText.trim().isNotEmpty ? docText : fallbackLabel,
             ),
           );
           await _saveWithPicker(
@@ -208,7 +221,9 @@ class _ExportModalState extends ConsumerState<ExportModal> {
           break;
 
         case ExportFormat.rawText:
-          final rawText = wsState.allBBoxes.map((b) => b.text).join('\n');
+          // Mirror the docText filter so the .txt export doesn't carry
+          // stranded whitespace-only lines from OCR layout detections.
+          final rawText = bboxesWithContent.map((b) => b.text).join('\n');
           await _saveWithPicker(
             fileName: _defaultFilename(wsState.filename, 'txt'),
             bytes: Uint8List.fromList(utf8.encode(rawText)),

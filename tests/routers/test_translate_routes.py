@@ -178,9 +178,25 @@ def test_translate_async_submit_and_complete(
     assert "token" not in result
 
 
-def test_translate_async_missing_artifact_400(api_client: TestClient) -> None:
+def test_translate_async_accepts_inline_text_without_artifact(
+    api_client: TestClient,
+) -> None:
+    # Diagnosis finding #4 (2026-09-15): the async route now accepts
+    # inline ``text`` in addition to ``text_artifact_id`` /
+    # ``text_artifact_token`` so the client path that translates a
+    # freshly-typed string no longer needs to round-trip through an
+    # artifact pair. Missing both still 400s.
     response = api_client.post("/api/translate/async", json={"text": "no artifact"})
-    assert response.status_code == 400
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["job_id"]
+
+
+def test_translate_async_rejects_completely_empty_body(
+    api_client: TestClient,
+) -> None:
+    response = api_client.post("/api/translate/async", json={})
+    assert response.status_code == 400, response.text
     assert response.json()["error"] == "bad_request"
 
 

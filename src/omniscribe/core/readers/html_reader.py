@@ -255,7 +255,7 @@ class _StdlibHTMLDocParser(StdlibHTMLParser):
     def handle_data(self, data: str) -> None:
         if self._skip_depth > 0:
             return
-        if self._in_table and (self._tag_stack and self._tag_stack[-1] in ("th", "td")):
+        if self._in_table and any(t in ("th", "td") for t in self._tag_stack):
             self._cell_text.append(data)
         elif self._active_tag is not None:
             self._active_text.append(data)

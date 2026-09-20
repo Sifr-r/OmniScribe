@@ -56,6 +56,8 @@ abstract class OcrRepository {
   /// its artifact token via SSE and fetching the result bytes.
   Future<Uint8List> downloadResult(String jobId);
 
+  Future<ProcessOcrResult> downloadProcessedResult(String jobId, {String? token});
+
   /// Cancel a running or queued job.
   Future<bool> cancelJob(String jobId);
 
@@ -220,8 +222,7 @@ class OcrRepositoryImpl implements OcrRepository {
   Future<Uint8List> getOcrResultBytes(String jobId, String token) async {
     return _apiClient.getBytes(
       ApiConstants.jobResult(jobId),
-      queryParameters: {'token': token},
-      headers: {'Authorization': 'Bearer $token'},
+      headers: {'X-Artifact-Token': token},
     );
   }
 
@@ -229,6 +230,22 @@ class OcrRepositoryImpl implements OcrRepository {
   Future<Uint8List> downloadResult(String jobId) async {
     final token = await getJobArtifactToken(jobId);
     return getOcrResultBytes(jobId, token);
+  }
+
+  @override
+  Future<ProcessOcrResult> downloadProcessedResult(String jobId, {String? token}) async {
+    final resultToken = token ?? await getJobArtifactToken(jobId, timeout: const Duration(seconds: 30));
+    final response = await _apiClient.getBytesWithHeaders(
+      ApiConstants.jobResult(jobId),
+      headers: {'X-Artifact-Token': resultToken},
+    );
+    return ProcessOcrResult(
+      pdfBytes: response.data,
+      headers: response.headers,
+      trustSummary: TrustSummary.tryParseHeader(response.getHeader(ApiConstants.headerDocumentTrust)),
+      textArtifactId: response.getHeader(ApiConstants.headerTextArtifactId),
+      textArtifactToken: response.getHeader(ApiConstants.headerTextArtifactToken),
+    );
   }
 
   @override
@@ -265,7 +282,7 @@ class OcrRepositoryImpl implements OcrRepository {
   Future<String> getTextArtifact(String artifactId, String token) async {
     final bytes = await _apiClient.getBytes(
       ApiConstants.textArtifact(artifactId),
-      headers: {'Authorization': 'Bearer $token'},
+      headers: {'X-Artifact-Token': token},
     );
     return utf8.decode(bytes);
   }

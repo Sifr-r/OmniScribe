@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import atexit
 import hashlib
 import json
 import logging
+import secrets
+import tempfile
 import time
 from collections.abc import AsyncGenerator, Callable
 from pathlib import Path
@@ -41,7 +44,37 @@ if TYPE_CHECKING:
 _LOGGER = logging.getLogger("omniscribe.plugins.ocr.routes")
 
 _PREVIEW_DOC_CACHE_CAPACITY = 10
-_preview_doc_cache: dict[str, tuple[bytes, str, float]] = {}
+_preview_doc_cache: dict[str, tuple[Path, str, float]] = {}
+
+
+def _cleanup_preview_file(file_path: Path) -> None:
+    """Safely unlink a preview temp file on disk."""
+    try:
+        if file_path.exists():
+            file_path.unlink(missing_ok=True)
+    except OSError as exc:
+        _LOGGER.debug("Failed to remove preview temp file %s: %s", file_path, exc)
+
+
+def _evict_preview_cache() -> None:
+    """Evict oldest entries when preview cache exceeds capacity and delete temp files."""
+    while len(_preview_doc_cache) >= _PREVIEW_DOC_CACHE_CAPACITY:
+        oldest_id = min(
+            _preview_doc_cache,
+            key=lambda k: _preview_doc_cache[k][2],
+        )
+        old_path, _, _ = _preview_doc_cache.pop(oldest_id)
+        _cleanup_preview_file(old_path)
+
+
+def _cleanup_all_preview_files() -> None:
+    """Clean up all cached preview files on exit."""
+    for _doc_id, (file_path, _, _) in list(_preview_doc_cache.items()):
+        _cleanup_preview_file(file_path)
+    _preview_doc_cache.clear()
+
+
+atexit.register(_cleanup_all_preview_files)
 
 #: Document-format signatures the route sniffs out of an upload's first
 #: 12 bytes. The keys are the format names that match the downstream
@@ -129,6 +162,17 @@ def _sniff_format(head: bytes) -> str | None:
     return None
 
 
+def _is_markdown_text(blob: bytes) -> bool:
+    """Markdown has no magic bytes: require nonempty UTF-8 text, not binary."""
+    try:
+        text = blob.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        return False
+    return bool(text.strip()) and all(
+        char.isprintable() or char in "\r\n\t" for char in text
+    )
+
+
 async def iter_sse_events(
     service: OCRServiceImpl, job_id: str, keepalive_seconds: float
 ) -> AsyncGenerator[str, None]:
@@ -184,7 +228,10 @@ async def parse_multipart_upload(
         chunks.append(chunk)
     blob = b"".join(chunks)
 
-    content_type = getattr(upload, "content_type", "") or ""
+    content_type = (
+        (getattr(upload, "content_type", "") or "").split(";", 1)[0].strip().lower()
+    )
+    filename = str(getattr(upload, "filename", "") or "") or "upload.pdf"
     allowed_types = {
         "application/pdf",
         "application/octet-stream",  # Flutter file picker fallback
@@ -207,7 +254,26 @@ async def parse_multipart_upload(
         )
 
     head = blob[:12]
-    if not content_type or content_type == "application/octet-stream":
+    sniffed = _sniff_format(head)
+    markdown_upload = content_type in {"text/markdown", "text/x-markdown"} or (
+        content_type in {"", "application/octet-stream"}
+        and (Path(filename).suffix.lower() in {".md", ".markdown"} or sniffed == "md")
+    )
+    if markdown_upload:
+        if sniffed in {
+            "pdf",
+            "png",
+            "jpeg",
+            "webp",
+            "avif",
+            "docx",
+        } or not _is_markdown_text(blob):
+            raise HTTPException(
+                status_code=415,
+                detail="Markdown uploads must contain valid UTF-8 text.",
+            )
+        content_type = "text/markdown"
+    elif not content_type or content_type == "application/octet-stream":
         if _sniff_format(head) is None:
             raise HTTPException(
                 status_code=415,
@@ -237,7 +303,6 @@ async def parse_multipart_upload(
         options = OCRRequest.model_validate(fields)
     except ValidationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    filename = str(getattr(upload, "filename", "") or "") or "upload.pdf"
     return options, blob, filename, content_type
 
 
@@ -283,17 +348,87 @@ async def handle_get_job(job_id: str, service: OCRServiceImpl) -> JobStatusRespo
     return status
 
 
-async def handle_get_job_events(
-    job_id: str, service: OCRServiceImpl
-) -> StreamingResponse:
-    """Stream SSE lifecycle events for an active job."""
-    if await service.job_record(job_id) is None and not service.event_backlog(job_id):
-        raise HTTPException(status_code=404, detail="unknown job")
+def _extract_job_token(
+    token: str | None = None,
+    authorization: str | None = None,
+    x_artifact_token: str | None = None,
+    x_job_token: str | None = None,
+) -> str | None:
+    """Extract job / artifact capability token from query parameter or headers."""
+    if token and token.strip():
+        return token.strip()
+    if x_job_token and x_job_token.strip():
+        return x_job_token.strip()
+    if x_artifact_token and x_artifact_token.strip():
+        return x_artifact_token.strip()
+    if authorization and authorization.strip():
+        auth = authorization.strip()
+        if auth.startswith("Bearer "):
+            return auth.removeprefix("Bearer ").strip()
+        return auth
+    return None
 
+
+async def _verify_job_token(
+    job_id: str,
+    service: OCRServiceImpl,
+    token: str | None = None,
+    authorization: str | None = None,
+    x_artifact_token: str | None = None,
+    x_job_token: str | None = None,
+    detail: str = "Job not found",
+) -> None:
+    """Validate capability token against record.request_meta['result_access_token'].
+
+    Raises 404 on missing or invalid token to avoid disclosing job existence.
+    """
+    provided = _extract_job_token(token, authorization, x_artifact_token, x_job_token)
+    if not provided:
+        raise HTTPException(status_code=404, detail=detail)
+
+    record = await service.job_record(job_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail=detail)
+
+    candidates: list[str] = []
+    access_token = record.request_meta.get("result_access_token")
+    if isinstance(access_token, str) and access_token:
+        candidates.append(access_token)
+    res_tok = getattr(record, "result_artifact_token", None)
+    if isinstance(res_tok, str) and res_tok:
+        candidates.append(res_tok)
+
+    if not candidates or not any(
+        secrets.compare_digest(provided, cand) for cand in candidates
+    ):
+        raise HTTPException(status_code=404, detail=detail)
+
+
+async def handle_subscribe_events(
+    job_id: str,
+    service: OCRServiceImpl,
+    token: str | None = None,
+    authorization: str | None = None,
+    x_artifact_token: str | None = None,
+    x_job_token: str | None = None,
+) -> StreamingResponse:
+    """Stream SSE lifecycle events for an active job with capability token validation."""
+    await _verify_job_token(
+        job_id=job_id,
+        service=service,
+        token=token,
+        authorization=authorization,
+        x_artifact_token=x_artifact_token,
+        x_job_token=x_job_token,
+        detail="Job not found",
+    )
     return StreamingResponse(
         iter_sse_events(service, job_id, SSE_KEEPALIVE_SECONDS),
         media_type="text/event-stream",
     )
+
+
+handle_get_job_events = handle_subscribe_events
 
 
 async def handle_list_jobs(service: OCRServiceImpl) -> list[JobListItemResponse]:
@@ -336,10 +471,23 @@ async def handle_get_page_preview(
     job_id: str,
     page_index: int,
     service: OCRServiceImpl,
+    token: str | None = None,
+    authorization: str | None = None,
+    x_artifact_token: str | None = None,
+    x_job_token: str | None = None,
 ) -> Response:
-    """Render a page of the original upload as PNG bytes."""
+    """Render a page of the original upload as PNG bytes with capability token validation."""
     if page_index < 0:
         raise HTTPException(status_code=400, detail="page_index must be >= 0")
+    await _verify_job_token(
+        job_id=job_id,
+        service=service,
+        token=token,
+        authorization=authorization,
+        x_artifact_token=x_artifact_token,
+        x_job_token=x_job_token,
+        detail="page preview unavailable for this job",
+    )
     png_bytes = await service.get_page_preview(job_id, page_index)
     if png_bytes is None:
         raise HTTPException(
@@ -349,12 +497,12 @@ async def handle_get_page_preview(
     return Response(content=png_bytes, media_type="image/png")
 
 
-async def handle_get_document_page_preview(
+async def handle_get_document_page_preview(  # noqa: C901
     request: Request,
     page: int = 0,
     dpi: int = 150,
 ) -> Response:
-    """Render any page of an uploaded document as PNG bytes."""
+    """Render any page of an uploaded document as PNG bytes with disk-backed cache."""
     form = await request.form()
     req_doc_id = (
         form.get("doc_id")
@@ -363,13 +511,19 @@ async def handle_get_document_page_preview(
     )
     doc_id: str | None = str(req_doc_id).strip() if req_doc_id else None
 
-    blob: bytes | None = None
+    file_path: Path | None = None
     filetype: str = "pdf"
 
     if doc_id and doc_id in _preview_doc_cache:
-        blob, filetype, _ = _preview_doc_cache[doc_id]
-        _preview_doc_cache[doc_id] = (blob, filetype, time.time())
-    else:
+        cached_path, cached_type, _ = _preview_doc_cache[doc_id]
+        if cached_path.exists():
+            file_path = cached_path
+            filetype = cached_type
+            _preview_doc_cache[doc_id] = (file_path, filetype, time.time())
+        else:
+            del _preview_doc_cache[doc_id]
+
+    if file_path is None:
         upload = form.get("file")
         if not upload or not hasattr(upload, "read"):
             if doc_id:
@@ -382,33 +536,54 @@ async def handle_get_document_page_preview(
                 detail="file multipart field required",
             )
 
-        blob = await upload.read()
-        if not blob:
+        filename = getattr(upload, "filename", "") or "document.pdf"
+        suffix = Path(filename).suffix.lower()
+
+        # Stream directly to temporary file on disk to avoid keeping uploads in RAM
+        temp_dir = tempfile.gettempdir()
+        temp_fd, temp_raw_path = tempfile.mkstemp(
+            prefix="omniscribe_preview_", dir=temp_dir
+        )
+        temp_file = Path(temp_raw_path)
+        hasher = hashlib.sha256()
+        total_read = 0
+        first_chunk = b""
+
+        try:
+            with open(temp_fd, "wb") as f:
+                chunk_size = 64 * 1024
+                while True:
+                    chunk = await upload.read(chunk_size)
+                    if not chunk:
+                        break
+                    if not first_chunk:
+                        first_chunk = chunk
+                    hasher.update(chunk)
+                    f.write(chunk)
+                    total_read += len(chunk)
+        except Exception:
+            _cleanup_preview_file(temp_file)
+            raise
+
+        if total_read == 0:
+            _cleanup_preview_file(temp_file)
             raise HTTPException(
                 status_code=400,
                 detail="uploaded file is empty",
             )
 
-        doc_id = hashlib.sha256(blob[:8192] + len(blob).to_bytes(8, "big")).hexdigest()[
-            :16
-        ]
-
-        filename = getattr(upload, "filename", "") or "document.pdf"
-        suffix = Path(filename).suffix.lower()
-        is_pdf = suffix == ".pdf" or blob.startswith(b"%PDF")
+        doc_id = hasher.hexdigest()[:16]
+        is_pdf = suffix == ".pdf" or first_chunk.startswith(b"%PDF")
         filetype = "pdf" if is_pdf else (suffix.lstrip(".") or "png")
 
-        if (
-            len(_preview_doc_cache) >= _PREVIEW_DOC_CACHE_CAPACITY
-            and doc_id not in _preview_doc_cache
-        ):
-            oldest_id = min(
-                _preview_doc_cache,
-                key=lambda k: _preview_doc_cache[k][2],
-            )
-            del _preview_doc_cache[oldest_id]
-
-        _preview_doc_cache[doc_id] = (blob, filetype, time.time())
+        if doc_id in _preview_doc_cache and _preview_doc_cache[doc_id][0].exists():
+            _cleanup_preview_file(temp_file)
+            file_path, filetype, _ = _preview_doc_cache[doc_id]
+            _preview_doc_cache[doc_id] = (file_path, filetype, time.time())
+        else:
+            _evict_preview_cache()
+            file_path = temp_file
+            _preview_doc_cache[doc_id] = (file_path, filetype, time.time())
 
     form_page = form.get("page")
     if form_page is not None:
@@ -431,7 +606,7 @@ async def handle_get_document_page_preview(
         import pymupdf as fitz
 
         try:
-            doc = fitz.open(stream=blob, filetype=filetype)  # type: ignore[no-untyped-call]
+            doc = fitz.open(str(file_path), filetype=filetype)  # type: ignore[no-untyped-call]
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"Cannot open document: {e}")
         try:
@@ -454,7 +629,7 @@ async def handle_get_document_page_preview(
         content=png_bytes,
         media_type="image/png",
         headers={
-            "X-Document-Id": doc_id,
+            "X-Document-Id": doc_id or "",
             "X-Total-Pages": str(total_pages),
             "X-Page-Width": str(w),
             "X-Page-Height": str(h),
@@ -508,8 +683,9 @@ process_sync = handle_process_sync
 process_async = handle_process_async
 get_job = handle_get_job
 process_status = handle_get_job
-get_job_events = handle_get_job_events
-process_events = handle_get_job_events
+get_job_events = handle_subscribe_events
+process_events = handle_subscribe_events
+subscribe_events = handle_subscribe_events
 list_jobs = handle_list_jobs
 clear_jobs = handle_clear_jobs
 get_job_result = handle_get_job_result
@@ -541,8 +717,21 @@ def build_ocr_router(service: OCRServiceImpl) -> APIRouter:
         return await handle_get_job(job_id, service)
 
     @router.get("/api/process/{job_id}/events")
-    async def process_events(job_id: str) -> StreamingResponse:
-        return await handle_get_job_events(job_id, service)
+    async def process_events(
+        job_id: str,
+        token: str | None = Query(default=None),
+        authorization: str | None = Header(default=None),
+        x_artifact_token: str | None = Header(default=None, alias="X-Artifact-Token"),
+        x_job_token: str | None = Header(default=None, alias="X-Job-Token"),
+    ) -> StreamingResponse:
+        return await handle_subscribe_events(
+            job_id,
+            service,
+            token=token,
+            authorization=authorization,
+            x_artifact_token=x_artifact_token,
+            x_job_token=x_job_token,
+        )
 
     @router.get("/api/jobs")
     async def list_jobs() -> list[JobListItemResponse]:
@@ -557,19 +746,36 @@ def build_ocr_router(service: OCRServiceImpl) -> APIRouter:
         job_id: str,
         token: str | None = None,
         authorization: str | None = Header(default=None),
+        x_artifact_token: str | None = Header(default=None, alias="X-Artifact-Token"),
     ) -> Response:
-        return await handle_get_job_result(job_id, token, authorization, service)
+        return await handle_get_job_result(
+            job_id, token or x_artifact_token, authorization, service
+        )
 
     @router.get("/api/jobs/{job_id}/pages/{page_index}/preview", response_model=None)
-    async def page_preview(job_id: str, page_index: int) -> Response:
+    async def page_preview(
+        job_id: str,
+        page_index: int,
+        token: str | None = Query(default=None),
+        authorization: str | None = Header(default=None),
+        x_artifact_token: str | None = Header(default=None, alias="X-Artifact-Token"),
+        x_job_token: str | None = Header(default=None, alias="X-Job-Token"),
+    ) -> Response:
         """Render a page of the original upload as PNG bytes.
 
         Used by the workstation viewport to show the underlying page
-        beneath the bounding-box / heatmap overlays. Returns 404 when
-        the job has no recorded source path (e.g. submitted before this
-        route landed, or whose source has already been cleaned up).
+        beneath the bounding-box / heatmap overlays. Requires valid capability
+        token matching the job.
         """
-        return await handle_get_page_preview(job_id, page_index, service)
+        return await handle_get_page_preview(
+            job_id,
+            page_index,
+            service,
+            token=token,
+            authorization=authorization,
+            x_artifact_token=x_artifact_token,
+            x_job_token=x_job_token,
+        )
 
     @router.post("/api/documents/preview", response_model=None)
     async def document_page_preview(
@@ -620,9 +826,14 @@ __all__ = [
     "_MIME_TO_FORMAT",
     "_PREVIEW_DOC_CACHE_CAPACITY",
     "_SUPPORTED_FORMAT_SIGNATURES",
+    "_cleanup_all_preview_files",
+    "_cleanup_preview_file",
+    "_evict_preview_cache",
+    "_extract_job_token",
     "_parse_upload",
     "_preview_doc_cache",
     "_sniff_format",
+    "_verify_job_token",
     "build_ocr_router",
     "cancel_job",
     "clear_jobs",
@@ -633,6 +844,20 @@ __all__ = [
     "get_job_events",
     "get_job_result",
     "get_page_preview",
+    "handle_cancel_job",
+    "handle_clear_jobs",
+    "handle_get_config",
+    "handle_get_document_page_preview",
+    "handle_get_job",
+    "handle_get_job_events",
+    "handle_get_job_result",
+    "handle_get_page_preview",
+    "handle_list_jobs",
+    "handle_preflight",
+    "handle_process_async",
+    "handle_process_sync",
+    "handle_subscribe_events",
+    "handle_update_config",
     "iter_sse_events",
     "job_result",
     "list_jobs",
@@ -643,5 +868,6 @@ __all__ = [
     "process_events",
     "process_status",
     "process_sync",
+    "subscribe_events",
     "update_config",
 ]

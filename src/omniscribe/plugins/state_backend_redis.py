@@ -49,6 +49,8 @@ import logging
 import time
 from typing import Any, cast
 
+from omniscribe.utils.security import redact_redis_url
+
 from .state_backend_types import (
     ArtifactBlob,
     ArtifactRecord,
@@ -272,7 +274,9 @@ class RedisStateBackend:
         the boot log rather than a confusing first-request failure.
         """
         await self._redis.ping()
-        _LOGGER.info("redis state backend online url=%s", self._redis_url)
+        _LOGGER.info(
+            "redis state backend online url=%s", redact_redis_url(self._redis_url)
+        )
 
     # -- Artifacts ----------------------------------------------------------
 

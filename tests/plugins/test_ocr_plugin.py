@@ -104,19 +104,20 @@ async def _wait_status(
 
 
 async def _artifact_token_from_events(
-    client: httpx.AsyncClient, job_id: str, *, timeout: float = 5.0
+    client: httpx.AsyncClient,
+    job_id: str,
+    *,
+    token: str | None = None,
+    timeout: float = 5.0,
 ) -> str:
-    """Read the ``job_completed`` SSE event and return its ``artifact_token``.
-
-    2026-08-29 audit C-3 / H-3: the async result token is delivered
-    out-of-band via the ``job_completed`` SSE event (not the status
-    response). This helper replays the event stream for tests that
-    need the token to download the result.
-    """
+    """Read the ``job_completed`` SSE event and return the token."""
     import json
 
     deadline = time.time() + timeout
-    async with client.stream("GET", f"/api/process/{job_id}/events") as stream:
+    params = {"token": token} if token else {}
+    async with client.stream(
+        "GET", f"/api/process/{job_id}/events", params=params
+    ) as stream:
         assert stream.status_code == 200
         # Single aiter_lines() pass — httpx raises ``StreamConsumed`` on
         # the second iteration. Track the current SSE event name as we
@@ -134,12 +135,10 @@ async def _artifact_token_from_events(
                 current_event = raw.removeprefix("event:").strip()
             elif raw.startswith("data:") and current_event == "job_completed":
                 body = json.loads(raw.removeprefix("data:").strip())
-                token = body.get("artifact_token")
-                if token:
-                    return str(token)
-                raise AssertionError(
-                    f"job_completed for {job_id} had no artifact_token"
-                )
+                tok = body.get("artifact_token") or token
+                if tok:
+                    return str(tok)
+                raise AssertionError(f"job_completed for {job_id} had no token")
     raise AssertionError(f"job {job_id} never emitted job_completed")
 
 
@@ -280,7 +279,10 @@ async def test_async_submit_status_result_and_job_list(fake_pipeline) -> None:
             assert "text_artifact_token" not in done
             assert "text_artifact_url" not in done
 
-            token = await _artifact_token_from_events(client, job_id)
+            result_token = body.get("result_token")
+            token = await _artifact_token_from_events(
+                client, job_id, token=result_token
+            )
             assert token
 
             result = await client.get(
@@ -409,17 +411,27 @@ async def test_events_stream_replays_job_lifecycle(fake_pipeline) -> None:
     try:
         async with _client(app) as client:
             submit = await client.post("/api/process/async", **_upload())
-            job_id = submit.json()["job_id"]
+            body = submit.json()
+            job_id = body["job_id"]
+            result_token = body["result_token"]
             await _wait_status(client, job_id, "complete")
 
-            async with client.stream("GET", f"/api/process/{job_id}/events") as stream:
+            # Unauthenticated request without token must fail with 404
+            unauth = await client.get(f"/api/process/{job_id}/events")
+            assert unauth.status_code == 404
+
+            async with client.stream(
+                "GET", f"/api/process/{job_id}/events", params={"token": result_token}
+            ) as stream:
                 assert stream.status_code == 200
                 text = "".join([chunk async for chunk in stream.aiter_text()])
             assert "event: job_queued" in text
             assert "event: job_started" in text
             assert "event: job_completed" in text
 
-            unknown = await client.get("/api/process/nope/events")
+            unknown = await client.get(
+                "/api/process/nope/events", params={"token": result_token}
+            )
             assert unknown.status_code == 404
     finally:
         await ctx.dispose()
@@ -574,6 +586,50 @@ async def test_octet_stream_pdf_upload_is_accepted(fake_pipeline) -> None:
             )
         assert response.status_code == 200
         assert response.content == PDF_BYTES
+    finally:
+        await ctx.dispose()
+
+
+@pytest.mark.parametrize(
+    "content_type",
+    ["text/markdown", "text/markdown; charset=utf-8", "application/octet-stream"],
+)
+async def test_plain_markdown_upload_is_accepted(
+    fake_pipeline, content_type: str
+) -> None:
+    ctx, app = await _boot()
+    try:
+        async with _client(app) as client:
+            response = await client.post(
+                "/api/process",
+                files={
+                    "file": (
+                        "notes.md",
+                        "Ordinary paragraph.\n\nالعربية".encode(),  # noqa: RUF001 - Arabic text tests multilingual markdown
+                        content_type,
+                    )
+                },
+            )
+        assert response.status_code == 200, response.text
+        assert response.content.startswith(b"%PDF")
+    finally:
+        await ctx.dispose()
+
+
+@pytest.mark.parametrize(
+    "body", [b"# text\x00hidden binary", b"\xff\xfe", b"%PDF-1.4 fake"]
+)
+async def test_markdown_filename_does_not_admit_binary(
+    fake_pipeline, body: bytes
+) -> None:
+    ctx, app = await _boot()
+    try:
+        async with _client(app) as client:
+            response = await client.post(
+                "/api/process",
+                files={"file": ("notes.md", body, "application/octet-stream")},
+            )
+        assert response.status_code == 415
     finally:
         await ctx.dispose()
 
@@ -920,3 +976,98 @@ async def test_document_page_preview_lru_eviction() -> None:
         assert doc_ids[0] not in _preview_doc_cache
         # The newest document should be in cache
         assert doc_ids[-1] in _preview_doc_cache
+
+
+async def test_get_page_preview_fallback_when_input_path_empty_or_missing() -> None:
+    import pymupdf as fitz
+
+    from omniscribe.config import load_settings
+    from omniscribe.plugins.ocr.service import OCRServiceImpl
+    from omniscribe.plugins.state_backend_types import (
+        ArtifactBlob,
+        ArtifactRecord,
+        JobRecord,
+    )
+
+    doc = fitz.open()
+    p = doc.new_page()
+    p.insert_text((50, 50), "Fallback Preview Content")
+    pdf_bytes = bytes(doc.tobytes())
+
+    artifact_record = ArtifactRecord(
+        id="art-123",
+        token="tok-456",
+        owner_job_id="job-1",
+        content_type="application/pdf",
+        created_at=time.time(),
+        ttl_seconds=3600,
+    )
+    artifact_blob = ArtifactBlob(record=artifact_record, blob=pdf_bytes)
+
+    job_record_none = JobRecord(
+        job_id="job-1",
+        status="complete",
+        result_artifact_id="art-123",
+        result_artifact_token="tok-456",
+        input_path=None,
+    )
+
+    job_record_empty = JobRecord(
+        job_id="job-2",
+        status="complete",
+        result_artifact_id="art-123",
+        result_artifact_token="tok-456",
+        input_path="",
+    )
+
+    class _MockQueue:
+        async def status(self, job_id: str) -> JobRecord | None:
+            if job_id == "job-1":
+                return job_record_none
+            if job_id == "job-2":
+                return job_record_empty
+            return None
+
+    class _MockArtifacts:
+        async def get(self, artifact_id: str, token: str) -> ArtifactBlob | None:
+            if artifact_id == "art-123" and token == "tok-456":
+                return artifact_blob
+            return None
+
+    service = OCRServiceImpl(
+        settings=load_settings(),
+        queue=_MockQueue(),  # type: ignore[arg-type]
+        artifacts=_MockArtifacts(),  # type: ignore[arg-type]
+        progress=None,
+        max_upload_mb=10,
+    )
+
+    # When input_path is None, it should fall back to the completed artifact
+    png_bytes_none = await service.get_page_preview("job-1", 0)
+    assert png_bytes_none is not None
+    assert len(png_bytes_none) > 0
+
+    # When input_path is "", it should also fall back to the completed artifact
+    png_bytes_empty = await service.get_page_preview("job-2", 0)
+    assert png_bytes_empty is not None
+    assert len(png_bytes_empty) > 0
+
+    # When job is not complete, preview returns None
+    job_record_incomplete = JobRecord(
+        job_id="job-3",
+        status="running",
+        input_path="",
+    )
+
+    class _MockQueueIncomplete:
+        async def status(self, job_id: str) -> JobRecord | None:
+            return job_record_incomplete
+
+    service_incomplete = OCRServiceImpl(
+        settings=load_settings(),
+        queue=_MockQueueIncomplete(),  # type: ignore[arg-type]
+        artifacts=_MockArtifacts(),  # type: ignore[arg-type]
+        progress=None,
+        max_upload_mb=10,
+    )
+    assert await service_incomplete.get_page_preview("job-3", 0) is None

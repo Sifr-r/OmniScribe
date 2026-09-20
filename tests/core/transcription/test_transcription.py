@@ -8,10 +8,14 @@ import httpx
 import pytest
 
 from omniscribe.core.transcription.api_engine import GenericAudioAPIEngine
-from omniscribe.core.transcription.factory import get_transcription_engine
+from omniscribe.core.transcription.factory import (
+    create_transcription_engine,
+    get_transcription_engine,
+)
 from omniscribe.core.transcription.types import (
     TranscriptionError,
     TranscriptionResult,
+    logprob_to_confidence,
 )
 from omniscribe.core.transcription.validation import (
     AudioValidationError,
@@ -145,6 +149,39 @@ class TestTranscriptionFactory:
         with patch.dict("sys.modules", {"faster_whisper": None}):
             engine = get_transcription_engine(engine_type="auto")
             assert isinstance(engine, GenericAudioAPIEngine)
+
+    def test_factory_rejects_unknown_engine_type(self) -> None:
+        with pytest.raises(
+            ValueError, match="Unknown transcription engine: 'invalid_engine'"
+        ):
+            create_transcription_engine(engine_type="invalid_engine")
+
+    def test_create_transcription_engine_alias(self) -> None:
+        engine = create_transcription_engine(engine_type="api")
+        assert isinstance(engine, GenericAudioAPIEngine)
+
+
+class TestConfidenceCalculation:
+    def test_logprob_to_confidence_none(self) -> None:
+        assert logprob_to_confidence(None) is None
+
+    def test_logprob_to_confidence_nan(self) -> None:
+        assert logprob_to_confidence(float("nan")) == 0.0
+
+    def test_logprob_to_confidence_overflow(self) -> None:
+        assert logprob_to_confidence(1000.0) == 1.0
+        assert logprob_to_confidence(float("inf")) == 1.0
+
+    def test_logprob_to_confidence_clamping(self) -> None:
+        assert logprob_to_confidence(0.5) == 1.0
+
+    def test_logprob_to_confidence_normal(self) -> None:
+        import math
+
+        conf = logprob_to_confidence(-0.5)
+        assert conf is not None
+        assert 0.0 < conf < 1.0
+        assert math.isclose(conf, math.exp(-0.5))
 
 
 class TestWhisperLocalEngine:

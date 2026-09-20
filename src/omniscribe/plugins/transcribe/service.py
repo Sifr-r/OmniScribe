@@ -43,7 +43,10 @@ from omniscribe.plugins.transcribe.schemas import (
 from omniscribe.plugins.transcribe.schemas import (
     unpack_transcribe_options as unpack_transcribe_options,
 )
-from omniscribe.utils.security import check_ssrf_target_sync
+from omniscribe.utils.security import (
+    check_ssrf_target_sync,
+    is_same_origin,
+)
 
 _LOGGER = logging.getLogger("omniscribe.plugins.transcribe")
 
@@ -77,16 +80,28 @@ def resolve_engine_settings(
     request: TranscribeRequest, config: Mapping[str, Any]
 ) -> dict[str, Any]:
     """Form → config store → default, per field (old fallback chain)."""
+    stored_base = str(
+        config.get("transcription_api_base", DEFAULT_TRANSCRIPTION_API_BASE)
+    )
+    has_custom_base = bool(request.api_base and str(request.api_base).strip())
+    if has_custom_base and not is_same_origin(
+        str(request.api_base).strip(), stored_base
+    ):
+        api_key = (
+            str(request.api_key).strip()
+            if (request.api_key and str(request.api_key).strip())
+            else None
+        )
+    else:
+        api_key = _resolve_optional_str(
+            request.api_key, config, "transcription_api_key"
+        )
+
     return {
         "model": str(request.model or config.get("transcription_model", "whisper-1")),
         "engine": str(request.engine or config.get("transcription_engine", "api")),
-        "api_base": str(
-            request.api_base
-            or config.get("transcription_api_base", DEFAULT_TRANSCRIPTION_API_BASE)
-        ),
-        "api_key": _resolve_optional_str(
-            request.api_key, config, "transcription_api_key"
-        ),
+        "api_base": str(request.api_base or stored_base),
+        "api_key": api_key,
         "language": _resolve_optional_str(
             request.language, config, "transcription_language"
         ),
@@ -107,6 +122,7 @@ async def transcribe(
     """Sync transcription; verbatim old response shape."""
     # SSRF-check the caller-supplied override only (translate precedent):
     # config-store/default values are trusted operator config.
+    resolved_ip: str | None = None
     if request.api_base and request.api_base.strip():
         check = check_ssrf_target_sync(request.api_base.strip())
         if not check.allowed:
@@ -115,6 +131,7 @@ async def transcribe(
                 "ssrf_blocked",
                 f"URL targets a blocked address: {check.reason}",
             )
+        resolved_ip = check.resolved_ip
 
     try:
         validate_audio_input(
@@ -126,11 +143,13 @@ async def transcribe(
         raise TranscribeError(400, "bad_request", exc.message) from exc
 
     resolved = resolve_engine_settings(request, config)
+
     engine = get_transcription_engine(
         engine_type=resolved["engine"],
         model=resolved["model"],
         api_base=resolved["api_base"],
         api_key=resolved["api_key"],
+        resolved_ip=resolved_ip,
     )
     try:
         result = await engine.transcribe(

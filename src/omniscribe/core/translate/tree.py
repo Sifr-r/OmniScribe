@@ -134,6 +134,7 @@ async def translate_tree(
                     evaluator=evaluator,
                 )
                 if translated_text is not None:
+                    source_chars = len(node.text)
                     node.text = translated_text
                     node.metadata["translation"] = translated_text
                     if on_translate_chunk is not None:
@@ -142,7 +143,6 @@ async def translate_tree(
                         # restarts from 0. Consumers that need a
                         # document-wide index can compute it from the
                         # block's tree position.
-                        source_chars = len(node.text)
                         await on_translate_chunk(
                             chunk_idx,
                             source_chars,
@@ -168,10 +168,10 @@ async def translate_tree(
                                 evaluator=evaluator,
                             )
                             if translated_text is not None:
+                                source_chars = len(cell.text)
                                 cell.text = translated_text
                                 cell.metadata["translation"] = translated_text
                                 if on_translate_chunk is not None:
-                                    source_chars = len(cell.text)
                                     await on_translate_chunk(
                                         chunk_idx,
                                         source_chars,

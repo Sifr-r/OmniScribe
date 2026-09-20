@@ -56,8 +56,8 @@ or bind to 127.0.0.1 / ::1 / localhost. See SECURITY.md.
 **Cause.** OmniScribe refuses to bind a non-loopback address (anything
 other than `127.0.0.1`, `::1`, or `localhost`) without a real
 `OMNISCRIBE_AUTH_TOKEN`. This is by design — the auth middleware is
-wired unconditionally in `src/omniscribe/server.py:184-202`; the
-guard is in `_validate_runtime_settings` at `server.py:375-381`.
+wired unconditionally in `src/omniscribe/server.py:240-256`; the
+guard is in `_validate_runtime_settings` at `server.py:485+`.
 
 **Fix.** Either:
 
@@ -89,7 +89,7 @@ Set a real 32+ char secret or bind to 127.0.0.1 / ::1 / localhost.
 ```
 
 **Cause.** The token you set is in the boot-time placeholder denylist
-(`server.py:39-46`). The list catches every well-known "fix-me" value
+(`_PLACEHOLDER_AUTH_TOKENS` at `server.py:68-75`). The list catches every well-known "fix-me" value
 that has been copy-pasted into production configs over the years.
 
 **Fix.** Generate a fresh token with the same one-liner as above, or

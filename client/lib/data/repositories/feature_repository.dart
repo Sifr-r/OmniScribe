@@ -12,6 +12,7 @@ abstract class FeatureRepository {
   Future<TranslationResponse> translate(TranslationRequest request);
   Future<AsyncSubmitResponse> translateAsync(TranslationRequest request);
   Future<TranslationJobStatusResponse> getTranslationStatus(String jobId);
+  Future<TranslationResponse> getTranslationResult(String jobId, String token);
   Future<NLLBTranslationResponse> translateNllb({
     required String text,
     required String targetLanguage,
@@ -89,6 +90,18 @@ class FeatureRepositoryImpl implements FeatureRepository {
       ApiConstants.translationStatus(jobId),
     );
     return TranslationJobStatusResponse.fromJson(json);
+  }
+
+  @override
+  Future<TranslationResponse> getTranslationResult(String jobId, String token) async {
+    final json = await _apiClient.get<Map<String, dynamic>>(
+      ApiConstants.translationResult(jobId),
+      headers: {'X-Artifact-Token': token},
+    );
+    if (json['translated_text'] is! String) {
+      throw const FormatException('Translation result did not contain translated text.');
+    }
+    return TranslationResponse.fromJson(json);
   }
 
   @override

@@ -34,7 +34,7 @@ from omniscribe.core.writers.docx_tree import convert_tree_to_docx
 from omniscribe.core.writers.html import render_html
 from omniscribe.core.writers.tree_json import export_json
 from omniscribe.harness.context import Context
-from omniscribe.plugins._http import bearer_token, envelope
+from omniscribe.plugins._http import envelope, extract_token
 from omniscribe.plugins.artifacts import ArtifactStore
 from omniscribe.plugins.documents.schemas import (
     DocumentExportRequest,
@@ -399,6 +399,7 @@ async def handle_get_document_export(
     artifact_id: str,
     authorization: str | None,
     store: ArtifactStore,
+    artifact_token: str | None = None,
 ) -> Response | JSONResponse:
     """Fetch a previously-created export artifact by id+token.
 
@@ -407,7 +408,7 @@ async def handle_get_document_export(
     sufficient to download the file. Content-type is preserved from
     the original blob record.
     """
-    token = bearer_token(authorization)
+    token = extract_token(token=artifact_token, authorization=authorization)
     if not token:
         return envelope(403, "forbidden", "Export access denied")
     blob = await store.get(artifact_id, token)
@@ -420,6 +421,7 @@ async def handle_get_text(
     artifact_id: str,
     authorization: str | None,
     store: ArtifactStore,
+    artifact_token: str | None = None,
 ) -> Response | JSONResponse:
     """Fetch a stored OCR text artifact by id+token.
 
@@ -427,7 +429,7 @@ async def handle_get_text(
     blob as ``application/json`` because text artifacts are always
     serialized JSON (see ``build_text_artifact`` in the OCR routes).
     """
-    token = bearer_token(authorization)
+    token = extract_token(token=artifact_token, authorization=authorization)
     if not token:
         return envelope(403, "forbidden", "Text access denied")
     blob = await store.get(artifact_id, token)
@@ -440,6 +442,7 @@ async def handle_get_document_metadata(
     artifact_id: str,
     authorization: str | None,
     store: ArtifactStore,
+    artifact_token: str | None = None,
 ) -> Response | JSONResponse:
     """Fetch the per-page OCR metadata artifact by id+token.
 
@@ -447,7 +450,7 @@ async def handle_get_document_metadata(
     report (quality findings, layout enrichment, etc.); clients use it
     to surface warnings or to fold provenance into downstream exports.
     """
-    token = bearer_token(authorization)
+    token = extract_token(token=artifact_token, authorization=authorization)
     if not token:
         return envelope(403, "forbidden", "Document metadata access denied")
     blob = await store.get(artifact_id, token)
@@ -555,21 +558,30 @@ def build_documents_router(ctx: Context) -> APIRouter:
     async def get_document_export(
         artifact_id: str,
         authorization: str | None = Header(default=None),
+        x_artifact_token: str | None = Header(default=None),
     ) -> Response | JSONResponse:
-        return await handle_get_document_export(artifact_id, authorization, store)
+        return await handle_get_document_export(
+            artifact_id, authorization, store, x_artifact_token
+        )
 
     @router.get("/api/text/{artifact_id}", response_model=None)
     async def get_text(
         artifact_id: str,
         authorization: str | None = Header(default=None),
+        x_artifact_token: str | None = Header(default=None),
     ) -> Response | JSONResponse:
-        return await handle_get_text(artifact_id, authorization, store)
+        return await handle_get_text(
+            artifact_id, authorization, store, x_artifact_token
+        )
 
     @router.get("/api/metadata/{artifact_id}", response_model=None)
     async def get_document_metadata(
         artifact_id: str,
         authorization: str | None = Header(default=None),
+        x_artifact_token: str | None = Header(default=None),
     ) -> Response | JSONResponse:
-        return await handle_get_document_metadata(artifact_id, authorization, store)
+        return await handle_get_document_metadata(
+            artifact_id, authorization, store, x_artifact_token
+        )
 
     return router

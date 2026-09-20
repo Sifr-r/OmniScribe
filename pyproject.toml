@@ -324,7 +324,9 @@ max-complexity = 15
 "src/omniscribe/core/readers/docx_reader.py" = ["C901"]
 "src/omniscribe/core/readers/html_reader.py" = ["C901"]
 "src/omniscribe/core/readers/markdown_reader.py" = ["C901"]
+"src/omniscribe/core/readers/pdf_renderer.py" = ["C901"]
 "src/omniscribe/core/translate/config.py" = ["C901"]
+"src/omniscribe/core/translate/nodes.py" = ["C901"]
 "src/omniscribe/core/workflows/stages/ocr.py" = ["C901"]
 "src/omniscribe/core/workflows/stages/refine.py" = ["C901"]
 "src/omniscribe/core/writers/html.py" = ["C901"]
@@ -409,10 +411,5 @@ disallow_untyped_defs = true
 disallow_untyped_calls = true
 check_untyped_defs = true
 
-[[tool.mypy.overrides]]
-module = "tests.*"
-check_untyped_defs = true
-disallow_untyped_defs = false
-ignore_errors = false
 
 

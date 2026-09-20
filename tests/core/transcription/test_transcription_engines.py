@@ -891,3 +891,85 @@ class TestApiWhisperEngineEmptyAndSilentAudio:
         assert res.language is None
         assert res.duration is None
         assert res.segments == []
+
+    async def test_resolved_ip_pins_transport(self) -> None:
+        from omniscribe.utils.security import _PinnedIPTransport
+
+        engine = ApiWhisperEngine(
+            api_base="https://api.openai.com/v1",
+            resolved_ip="93.184.216.34",
+        )
+
+        fake_resp = MagicMock(spec=httpx.Response)
+        fake_resp.status_code = 200
+        fake_resp.json.return_value = {"text": "hello", "segments": []}
+
+        mock_client = AsyncMock()
+        mock_client.post.return_value = fake_resp
+        mock_client.__aenter__.return_value = mock_client
+        mock_client.__aexit__.return_value = None
+
+        captured_kwargs: dict[str, Any] = {}
+
+        def fake_async_client(**kwargs: Any) -> Any:
+            captured_kwargs.update(kwargs)
+            return mock_client
+
+        with patch("httpx.AsyncClient", side_effect=fake_async_client):
+            res = await engine.transcribe(b"audio", "audio.wav")
+
+        assert res.text == "hello"
+        assert "transport" in captured_kwargs
+        transport = captured_kwargs["transport"]
+        assert isinstance(transport, _PinnedIPTransport)
+        # _target_host / _resolved_ip are intentional subclass extensions on
+        # _PinnedNetworkBackend (see src/omniscribe/utils/security.py) — this
+        # test exists to verify the pin plumbing reaches them at runtime.
+        assert (
+            transport._pool._network_backend._target_host == "api.openai.com"  # type: ignore[attr-defined]
+        )
+        assert (
+            transport._pool._network_backend._resolved_ip == "93.184.216.34"  # type: ignore[attr-defined]
+        )
+
+    async def test_explicit_transport_takes_precedence(self) -> None:
+        dummy_transport = MagicMock(spec=httpx.AsyncBaseTransport)
+        engine = ApiWhisperEngine(
+            api_base="https://api.openai.com/v1",
+            resolved_ip="93.184.216.34",
+            transport=dummy_transport,
+        )
+
+        fake_resp = MagicMock(spec=httpx.Response)
+        fake_resp.status_code = 200
+        fake_resp.json.return_value = {"text": "test", "segments": []}
+
+        mock_client = AsyncMock()
+        mock_client.post.return_value = fake_resp
+        mock_client.__aenter__.return_value = mock_client
+        mock_client.__aexit__.return_value = None
+
+        captured_kwargs: dict[str, Any] = {}
+
+        def fake_async_client(**kwargs: Any) -> Any:
+            captured_kwargs.update(kwargs)
+            return mock_client
+
+        with patch("httpx.AsyncClient", side_effect=fake_async_client):
+            await engine.transcribe(b"audio", "audio.wav")
+
+        assert captured_kwargs["transport"] is dummy_transport
+
+    def test_factory_forwards_resolved_ip_and_transport(self) -> None:
+        from omniscribe.core.transcription.factory import get_transcription_engine
+
+        dummy_transport = MagicMock(spec=httpx.AsyncBaseTransport)
+        engine = get_transcription_engine(
+            engine_type="api",
+            api_base="https://api.custom.com/v1",
+            resolved_ip="10.1.2.3",
+            transport=dummy_transport,
+        )
+        assert isinstance(engine, GenericAudioAPIEngine)
+        assert engine.resolved_ip == "10.1.2.3"
+        assert engine.transport is dummy_transport

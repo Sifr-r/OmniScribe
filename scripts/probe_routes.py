@@ -53,11 +53,15 @@ def _expected_probes():
         ("GET /api/jobs", f"{BASE_URL}/api/jobs", 200),
         ("GET /api/config", f"{BASE_URL}/api/config", 200),
         ("GET /api/config/ocr", f"{BASE_URL}/api/config/ocr", 200),
-        ("GET /api/config/translation", f"{BASE_URL}/api/config/translation", 200),
-        ("GET /api/models/ocr", f"{BASE_URL}/api/models/ocr", 200),
+        ("GET /api/config/transcription", f"{BASE_URL}/api/config/transcription", 200),
+        ("GET /api/models/transcription", f"{BASE_URL}/api/models/transcription", 200),
+        (
+            "GET /api/sample-pdf/digital.pdf",
+            f"{BASE_URL}/api/sample-pdf/digital.pdf",
+            200,
+        ),
         ("POST /api/progress/session", f"{BASE_URL}/api/progress/session", 200),
         ("POST /api/process", f"{BASE_URL}/api/process", 422),
-        ("POST /process", f"{BASE_URL}/process", 422),
         ("POST /api/process/async", f"{BASE_URL}/api/process/async", 422),
         (
             "GET /api/process/status/missing",
@@ -66,12 +70,6 @@ def _expected_probes():
         ),
         ("POST /api/jobs/missing/cancel", f"{BASE_URL}/api/jobs/missing/cancel", 404),
         ("GET /api/text/nonexistent", f"{BASE_URL}/api/text/nonexistent", 403),
-        (
-            "GET /api/artifacts/text/nonexistent",
-            f"{BASE_URL}/api/artifacts/text/nonexistent",
-            403,
-        ),
-        ("GET /text/nonexistent", f"{BASE_URL}/text/nonexistent", 403),
     ]
 
 

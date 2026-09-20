@@ -19,11 +19,10 @@ final jobsProvider =
     NotifierProvider<JobsNotifier, JobsState>(JobsNotifier.new);
 
 class JobsNotifier extends Notifier<JobsState> {
-  late final JobRepository _repo;
+  JobRepository get _repo => ref.read(jobRepositoryProvider);
 
   @override
   JobsState build() {
-    _repo = ref.watch(jobRepositoryProvider);
     return const JobsState();
   }
 

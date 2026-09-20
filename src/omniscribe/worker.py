@@ -22,6 +22,7 @@ from dataclasses import replace
 from typing import Any, cast
 
 from omniscribe.config import RuntimeSettings, load_settings
+from omniscribe.core.errors import redact_exception
 from omniscribe.harness.context import Context
 from omniscribe.plugins.artifacts import ArtifactStore
 from omniscribe.plugins.jobs import (
@@ -111,6 +112,49 @@ async def boot_worker_context(
     return ctx
 
 
+async def _handle_job_failure(
+    job_id: str,
+    exc: BaseException,
+    ctx: Context,
+    queue: RedisJobQueue,
+    backend: StateBackend,
+    *,
+    lease_owner: str | None = None,
+) -> None:
+    """Handle job failure or cancellation when runner execution raises."""
+    if lease_owner and not await queue.owns_lease(job_id, lease_owner):
+        _LOGGER.info("Job %s lost its lease while running", job_id)
+        return
+    err_msg = redact_exception(exc)
+    _LOGGER.warning("Job %s failed with exception: %s", job_id, err_msg)
+    is_cancelled = (
+        queue.is_cancelled(job_id) or "cancelled" in exc.__class__.__name__.lower()
+    )
+    if not await queue.fail(
+        job_id,
+        error="Cancelled" if is_cancelled else err_msg,
+        lease_owner=lease_owner,
+    ):
+        _LOGGER.info("Job %s lost its lease before failure", job_id)
+        return
+    current = await backend.get_job(job_id)
+    if current and current.status not in TERMINAL_JOB_STATUSES:
+        if is_cancelled:
+            await backend.upsert_job(
+                replace(current, status="cancelled", updated_at=time.time())
+            )
+            await ctx.emit(JobCancelled(job_id=job_id))
+            return
+        await backend.upsert_job(
+            replace(current, status="error", error=err_msg, updated_at=time.time())
+        )
+    await ctx.emit(
+        JobCancelled(job_id=job_id)
+        if is_cancelled
+        else JobFailed(job_id=job_id, error=err_msg)
+    )
+
+
 async def _execute_job(
     job_id: str,
     payload: Any,
@@ -118,8 +162,14 @@ async def _execute_job(
     queue: RedisJobQueue,
     backend: StateBackend,
     artifacts: ArtifactStore,
+    *,
+    lease_owner: str | None = None,
 ) -> None:
     """Execute a single claimed job to completion or error."""
+
+    async def still_owns_lease() -> bool:
+        return not lease_owner or await queue.owns_lease(job_id, lease_owner)
+
     record = await backend.get_job(job_id)
     if record is None:
         await queue.fail(job_id, error="Job record not found in backend")
@@ -139,56 +189,55 @@ async def _execute_job(
         runner = _resolve_runner(payload, ctx)
         outcome = await runner(payload)
     except asyncio.CancelledError:
-        _LOGGER.info("Job %s cancelled during execution", job_id)
-        current = await backend.get_job(job_id)
-        if current and current.status not in TERMINAL_JOB_STATUSES:
-            await backend.upsert_job(
-                replace(current, status="cancelled", updated_at=time.time())
-            )
-        await queue.fail(job_id, error="Cancelled")
-        await ctx.emit(JobCancelled(job_id=job_id))
+        # Process shutdown cancels this task before ``run_worker`` requeues
+        # its owned lease.  Do not delete the payload or transition the job
+        # here, or the recovery claim would have nothing left to execute.
+        _LOGGER.info("Job %s interrupted during execution", job_id)
         raise
     except BaseException as exc:
-        err_msg = str(exc) or exc.__class__.__name__
-        _LOGGER.warning("Job %s failed with exception: %s", job_id, err_msg)
-        current = await backend.get_job(job_id)
-        if current and current.status not in TERMINAL_JOB_STATUSES:
-            is_cancelled = (
-                queue.is_cancelled(job_id)
-                or "cancelled" in exc.__class__.__name__.lower()
-            )
-            if is_cancelled:
-                await backend.upsert_job(
-                    replace(current, status="cancelled", updated_at=time.time())
-                )
-                await queue.fail(job_id, error="Cancelled")
-                await ctx.emit(JobCancelled(job_id=job_id))
-                return
-            await backend.upsert_job(
-                replace(current, status="error", error=err_msg, updated_at=time.time())
-            )
-        await queue.fail(job_id, error=err_msg)
-        await ctx.emit(JobFailed(job_id=job_id, error=err_msg))
+        await _handle_job_failure(
+            job_id,
+            exc,
+            ctx,
+            queue,
+            backend,
+            lease_owner=lease_owner,
+        )
         return
 
     # Check cooperative cancel after runner settled
+    if not await still_owns_lease():
+        _LOGGER.info("Job %s lost its lease after execution", job_id)
+        return
+
     if queue.is_cancelled(job_id):
+        if not await queue.fail(job_id, error="Cancelled", lease_owner=lease_owner):
+            _LOGGER.info("Job %s lost its lease before cancellation", job_id)
+            return
         current = await backend.get_job(job_id)
         if current and current.status not in TERMINAL_JOB_STATUSES:
             await backend.upsert_job(
                 replace(current, status="cancelled", updated_at=time.time())
             )
-        await queue.fail(job_id, error="Cancelled")
         await ctx.emit(JobCancelled(job_id=job_id))
         return
 
-    # Store result artifact
-    handle = await artifacts.put(
-        outcome.blob,
-        content_type=outcome.content_type,
-        owner_job_id=job_id,
-    )
+    # Store result artifact only while this worker still owns the claim.
+    try:
+        handle = await artifacts.put(
+            outcome.blob,
+            content_type=outcome.content_type,
+            owner_job_id=job_id,
+        )
+    except Exception as exc:
+        await _handle_job_failure(
+            job_id, exc, ctx, queue, backend, lease_owner=lease_owner
+        )
+        return
 
+    if not await queue.complete(job_id, lease_owner=lease_owner):
+        _LOGGER.info("Job %s lost its lease before completion", job_id)
+        return
     current = await backend.get_job(job_id)
     if current is not None:
         await backend.upsert_job(
@@ -197,10 +246,10 @@ async def _execute_job(
                 status="complete",
                 result_artifact_id=handle.id,
                 result_artifact_token=handle.token,
+                request_meta={**current.request_meta, **outcome.metadata},
                 updated_at=time.time(),
             )
         )
-    await queue.complete(job_id)
     await ctx.emit(
         JobCompleted(
             job_id=job_id,
@@ -219,16 +268,17 @@ async def _worker_loop(
     backend: StateBackend,
     artifacts: ArtifactStore,
     stop_event: asyncio.Event,
-    active_jobs: dict[str, asyncio.Task[None]],
+    active_jobs: dict[str, tuple[asyncio.Task[None], str]],
     poll_interval: float = 0.2,
     visibility_timeout: float = 300.0,
 ) -> None:
     """Run one worker loop claiming and executing jobs."""
     _LOGGER.info("Worker loop %d started (worker_id=%s)", worker_index, worker_id)
     while not stop_event.is_set():
+        lease_owner = f"{worker_id}:{worker_index}:{uuid.uuid4().hex}"
         try:
             claim = await queue.claim(
-                worker_id=worker_id, visibility_timeout=visibility_timeout
+                worker_id=lease_owner, visibility_timeout=visibility_timeout
             )
         except Exception as exc:
             _LOGGER.warning("Worker loop %d claim error: %s", worker_index, exc)
@@ -243,22 +293,68 @@ async def _worker_loop(
         _LOGGER.debug("Worker loop %d claimed job %s", worker_index, job_id)
 
         task = asyncio.create_task(
-            _execute_job(job_id, payload, ctx, queue, backend, artifacts),
+            _execute_job(
+                job_id,
+                payload,
+                ctx,
+                queue,
+                backend,
+                artifacts,
+                lease_owner=lease_owner,
+            ),
             name=f"execute-job-{job_id}",
         )
-        active_jobs[job_id] = task
+        renewal_stop = asyncio.Event()
+        renewal_task = asyncio.create_task(
+            _renew_lease_loop(
+                job_id,
+                lease_owner,
+                queue,
+                renewal_stop,
+                visibility_timeout,
+            ),
+            name=f"renew-lease-{job_id}",
+        )
+        active_jobs[job_id] = (task, lease_owner)
         try:
             await task
         except asyncio.CancelledError:
             break
         except Exception as exc:
+            err_msg = redact_exception(exc)
             _LOGGER.exception(
-                "Unexpected error in job execution for %s: %s", job_id, exc
+                "Unexpected error in job execution for %s: %s", job_id, err_msg
             )
         finally:
+            renewal_stop.set()
+            renewal_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await renewal_task
             active_jobs.pop(job_id, None)
 
     _LOGGER.info("Worker loop %d stopped", worker_index)
+
+
+async def _renew_lease_loop(
+    job_id: str,
+    lease_owner: str,
+    queue: RedisJobQueue,
+    stop_event: asyncio.Event,
+    visibility_timeout: float,
+) -> None:
+    """Keep an active job visible while its cooperative runner is alive."""
+    interval = max(0.05, visibility_timeout / 3)
+    while not stop_event.is_set():
+        with contextlib.suppress(TimeoutError):
+            await asyncio.wait_for(stop_event.wait(), timeout=interval)
+        if stop_event.is_set():
+            return
+        try:
+            if not await queue.renew_lease(job_id, lease_owner, visibility_timeout):
+                _LOGGER.warning("Job %s lease was lost before renewal", job_id)
+                return
+        except Exception as exc:
+            _LOGGER.warning("Job %s lease renewal failed: %s", job_id, exc)
 
 
 async def _heartbeat_loop(
@@ -323,7 +419,7 @@ async def run_worker(
     loop = asyncio.get_running_loop()
     _setup_signal_handlers(loop, stop_event)
 
-    active_jobs: dict[str, asyncio.Task[None]] = {}
+    active_jobs: dict[str, tuple[asyncio.Task[None], str]] = {}
 
     # Start worker loops
     worker_tasks = [
@@ -358,7 +454,7 @@ async def run_worker(
     # Gracefully drain in-flight jobs up to drain_timeout
     if active_jobs:
         _done, pending = await asyncio.wait(
-            list(active_jobs.values()), timeout=drain_timeout
+            [task for task, _owner in active_jobs.values()], timeout=drain_timeout
         )
         if pending:
             _LOGGER.warning(
@@ -367,9 +463,10 @@ async def run_worker(
             for task in pending:
                 task.cancel()
             # Requeue stuck jobs back to Redis queue
-            for job_id in list(active_jobs.keys()):
+            for job_id, (_task, lease_owner) in list(active_jobs.items()):
                 with contextlib.suppress(Exception):
-                    await queue.requeue(job_id)
+                    if await queue.owns_lease(job_id, lease_owner):
+                        await queue.requeue(job_id)
 
     # Cancel worker loop tasks and heartbeat
     heartbeat_task.cancel()

@@ -20,12 +20,15 @@ final translationProvider =
 );
 
 class TranslationNotifier extends Notifier<TranslationState> {
-  late final FeatureRepository _repo;
+  FeatureRepository get _repo => ref.read(featureRepositoryProvider);
   Timer? _pollTimer;
+  String? _resultToken;
+  int _runEpoch = 0;
+  bool _checkingStatus = false;
 
   @override
   TranslationState build() {
-    _repo = ref.watch(featureRepositoryProvider);
+
     ref.onDispose(stopPolling);
     return const TranslationState.initial();
   }
@@ -93,6 +96,9 @@ class TranslationNotifier extends Notifier<TranslationState> {
     String? fallbackModel,
     bool? dualTranslate,
   }) async {
+    if (state.isTranslating) return;
+    final runId = ++_runEpoch;
+    stopPolling();
     final text = state.sourceText.trim();
     if (text.isEmpty) {
       state = state.copyWith(
@@ -114,6 +120,7 @@ class TranslationNotifier extends Notifier<TranslationState> {
           text: text,
           targetLanguage: state.targetLanguage,
         );
+        if (!ref.mounted || runId != _runEpoch) return;
         state = state.copyWith(
           translatedOutput: res.translatedText,
           isTranslating: false,
@@ -130,12 +137,14 @@ class TranslationNotifier extends Notifier<TranslationState> {
           dualTranslate: dualTranslate,
         );
         final res = await _repo.translate(req);
+        if (!ref.mounted || runId != _runEpoch) return;
         state = state.copyWith(
           translatedOutput: res.translatedText,
           isTranslating: false,
         );
       }
     } catch (e) {
+      if (!ref.mounted || runId != _runEpoch) return;
       state = state.copyWith(
         isTranslating: false,
         error: e.toString(),
@@ -149,6 +158,10 @@ class TranslationNotifier extends Notifier<TranslationState> {
     String? fallbackModel,
     bool autoPoll = true,
   }) async {
+    if (state.isTranslating) return null;
+    final runId = ++_runEpoch;
+    stopPolling();
+    _resultToken = null;
     final text = state.sourceText.trim();
     if (text.isEmpty) {
       state = state.copyWith(
@@ -175,6 +188,8 @@ class TranslationNotifier extends Notifier<TranslationState> {
         apiKey: apiKey,
       );
       final res = await _repo.translateAsync(req);
+      if (!ref.mounted || runId != _runEpoch) return null;
+      _resultToken = res.resultToken;
       state = state.copyWith(
         asyncJobId: res.jobId,
         asyncStatus: 'Job ${res.jobId} queued. Polling progress...',
@@ -184,6 +199,7 @@ class TranslationNotifier extends Notifier<TranslationState> {
       }
       return res.jobId;
     } catch (e) {
+      if (!ref.mounted || runId != _runEpoch) return null;
       state = state.copyWith(
         isTranslating: false,
         error: e.toString(),
@@ -194,15 +210,27 @@ class TranslationNotifier extends Notifier<TranslationState> {
   }
 
   Future<void> checkTranslationStatus(String jobId) async {
+    if (_checkingStatus) return;
+    final runId = _runEpoch;
+    _checkingStatus = true;
     try {
       final status = await _repo.getTranslationStatus(jobId);
+      if (!ref.mounted || runId != _runEpoch) return;
       final stateStr = status.state.toUpperCase();
 
       if (stateStr == 'SUCCESS' || stateStr == 'COMPLETED') {
+        final token = _resultToken;
+        final result = token == null
+            ? status.result
+            : (await _repo.getTranslationResult(jobId, token)).translatedText;
+        if (!ref.mounted || runId != _runEpoch) return;
+        final translatedText = result is Map ? result['translated_text'] : result;
+        if (translatedText is! String) {
+          throw const FormatException('Translation completed without translated text.');
+        }
         state = state.copyWith(
           isTranslating: false,
-          translatedOutput:
-              status.result?.toString() ?? 'Translation completed.',
+          translatedOutput: translatedText,
           asyncStatus: 'Completed.',
         );
         stopPolling();
@@ -223,12 +251,15 @@ class TranslationNotifier extends Notifier<TranslationState> {
         );
       }
     } catch (e) {
+      if (!ref.mounted || runId != _runEpoch) return;
       state = state.copyWith(
         isTranslating: false,
         error: e.toString(),
         asyncStatus: 'Polling error: $e',
       );
       stopPolling();
+    } finally {
+      _checkingStatus = false;
     }
   }
 }
@@ -243,12 +274,12 @@ final transcriptionProvider =
 );
 
 class TranscriptionNotifier extends Notifier<TranscriptionState> {
-  late final FeatureRepository _repo;
+  FeatureRepository get _repo => ref.read(featureRepositoryProvider);
   Timer? _playbackTimer;
 
   @override
   TranscriptionState build() {
-    _repo = ref.watch(featureRepositoryProvider);
+
     // Wave 16 / flutter_riverpod 3.4: the ref is already disposed when
     // ``ref.onDispose`` callbacks fire, so touching ``state`` from inside
     // the callback raises ``UnmountedRefException``. We inline the
@@ -452,11 +483,11 @@ final glossaryProvider = NotifierProvider<GlossaryNotifier, GlossaryState>(
 );
 
 class GlossaryNotifier extends Notifier<GlossaryState> {
-  late final FeatureRepository _repo;
+  FeatureRepository get _repo => ref.read(featureRepositoryProvider);
 
   @override
   GlossaryState build() {
-    _repo = ref.watch(featureRepositoryProvider);
+
     return const GlossaryState.initial();
   }
 
@@ -651,11 +682,11 @@ final extractionProvider =
 );
 
 class ExtractionNotifier extends Notifier<ExtractionState> {
-  late final FeatureRepository _repo;
+  FeatureRepository get _repo => ref.read(featureRepositoryProvider);
 
   @override
   ExtractionState build() {
-    _repo = ref.watch(featureRepositoryProvider);
+
     return ExtractionState.initial();
   }
 

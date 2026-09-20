@@ -61,24 +61,39 @@ def _format_markdown_table(rows_data: list[list[str]]) -> str:
     return "\n".join(lines)
 
 
-def _has_page_break(p_elem: CT_P) -> bool:
-    """Check if paragraph element contains an explicit page break."""
-    for node in p_elem.iter():
-        if (
-            node.tag.endswith("br")
-            and node.attrib.get(
-                "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}type"
-            )
-            == "page"
-        ):
-            return True
-        if node.tag.endswith("pageBreakBefore"):
-            val = node.attrib.get(
+def _is_page_break_element(node: Any) -> bool:
+    return bool(
+        node.tag.endswith("br")
+        and node.attrib.get(
+            "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}type"
+        )
+        == "page"
+    )
+
+
+def _has_page_break_before(p_elem: CT_P) -> bool:
+    """Check if paragraph element has pageBreakBefore in pPr."""
+    p_pr = p_elem.find(
+        "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}pPr"
+    )
+    if p_pr is not None:
+        pbb = p_pr.find(
+            "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}pageBreakBefore"
+        )
+        if pbb is not None:
+            val = pbb.attrib.get(
                 "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}val"
             )
             if val is None or val in ("1", "true", "on"):
                 return True
     return False
+
+
+def _has_page_break(p_elem: CT_P) -> bool:
+    """Check if paragraph element contains an explicit page break (inline or before)."""
+    if _has_page_break_before(p_elem):
+        return True
+    return any(_is_page_break_element(node) for node in p_elem.iter())
 
 
 def _parse_heading_level(style_name: str) -> int | None:
@@ -147,7 +162,7 @@ class DocxReader(BaseDocumentReader):
                         pages_raw.append(current_page)
                     continue
 
-                if _has_page_break(child) and current_page:
+                if _has_page_break_before(child) and current_page:
                     current_page = []
                     pages_raw.append(current_page)
 
@@ -159,47 +174,78 @@ class DocxReader(BaseDocumentReader):
                     current_page = []
                     pages_raw.append(current_page)
 
-                spans = [
-                    Span(
-                        text=run.text,
-                        bold=bool(run.bold),
-                        italic=bool(run.italic),
-                        code=bool(run.font.name and "courier" in run.font.name.lower()),
+                run_groups: list[list[Span]] = [[]]
+                for run in p.runs:
+                    bold = bool(run.bold)
+                    italic = bool(run.italic)
+                    code = bool(run.font.name and "courier" in run.font.name.lower())
+                    has_break = any(
+                        _is_page_break_element(c) for c in run._element.iter()
                     )
-                    for run in p.runs
-                    if run.text
-                ]
+                    if not has_break:
+                        if run.text:
+                            run_groups[-1].append(
+                                Span(text=run.text, bold=bold, italic=italic, code=code)
+                            )
+                    else:
+                        for elem in run._element:
+                            if _is_page_break_element(elem):
+                                run_groups.append([])
+                            elif elem.tag.endswith("t") and elem.text:
+                                run_groups[-1].append(
+                                    Span(
+                                        text=elem.text,
+                                        bold=bold,
+                                        italic=italic,
+                                        code=code,
+                                    )
+                                )
+                            elif elem.tag.endswith("tab"):
+                                run_groups[-1].append(
+                                    Span(text="\t", bold=bold, italic=italic, code=code)
+                                )
+                            elif elem.tag.endswith("cr"):
+                                run_groups[-1].append(
+                                    Span(text="\n", bold=bold, italic=italic, code=code)
+                                )
 
-                if heading_level is not None:
-                    current_page.append(
-                        {
-                            "type": "heading",
-                            "kind": "section_header",
-                            "level": heading_level,
-                            "text": text,
-                            "spans": spans,
-                        }
-                    )
-                elif _is_list_paragraph(p):
-                    current_page.append(
-                        {
-                            "type": "list_item",
-                            "kind": "list_item",
-                            "level": 0,
-                            "text": text,
-                            "spans": spans,
-                        }
-                    )
-                else:
-                    current_page.append(
-                        {
-                            "type": "paragraph",
-                            "kind": "paragraph",
-                            "level": 0,
-                            "text": text,
-                            "spans": spans,
-                        }
-                    )
+                for idx, spans in enumerate(run_groups):
+                    if idx > 0 and current_page:
+                        current_page = []
+                        pages_raw.append(current_page)
+                    seg_text = "".join(s.text for s in spans).strip()
+                    if not seg_text:
+                        continue
+                    if heading_level is not None:
+                        current_page.append(
+                            {
+                                "type": "heading",
+                                "kind": "section_header",
+                                "level": heading_level,
+                                "text": seg_text,
+                                "spans": spans,
+                            }
+                        )
+                    elif _is_list_paragraph(p):
+                        current_page.append(
+                            {
+                                "type": "list_item",
+                                "kind": "list_item",
+                                "level": 0,
+                                "text": seg_text,
+                                "spans": spans,
+                            }
+                        )
+                    else:
+                        current_page.append(
+                            {
+                                "type": "paragraph",
+                                "kind": "paragraph",
+                                "level": 0,
+                                "text": seg_text,
+                                "spans": spans,
+                            }
+                        )
 
             elif isinstance(child, CT_Tbl):
                 tbl = Table(child, doc)

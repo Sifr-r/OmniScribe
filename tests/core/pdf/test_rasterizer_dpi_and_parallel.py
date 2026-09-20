@@ -239,3 +239,25 @@ class TestPageCap:
         path.write_bytes(pdf_bytes)
         images = convert_pdf_to_images(str(path), dpi=72)
         assert len(images) == 3
+
+    def test_convert_pdf_to_images_respects_pages_param(self, tmp_path):
+        pdf_bytes = _make_test_pdf(num_pages=5)
+        path = tmp_path / "five_pages.pdf"
+        path.write_bytes(pdf_bytes)
+
+        images = convert_pdf_to_images(str(path), dpi=72, pages="2,4")
+        assert list(images.keys()) == [1, 3]
+
+    def test_pdf_handler_convert_forwards_pages_param(self, tmp_path):
+        from omniscribe.core.pdf import PDFHandler
+
+        pdf_bytes = _make_test_pdf(num_pages=5)
+        path = tmp_path / "five_pages.pdf"
+        path.write_bytes(pdf_bytes)
+
+        handler = PDFHandler()
+        images = handler.convert(str(path), dpi=72, pages="1,3,5")
+        assert list(images.keys()) == [0, 2, 4]
+
+        images_to = handler.convert_to_images(str(path), dpi=72, pages="2")
+        assert list(images_to.keys()) == [1]

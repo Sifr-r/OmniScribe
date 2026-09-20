@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
+from typing import Any
+
+import pytest
 from fastapi.testclient import TestClient
+
+from omniscribe.plugins.ocr.service import OCRServiceImpl
 
 from .conftest import PDF_BYTES, artifact_token_from_events, upload, wait_status
 
@@ -119,3 +124,71 @@ def test_cancel_job_sets_status_cancelled(
         200,
         409,
     }  # 200 if cancelled, 409 if already complete
+
+
+def test_job_page_preview_negative_index_returns_400(
+    api_client: TestClient,
+) -> None:
+    resp = api_client.get("/api/jobs/any-job-id/pages/-1/preview")
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == "page_index must be >= 0"
+
+
+def test_job_page_preview_missing_or_unrendered_returns_404(
+    api_client: TestClient, fake_pipeline: dict, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # 1. Unknown job id
+    unknown = api_client.get("/api/jobs/nonexistent-job-id/pages/0/preview")
+    assert unknown.status_code == 404
+    assert unknown.json()["detail"] == "page preview unavailable for this job"
+
+    # 2. Existing completed job where preview is unavailable / returns None
+    submit = api_client.post("/api/process/async", **upload())
+    body = submit.json()
+    job_id = body["job_id"]
+    result_token = body["result_token"]
+    wait_status(api_client, job_id, "complete")
+
+    async def fake_none_preview(
+        self: Any, j_id: str, p_idx: int, **kwargs: Any
+    ) -> bytes | None:
+        return None
+
+    monkeypatch.setattr(OCRServiceImpl, "get_page_preview", fake_none_preview)
+    unrendered = api_client.get(
+        f"/api/jobs/{job_id}/pages/0/preview", params={"token": result_token}
+    )
+    assert unrendered.status_code == 404
+    assert unrendered.json()["detail"] == "page preview unavailable for this job"
+
+
+def test_job_page_preview_valid_completed_job_returns_200(
+    api_client: TestClient, fake_pipeline: dict, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    submit = api_client.post("/api/process/async", **upload())
+    body = submit.json()
+    job_id = body["job_id"]
+    result_token = body["result_token"]
+    wait_status(api_client, job_id, "complete")
+
+    fake_preview_bytes = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR_fake_preview_content"
+
+    async def fake_preview(
+        self: Any, j_id: str, p_idx: int, **kwargs: Any
+    ) -> bytes | None:
+        if j_id == job_id and p_idx == 0:
+            return fake_preview_bytes
+        return None
+
+    monkeypatch.setattr(OCRServiceImpl, "get_page_preview", fake_preview)
+
+    # Without token: 404
+    unauth = api_client.get(f"/api/jobs/{job_id}/pages/0/preview")
+    assert unauth.status_code == 404
+
+    resp = api_client.get(
+        f"/api/jobs/{job_id}/pages/0/preview", params={"token": result_token}
+    )
+    assert resp.status_code == 200
+    assert resp.headers["content-type"] == "image/png"
+    assert resp.content == fake_preview_bytes

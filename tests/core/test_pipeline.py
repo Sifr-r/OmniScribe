@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import base64
 import io
+from collections.abc import Awaitable, Callable
 
 import pytest
 from PIL import Image
@@ -554,7 +555,15 @@ class TestPipelineRepairPassthrough:
 
     async def test_grounded_run_forwards_repair_options(self):
         class _TinyGroundedBackend:
-            async def ocr_document(self, pdf_path, progress=None, on_warning=None):
+            async def ocr_document(
+                self,
+                pdf_path: str,
+                progress: Callable[[str, int, int, str], Awaitable[None]] | None = None,
+                on_warning: Callable[[int, BaseException], Awaitable[None]]
+                | None = None,
+                *,
+                pages: str | None = None,
+            ) -> GroundedResponse:
                 return GroundedResponse(blocks=[])
 
         pipe = OCRPipeline(

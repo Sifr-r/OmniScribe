@@ -20,10 +20,15 @@ from __future__ import annotations
 import asyncio
 import ipaddress
 import socket
+import ssl
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from typing import Final
-from urllib.parse import urlparse
+from typing import Any, Final
+from urllib.parse import urlparse, urlsplit, urlunsplit
+
+import httpcore
+import httpx
+from httpcore._backends.auto import AutoBackend
 
 from omniscribe.config import load_settings
 
@@ -152,10 +157,20 @@ def _pick_pinned_address(
     the first IPv4; a set containing any public address keeps resolution
     order so public traffic is never re-pointed at a different host.
     """
-    if all(_is_blocked_ip(ip) for ip, _reason in candidates):
-        for candidate in candidates:
-            if candidate[0].version == 4:
-                return candidate
+    # When any candidate is public, prefer the first public one so a
+    # public host is never re-pointed at a loopback (audit MEDIUM
+    # follow-up: ``return candidates[0]`` would otherwise pin a public
+    # DNS answer to its leading private address under
+    # ``ALLOW_SSRF_LOCAL=1``). Only when EVERY candidate is private
+    # (i.e. ``ALLOW_SSRF_LOCAL=1`` is the sole reason they were
+    # admitted) do we apply the IPv4-preference ordering for
+    # IPv4-only local model servers.
+    for ip, reason in candidates:
+        if not _is_blocked_ip(ip):
+            return ip, reason
+    for candidate in candidates:
+        if candidate[0].version == 4:
+            return candidate
     return candidates[0]
 
 
@@ -319,3 +334,128 @@ def check_ssrf_target_sync(url: str | None) -> SSRFCheckResult:
 _SSRF_EXECUTOR: Final[ThreadPoolExecutor] = ThreadPoolExecutor(
     max_workers=2, thread_name_prefix="omniscribe-ssrf-check"
 )
+
+
+def is_same_origin(url_a: str | None, url_b: str | None) -> bool:
+    """Compare normalized (scheme, hostname.lower(), port) of two URLs.
+
+    Default ports (80 for http, 443 for https) are populated when omitted.
+    Returns False if either URL is empty, invalid, or lacks scheme/host.
+    """
+    if not url_a or not url_b:
+        return False
+    try:
+        pa = urlsplit(url_a.strip())
+        pb = urlsplit(url_b.strip())
+    except Exception:
+        return False
+
+    scheme_a = (pa.scheme or "").lower()
+    scheme_b = (pb.scheme or "").lower()
+    host_a = (pa.hostname or "").lower()
+    host_b = (pb.hostname or "").lower()
+
+    if not scheme_a or not scheme_b or not host_a or not host_b:
+        return False
+
+    port_a = pa.port or (
+        80 if scheme_a == "http" else (443 if scheme_a == "https" else None)
+    )
+    port_b = pb.port or (
+        80 if scheme_b == "http" else (443 if scheme_b == "https" else None)
+    )
+
+    return (scheme_a, host_a, port_a) == (scheme_b, host_b, port_b)
+
+
+class _PinnedNetworkBackend(httpcore.AsyncNetworkBackend):
+    """Network backend that redirects TCP connections for a specific host to a pinned IP."""
+
+    def __init__(self, target_host: str, resolved_ip: str) -> None:
+        self._target_host = target_host.lower()
+        self._resolved_ip = resolved_ip
+        self._backend: httpcore.AsyncNetworkBackend = AutoBackend()
+
+    async def connect_tcp(
+        self,
+        host: str,
+        port: int,
+        timeout: float | None = None,
+        local_address: str | None = None,
+        socket_options: Any = None,
+    ) -> httpcore.AsyncNetworkStream:
+        target = self._resolved_ip if host.lower() == self._target_host else host
+        return await self._backend.connect_tcp(
+            target,
+            port,
+            timeout=timeout,
+            local_address=local_address,
+            socket_options=socket_options,
+        )
+
+
+class _PinnedIPTransport(httpx.AsyncHTTPTransport):
+    """httpx transport pinning connections to the SSRF-resolved IP without global socket mutation."""
+
+    def __init__(
+        self,
+        target_host: str,
+        resolved_ip: str,
+        *,
+        ssl_context: ssl.SSLContext | None = None,
+        http2: bool | None = None,
+        retries: int | None = None,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(**kwargs)
+        backend = _PinnedNetworkBackend(target_host, resolved_ip)
+        # Forward the public-API configuration to httpcore by name rather
+        # than reaching into httpx's ``_pool._ssl_context`` / ``_http2`` /
+        # ``_retries`` private attributes (audit MEDIUM follow-up: those
+        # names are not part of httpx's public contract and may move
+        # between releases). When a caller omits an option, httpcore's
+        # own default applies (``ssl_context=None`` -> its built-in
+        # verifier, ``http2=False``, ``retries=0``).
+        self._pool = httpcore.AsyncConnectionPool(
+            ssl_context=ssl_context,
+            http2=http2 if http2 is not None else False,
+            retries=retries if retries is not None else 0,
+            network_backend=backend,
+        )
+
+
+def _rewrite_url_with_resolved_ip(url: str, resolved_ip: str) -> str:
+    """Rewrite ``url`` so the connection goes to ``resolved_ip``.
+
+    Used for plain HTTP connections to prevent DNS rebinding TOCTOU.
+    For HTTPS connections, _PinnedIPTransport is used instead to avoid
+    breaking TLS SNI / certificate validation.
+    """
+    parts = urlsplit(url)
+    port = parts.port
+    try:
+        ip = ipaddress.ip_address(resolved_ip)
+        host_literal = (
+            f"[{resolved_ip}]" if isinstance(ip, ipaddress.IPv6Address) else resolved_ip
+        )
+    except ValueError:
+        host_literal = resolved_ip
+    netloc = host_literal if port is None else f"{host_literal}:{port}"
+    return urlunsplit(parts._replace(netloc=netloc))
+
+
+def redact_redis_url(url: str) -> str:
+    """Strip the password component from a Redis URL for safe logging/errors.
+
+    Replaces password with '***' while preserving scheme, user, and host part.
+    """
+    if not url or "@" not in url:
+        return url
+    scheme, sep, rest = url.partition("://")
+    if not sep or "@" not in rest:
+        return url
+    userinfo, _, hostpart = rest.partition("@")
+    if ":" in userinfo:
+        user, _, _ = userinfo.partition(":")
+        return f"{scheme}://{user}:***@{hostpart}"
+    return url

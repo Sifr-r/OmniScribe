@@ -45,7 +45,7 @@ strictness:
    behind a firewall. The threat is a curious housemate. Guards:
    bearer auth on every route (except `/health`, `/healthz`, `/ready`,
    `/readyz`), rate limiting, audit-friendly logs. The bearer/rate-limit/upload middlewares ship live in
-   `src/omniscribe/server.py:184-202`; see the [Security Features](#security-features)
+   `src/omniscribe/server.py:240-256`; see the [Security Features](#security-features)
    table for the exact env-var contract and the [Deployment Guide](DEPLOYMENT.md)
    for the three-profile walkthrough.
 3. **Public-internet** — the workstation runs behind a reverse proxy on
@@ -60,11 +60,12 @@ explicitly opt into profile (2) or (3) by setting the relevant env vars.
 ## Security Features
 
 The bearer auth, rate limit, and upload-size middlewares are wired
-unconditionally in `src/omniscribe/server.py:184-202` (closed in
+unconditionally in `src/omniscribe/server.py:240-256` (closed in
 Waves 11/13/14). A non-loopback bind without a real
 `OMNISCRIBE_AUTH_TOKEN` exits at startup with a clear `SystemExit`
-(`server.py:375-381`); placeholder tokens (e.g. `change-me-in-prod`)
-are rejected on LAN binds (`server.py:383-395`). The
+in `_validate_runtime_settings` (`server.py:485+`); placeholder tokens
+(e.g. `change-me-in-prod`, defined in `_PLACEHOLDER_AUTH_TOKENS` at `server.py:68-75`)
+are rejected on LAN binds (`server.py:485+`). The
 [Deployment Guide](DEPLOYMENT.md) walks through the three profiles
 with the exact env-var values per profile.
 

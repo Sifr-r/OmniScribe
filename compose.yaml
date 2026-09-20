@@ -32,15 +32,10 @@ services:
       resources:
         limits:
           memory: 4g
-    # F5-05 audit fix: the API now binds to loopback on the host
-    # by default (``127.0.0.1:8000:8000`` instead of ``8000:8000``).
-    # The previous wildcard publish meant a plain ``docker compose
-    # up`` on a LAN-facing host handed anyone reachable the OCR
-    # API. Loopback is the safe default; operators who need LAN
-    # exposure should change to ``"8000:8000"`` *after* setting
-    # ``OMNISCRIBE_AUTH_TOKEN`` (the F2.1 hardening is the only
-    # auth gate). The Redis service was already loopback-only and
-    # is unchanged.
+    # The API listens on all interfaces *inside* its container so this
+    # published port is reachable. The host mapping remains loopback-only;
+    # authentication is required for this container bind. The Redis service
+    # is likewise published on host loopback only.
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -78,13 +73,10 @@ services:
       # only when pointing at a local VLM endpoint on loopback
       # (e.g. LM Studio at 127.0.0.1:1234) and disable immediately after.
       ALLOW_SSRF_LOCAL: "false"
-      # F5-16 audit fix: the previous example token ``change-me-in-prod``
-      # is in the boot-time denylist (``api/middleware/settings.py: PLACEHOLDER_AUTH_TOKENS``)
-      # and would *refuse* to start. The example now points operators
-      # at an openssl-rand one-liner so copy-paste always lands on a
-      # real, high-entropy secret. See .env.example for the same hint
-      # in a more discoverable spot.
-      # OMNISCRIBE_AUTH_TOKEN: <generate with: openssl rand -hex 32>
+      # The container binds 0.0.0.0, so the startup guard requires a token
+      # even though the host port is loopback-only. Enter this same token
+      # in the Flutter client's backend connection settings.
+      OMNISCRIBE_AUTH_TOKEN: ${OMNISCRIBE_AUTH_TOKEN:?OMNISCRIBE_AUTH_TOKEN must be set in .env (see .env.example)}
     volumes:
       - app-data:/app/data
     extra_hosts:
@@ -165,4 +157,3 @@ networks:
   omniscribe:
     driver: bridge
     name: omniscribe
-

@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:integration_test/integration_test.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:omniscribe_client/core/enums/app_tab.dart';
 import 'package:omniscribe_client/core/enums/server_health.dart';
@@ -10,7 +9,6 @@ import 'package:omniscribe_client/data/providers/provider_browser_state.dart';
 import 'package:omniscribe_client/data/providers/provider_notifier.dart';
 import 'package:omniscribe_client/data/providers/repository_providers.dart';
 import 'package:omniscribe_client/data/providers/settings_notifier.dart';
-import 'package:omniscribe_client/data/repositories/config_repository.dart';
 import 'package:omniscribe_client/presentation/common/section_header.dart';
 import 'package:omniscribe_client/presentation/providers/provider_modal.dart';
 import 'package:omniscribe_client/presentation/shell/shell_state.dart';
@@ -55,7 +53,7 @@ void main() {
   });
 
   group('Settings - sub-tabs', () {
-    final subTabs = const [
+    const subTabs = [
       'General & Server',
       'OCR Pipeline',
       'Translation & Voice',
@@ -96,7 +94,7 @@ void main() {
       // General & Server tab — DPI sits in the OCR Pipeline tab, so we type
       // into the model field which is on General & Server).
       final modelField = find.byWidgetPredicate(
-        (w) => w is EditableText && w.controller?.text == 'deepseek-ocr-2',
+        (w) => w is EditableText && w.controller.text == 'deepseek-ocr-2',
       );
       expect(modelField, findsOneWidget);
 

@@ -67,9 +67,7 @@ def parse_page_range_with_total(spec: str, total_pages: int) -> list[int]:
         raise ValueError(f"Invalid page range syntax: '{spec}'")
     pages: set[int] = set()
     for start, end in ranges:
-        for p in range(start, end + 1):
-            if 1 <= p <= total_pages:
-                pages.add(p - 1)
+        pages.update(range(start - 1, min(end, total_pages)))
     return sorted(pages)
 
 

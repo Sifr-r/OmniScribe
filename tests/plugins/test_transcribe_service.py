@@ -309,3 +309,76 @@ def test_extract_model_ids_handles_openai_and_ollama() -> None:
     ]
     assert config_store.extract_model_ids_from_response(ollama) == ["llama3"]
     assert config_store.extract_model_ids_from_response(None) == []
+
+
+def test_resolve_engine_settings_guards_foreign_origin() -> None:
+    config = {
+        "transcription_api_base": "https://api.openai.com/v1",
+        "transcription_api_key": "sk-server-secret-key",
+    }
+    # 1. Matching origin attaches stored key
+    req_same = TranscribeRequest(
+        api_base="https://api.openai.com/v1/audio/transcriptions"
+    )
+    res_same = transcribe_service.resolve_engine_settings(req_same, config)
+    assert res_same["api_key"] == "sk-server-secret-key"
+
+    # 2. Foreign origin does NOT attach stored key
+    req_foreign = TranscribeRequest(api_base="https://attacker.com/v1")
+    res_foreign = transcribe_service.resolve_engine_settings(req_foreign, config)
+    assert res_foreign["api_key"] is None
+
+    # 3. Explicit request key is preserved on foreign origin
+    req_user_key = TranscribeRequest(
+        api_base="https://attacker.com/v1", api_key="sk-user-key"
+    )
+    res_user_key = transcribe_service.resolve_engine_settings(req_user_key, config)
+    assert res_user_key["api_key"] == "sk-user-key"
+
+
+async def test_discover_models_pins_connection(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, Any] = {}
+
+    async def _ssrf_check(url: str | None) -> Any:
+        return SimpleNamespace(allowed=True, resolved_ip="192.168.1.100")
+
+    class _CaptureClient:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            captured["transport"] = kwargs.get("transport")
+
+        async def __aenter__(self) -> _CaptureClient:
+            return self
+
+        async def __aexit__(self, *args: Any) -> None:
+            return None
+
+        async def get(self, url: str, headers: dict | None = None) -> Any:
+            captured.setdefault("urls", []).append(url)
+            captured.setdefault("headers", []).append(headers)
+
+            class _Resp:
+                status_code = 200
+
+                def json(self) -> dict[str, Any]:
+                    return {"data": [{"id": "discovered-model"}]}
+
+            return _Resp()
+
+    monkeypatch.setattr(config_store, "is_ssrf_target", _ssrf_check)
+    monkeypatch.setattr(config_store.httpx, "AsyncClient", _CaptureClient)
+
+    # 1. HTTPS uses pinned transport
+    models = await transcribe_service.discover_transcription_models(
+        "https://api.openai.com/v1", None
+    )
+    assert models == ["discovered-model"]
+    assert captured["transport"] is not None
+
+    # 2. Plain HTTP rewrites URL with resolved IP
+    captured.clear()
+    models = await transcribe_service.discover_transcription_models(
+        "http://my-host.internal:8000/v1", None
+    )
+    assert models == ["discovered-model"]
+    assert any("192.168.1.100:8000" in u for u in captured["urls"])
+    assert captured["headers"][0].get("Host") == "my-host.internal"

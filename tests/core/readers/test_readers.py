@@ -279,3 +279,107 @@ def test_render_synthetic_pdf() -> None:
     assert "Digital ingest" in page_text
     assert "Feature A" in page_text
     doc.close()
+
+
+def test_render_pdf_overflowing_text_paginates() -> None:
+    from omniscribe.core.document import DocumentBlock, DocumentPage, DocumentResult
+    from omniscribe.core.readers.pdf_renderer import render_pdf_from_document_result
+
+    # 150 lines of text to ensure it overflows an 842pt page
+    lines = [
+        f"Unique paragraph sentence number {i} with extra text." for i in range(150)
+    ]
+    full_text = "\n".join(lines)
+
+    block = DocumentBlock(
+        bbox=(0.0, 0.0, 1.0, 1.0),
+        text=full_text,
+        kind="paragraph",
+    )
+    page = DocumentPage(page_index=0, blocks=[block], width=595, height=842)
+    doc_result = DocumentResult(pages=[page])
+
+    pdf_bytes = render_pdf_from_document_result(doc_result)
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    try:
+        assert doc.page_count > 1, f"Expected multiple pages, got {doc.page_count}"
+        all_text = "\n".join(p.get_text() for p in doc)  # type: ignore[attr-defined]
+        assert "Unique paragraph sentence number 0" in all_text
+        assert "Unique paragraph sentence number 75" in all_text
+        assert "Unique paragraph sentence number 149" in all_text
+    finally:
+        doc.close()
+
+
+def test_render_tight_custom_bbox_preserves_all_text() -> None:
+    from omniscribe.core.document import DocumentBlock, DocumentPage, DocumentResult
+    from omniscribe.core.readers.pdf_renderer import render_pdf_from_document_result
+
+    text = "Line One Title\nLine Two Subtitle\nLine Three Body Content"
+    # A tight box that cannot hold 3 lines of 10.5pt font
+    block = DocumentBlock(
+        bbox=(0.1, 0.1, 0.2, 0.12),
+        text=text,
+        kind="paragraph",
+    )
+    page = DocumentPage(page_index=0, blocks=[block], width=595, height=842)
+    doc_result = DocumentResult(pages=[page])
+
+    pdf_bytes = render_pdf_from_document_result(doc_result)
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    try:
+        all_text = "\n".join(p.get_text() for p in doc)  # type: ignore[attr-defined]
+        assert "Line One Title" in all_text
+        assert "Line Two Subtitle" in all_text
+        assert "Line Three Body Content" in all_text
+    finally:
+        doc.close()
+
+
+def test_html_reader_formatted_table_cells() -> None:
+    html = """<!DOCTYPE html>
+<html>
+<body>
+<table>
+    <tr><th><b>Header 1</b></th><th><i>Header 2</i></th></tr>
+    <tr><td><b>Bold Cell</b> and <i>Italic</i></td><td><code>Code Cell</code></td></tr>
+</table>
+</body>
+</html>"""
+    reader = HtmlReader()
+    res = reader.read(html.encode("utf-8"), filename="table.html")
+    assert len(res.pages) == 1
+    # Only 1 block (the table block), NO leaked paragraph!
+    assert len(res.pages[0].blocks) == 1
+    assert res.pages[0].blocks[0].kind == "table"
+    assert res.tree is not None
+    assert len(res.tree.tables) == 1
+    tbl = res.tree.tables[0]
+    # Check cell text
+    assert tbl.cells[0][0].text == "Header 1"
+    assert tbl.cells[0][1].text == "Header 2"
+    assert tbl.cells[1][0].text == "Bold Cell and Italic"
+    assert tbl.cells[1][1].text == "Code Cell"
+
+
+def test_docx_reader_inline_page_break_splits_paragraph() -> None:
+    from docx.enum.text import WD_BREAK
+
+    doc = Document()
+    p = doc.add_paragraph()
+    p.add_run("Text before break.")
+    r_break = p.add_run()
+    r_break.add_break(WD_BREAK.PAGE)
+    p.add_run("Text after break.")
+
+    buf = io.BytesIO()
+    doc.save(buf)
+    docx_bytes = buf.getvalue()
+
+    reader = DocxReader()
+    res = reader.read(docx_bytes, filename="inline_break.docx")
+    assert len(res.pages) == 2
+    assert len(res.pages[0].blocks) == 1
+    assert res.pages[0].blocks[0].text == "Text before break."
+    assert len(res.pages[1].blocks) == 1
+    assert res.pages[1].blocks[0].text == "Text after break."

@@ -14,6 +14,7 @@ from __future__ import annotations
 import base64
 import io
 import json
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -121,7 +122,12 @@ class _StubGroundedBackend:
         self.warning_calls: list[tuple[int, BaseException]] = []
 
     async def ocr_document(
-        self, pdf_path: str, progress=None, on_warning=None
+        self,
+        pdf_path: str,
+        progress: Callable[[str, int, int, str], Awaitable[None]] | None = None,
+        on_warning: Callable[[int, BaseException], Awaitable[None]] | None = None,
+        *,
+        pages: str | None = None,
     ) -> GroundedResponse:
         self.called_with.append(pdf_path)
         if progress is not None:
@@ -216,7 +222,14 @@ async def test_grounded_path_propagates_failed_pages_to_pipeline(
             self.fail_pages = fail_pages
             self._counter = 0
 
-        async def ocr_document(self, pdf_path, progress=None, on_warning=None):
+        async def ocr_document(
+            self,
+            pdf_path: str,
+            progress: Callable[[str, int, int, str], Awaitable[None]] | None = None,
+            on_warning: Callable[[int, BaseException], Awaitable[None]] | None = None,
+            *,
+            pages: str | None = None,
+        ) -> GroundedResponse:
             self.called_with.append(pdf_path)
             for page_idx in range(3):
                 if page_idx in self.fail_pages:
@@ -350,7 +363,15 @@ class TestPromptedGroundedResilience:
         # Reach into the backend's own loop by providing a PDF whose page count
         # matches. Easier: subclass and override the rasterization step.
         class _Fixed(PromptedGroundedOCR):
-            async def ocr_document(self, pdf_path, progress=None, on_warning=None):
+            async def ocr_document(
+                self,
+                pdf_path: str,
+                progress: Callable[[str, int, int, str], Awaitable[None]] | None = None,
+                on_warning: Callable[[int, BaseException], Awaitable[None]]
+                | None = None,
+                *,
+                pages: str | None = None,
+            ) -> GroundedResponse:
                 # Copy the live method but seed page_imgs directly.
                 self_ = self
                 import asyncio as _a

@@ -107,8 +107,19 @@ class LexiconSchemaManager:
         if tables is None:
             tables = list(raw)
         existing = {str(t) for t in tables}
+        table = None
         if self.TABLE_NAME in existing:
-            table = db.open_table(self.TABLE_NAME)
+            try:
+                table = db.open_table(self.TABLE_NAME)
+            except Exception as exc:
+                logger.warning(
+                    "Failed to open existing table '%s' (%s); recreating",
+                    self.TABLE_NAME,
+                    exc,
+                )
+                table = db.create_table(
+                    self.TABLE_NAME, schema=self._schema, mode="overwrite"
+                )
         else:
             table = db.create_table(self.TABLE_NAME, schema=self._schema, mode="create")
         self.ensure_meta_and_compat(db, existing, embedding_model, clock)
@@ -139,26 +150,35 @@ class LexiconSchemaManager:
             "created_at": clock(),
         }
         if self.META_TABLE in existing_tables:
-            meta = db.open_table(self.META_TABLE)
-            rows = meta.to_arrow().to_pylist()
-            if rows:
-                stored_name = str(rows[0].get("model_name"))
-                stored_dim = int(rows[0].get("dim") or 0)
-                if stored_name != model_name or (stored_dim and stored_dim != dim):
-                    raise EmbeddingModelMismatchError(
-                        f"Lexicon was built with embedding model "
-                        f"'{stored_name}' (dim={stored_dim}) but is being opened "
-                        f"with '{model_name}' (dim={dim}). Vector spaces are "
-                        "incompatible; re-import the glossaries or unset "
-                        "OMNISCRIBE_EMBEDDING_MODEL."
-                    )
+            try:
+                meta = db.open_table(self.META_TABLE)
+                rows = meta.to_arrow().to_pylist()
+                if rows:
+                    stored_name = str(rows[0].get("model_name"))
+                    stored_dim = int(rows[0].get("dim") or 0)
+                    if stored_name != model_name or (stored_dim and stored_dim != dim):
+                        raise EmbeddingModelMismatchError(
+                            f"Lexicon was built with embedding model "
+                            f"'{stored_name}' (dim={stored_dim}) but is being opened "
+                            f"with '{model_name}' (dim={dim}). Vector spaces are "
+                            "incompatible; re-import the glossaries or unset "
+                            "OMNISCRIBE_EMBEDDING_MODEL."
+                        )
+                    return
+                meta.add([meta_row])
                 return
-            meta.add([meta_row])
-            return
+            except EmbeddingModelMismatchError:
+                raise
+            except Exception as exc:
+                logger.warning(
+                    "Failed to open existing meta table '%s' (%s); recreating",
+                    self.META_TABLE,
+                    exc,
+                )
         db.create_table(
             self.META_TABLE,
             pa.Table.from_pylist([meta_row], schema=meta_schema),
-            mode="create",
+            mode="overwrite" if self.META_TABLE in existing_tables else "create",
         )
 
     def ensure_columns(self, table: Any) -> None:

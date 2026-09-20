@@ -4,8 +4,7 @@ library;
 /// Pipeline processing strategy.
 enum PipelineMode {
   hybrid('hybrid', 'Hybrid (OCR + VLM)'),
-  grounded('grounded', 'Grounded BBox'),
-  groundedNative('grounded_native', 'Grounded Native');
+  grounded('grounded', 'Grounded BBox');
 
   const PipelineMode(this.value, [this.label = '']);
   final String value;

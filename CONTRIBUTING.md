@@ -89,7 +89,7 @@ review and possibly a design discussion before code lands.
 
 ```bash
 # One-time
-uv sync --extra web --extra preprocessing --extra dev
+uv sync --extra web --extra preprocessing
 pre-commit install
 
 # Day-to-day

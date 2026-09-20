@@ -111,20 +111,6 @@ def _load_optional_module(module_name: str) -> ModuleType:
         ) from exc
 
 
-def _load_attr(target: str) -> Any:
-    """Load an attribute from an optional module (e.g. 'fastapi:FastAPI')."""
-    module_name, _, attr_name = target.partition(":")
-    mod = _load_optional_module(module_name)
-    if not attr_name:
-        return mod
-    try:
-        return getattr(mod, attr_name)
-    except AttributeError as exc:
-        raise RuntimeError(
-            f"Cannot start omniscribe-server because `{target}` could not be resolved."
-        ) from exc
-
-
 # --- Harness boot ---
 
 
@@ -209,11 +195,20 @@ def create_app() -> ASGIApplication:
         allow_origins=cors_origins,
         allow_credentials=allow_credentials,
         allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-        allow_headers=["Authorization", "Content-Type", "X-Requested-With"],
+        allow_headers=[
+            "Authorization",
+            "Content-Type",
+            "X-Requested-With",
+            "X-Provider-Api-Key",
+            "X-Artifact-Token",
+            "X-Session-Token",
+        ],
         expose_headers=[
             "Content-Disposition",
             "X-Document-Trust",
             "X-Artifact-Token",
+            "X-Text-Artifact-Id",
+            "X-Text-Artifact-Token",
             "X-Document-Id",
             "X-Total-Pages",
             "X-Page-Width",
@@ -316,6 +311,7 @@ def create_app() -> ASGIApplication:
             headers=exc.headers,
         )
 
+    from omniscribe.core.ocr.exceptions import LLMBalanceError
     from omniscribe.core.ocr.resilience import CircuitOpenError
 
     @web_app.exception_handler(CircuitOpenError)
@@ -329,6 +325,19 @@ def create_app() -> ASGIApplication:
                 "detail": "Model circuit breaker is open; retry later",
             },
             headers={"Retry-After": str(seconds)},
+        )
+
+    @web_app.exception_handler(LLMBalanceError)
+    async def _llm_balance_handler(request: Any, exc: LLMBalanceError) -> Any:
+        # Upstream 402: the provider account is out of credits. Surfacing
+        # the provider's own message is actionable ("top up / switch
+        # provider"); a generic 5xx would hide it behind a circuit-open.
+        return responses.JSONResponse(
+            status_code=402,
+            content={
+                "error": "payment_required",
+                "detail": f"LLM provider reported insufficient balance: {exc}",
+            },
         )
 
     # M-3 audit fix: catch-all handler logs the traceback (so genuine
@@ -446,7 +455,6 @@ def _detect_bind_host() -> str:
     :func:`_validate_runtime_settings` so the non-loopback bind check
     sees the same value the operator actually launched the server with.
     """
-    """Detect the configured bind host from environment or command-line arguments."""
     for env_var in ("OMNISCRIBE_HOST", "UVICORN_HOST", "HOST"):
         val = os.environ.get(env_var)
         if val and val.strip():

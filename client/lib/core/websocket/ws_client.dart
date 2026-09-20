@@ -43,6 +43,8 @@ class WsClient {
       StreamController<WsEnvelope>.broadcast();
   final StreamController<WsConnectionState> _stateController =
       StreamController<WsConnectionState>.broadcast();
+  final StreamController<void> _closedController =
+      StreamController<void>.broadcast();
 
   WsConnectionState _state = WsConnectionState.disconnected;
   String? _currentChannelId;
@@ -53,6 +55,9 @@ class WsClient {
 
   Stream<WsEnvelope> get stream => _envelopeController.stream;
   Stream<WsConnectionState> get stateStream => _stateController.stream;
+
+  /// Emits when the active server connection ends without a local disconnect.
+  Stream<void> get closedStream => _closedController.stream;
   WsConnectionState get state => _state;
   bool get isConnected => _state == WsConnectionState.connected;
 
@@ -234,8 +239,12 @@ class WsClient {
   }
 
   void _onDone() {
+    _stopKeepAlive();
     if (!_manualDisconnect) {
       _setState(WsConnectionState.disconnected);
+      if (!_closedController.isClosed) {
+        _closedController.add(null);
+      }
       _scheduleReconnect();
     } else {
       _setState(WsConnectionState.closed);
@@ -307,5 +316,6 @@ class WsClient {
     _cleanupChannel();
     _envelopeController.close();
     _stateController.close();
+    _closedController.close();
   }
 }

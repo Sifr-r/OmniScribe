@@ -32,7 +32,12 @@ async def test_default_backend_is_memory() -> None:
     await ctx.dispose()
 
 
-async def test_sqlite_backend_registered(tmp_path: Path) -> None:
+async def test_sqlite_backend_registered(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        sb, "load_settings", lambda: RuntimeSettings(artifact_base_dir=tmp_path)
+    )
     ctx = Context()
     await ctx.plugin(
         sb.StateBackendPlugin(),

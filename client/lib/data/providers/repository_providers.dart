@@ -19,7 +19,7 @@ class ApiBaseUrlNotifier extends Notifier<String> {
   @override
   String build() => ApiConstants.defaultBaseUrl;
 
-  void set(String value) => state = value;
+  void set(String value) => state = ApiClient.validateBaseUrl(value.trim());
 }
 
 /// Base URL provider for the OmniScribe backend server.

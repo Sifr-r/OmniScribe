@@ -91,12 +91,22 @@ def test_dockerfile_pins_python_and_uv_installs_extras():
 
     # Uses ``omniscribe-server`` so the console script is on PATH.
     assert "omniscribe-server" in dockerfile
+    assert "ARG TARGETARCH" in dockerfile
+    assert "aarch64-unknown-linux-gnu" in dockerfile
+    assert (
+        'CMD ["omniscribe-server", "--host", "0.0.0.0", "--port", "8000"]' in dockerfile
+    )
 
 
 def test_compose_yaml_defines_exactly_api_and_redis_services():
     compose = yaml.safe_load(_read(ROOT / "compose.yaml"))
 
     services = compose["services"]
+    # The image binds 0.0.0.0: its startup guard requires an auth token,
+    # independently of the loopback-only host port mapping.
+    assert services["api"]["environment"]["OMNISCRIBE_AUTH_TOKEN"].startswith(
+        "${OMNISCRIBE_AUTH_TOKEN:?"
+    )
     assert set(services) == {"api", "redis"}, (
         "compose.yaml must define exactly the `api` and `redis` services — "
         "the Celery `worker` service was retired (async translation rides "

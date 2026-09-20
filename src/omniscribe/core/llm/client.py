@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 from typing import Any
+from urllib.parse import urlsplit
 
 from omniscribe.core.llm.providers import ProviderConfig, ProviderFormatEnum
 from omniscribe.core.ocr.exceptions import LLMCallError
@@ -16,11 +17,119 @@ from omniscribe.core.ocr.multi_format_client import complete_vlm_prompt
 logger = logging.getLogger(__name__)
 
 
+_EXPLICIT_PROVIDERS: dict[str, tuple[str, str, ProviderFormatEnum, str]] = {
+    "lmstudio": (
+        "lmstudio",
+        "LM Studio",
+        ProviderFormatEnum.OPENAI_COMPATIBLE,
+        "http://localhost:1234/v1",
+    ),
+    "ollama": (
+        "ollama",
+        "Ollama",
+        ProviderFormatEnum.OLLAMA_COMPATIBLE,
+        "http://localhost:11434",
+    ),
+    "anthropic": (
+        "anthropic",
+        "Anthropic",
+        ProviderFormatEnum.ANTHROPIC_COMPATIBLE,
+        "https://api.anthropic.com",
+    ),
+    "openai": (
+        "openai",
+        "OpenAI",
+        ProviderFormatEnum.OPENAI_COMPATIBLE,
+        "https://api.openai.com/v1",
+    ),
+    "openrouter": (
+        "openrouter",
+        "OpenRouter",
+        ProviderFormatEnum.OPENAI_COMPATIBLE,
+        "https://openrouter.ai/api/v1",
+    ),
+    "groq": (
+        "groq",
+        "Groq",
+        ProviderFormatEnum.OPENAI_COMPATIBLE,
+        "https://api.groq.com/openai/v1",
+    ),
+    "deepseek": (
+        "deepseek",
+        "DeepSeek",
+        ProviderFormatEnum.OPENAI_COMPATIBLE,
+        "https://api.deepseek.com/v1",
+    ),
+    "custom": (
+        "custom",
+        "Custom",
+        ProviderFormatEnum.OPENAI_COMPATIBLE,
+        "",
+    ),
+    ProviderFormatEnum.OPENAI_COMPATIBLE.value: (
+        "custom",
+        "Custom",
+        ProviderFormatEnum.OPENAI_COMPATIBLE,
+        "",
+    ),
+    ProviderFormatEnum.ANTHROPIC_COMPATIBLE.value: (
+        "anthropic",
+        "Anthropic",
+        ProviderFormatEnum.ANTHROPIC_COMPATIBLE,
+        "https://api.anthropic.com",
+    ),
+    ProviderFormatEnum.OLLAMA_COMPATIBLE.value: (
+        "ollama",
+        "Ollama",
+        ProviderFormatEnum.OLLAMA_COMPATIBLE,
+        "http://localhost:11434",
+    ),
+}
+
+
+# Explicit hostname -> provider lookup for ``_resolve_provider_config`` when the
+# caller supplies an ``api_base`` URL without an explicit provider.
+#
+# SECURITY: This mapping MUST stay an exact-equality dict lookup. Do NOT
+# replace it with ``endswith()``, ``in``, or regex matching. Substring
+# matching on hostnames would let a host like ``anthropic.com.attacker.tld``
+# or ``evil-anthropic.com`` be misclassified as the Anthropic provider,
+# routing credentials and traffic to an attacker-controlled endpoint.
+# Only the literal hostnames below are trusted; everything else falls
+# through to the ``custom`` provider branch.
+_PROVIDER_HOSTS: dict[str, tuple[str, str, ProviderFormatEnum]] = {
+    "anthropic.com": (
+        "anthropic",
+        "Anthropic",
+        ProviderFormatEnum.ANTHROPIC_COMPATIBLE,
+    ),
+    "api.anthropic.com": (
+        "anthropic",
+        "Anthropic",
+        ProviderFormatEnum.ANTHROPIC_COMPATIBLE,
+    ),
+    "openai.com": ("openai", "OpenAI", ProviderFormatEnum.OPENAI_COMPATIBLE),
+    "api.openai.com": ("openai", "OpenAI", ProviderFormatEnum.OPENAI_COMPATIBLE),
+    "openrouter.ai": ("openrouter", "OpenRouter", ProviderFormatEnum.OPENAI_COMPATIBLE),
+    "api.openrouter.ai": (
+        "openrouter",
+        "OpenRouter",
+        ProviderFormatEnum.OPENAI_COMPATIBLE,
+    ),
+    "groq.com": ("groq", "Groq", ProviderFormatEnum.OPENAI_COMPATIBLE),
+    "api.groq.com": ("groq", "Groq", ProviderFormatEnum.OPENAI_COMPATIBLE),
+    "deepseek.com": ("deepseek", "DeepSeek", ProviderFormatEnum.OPENAI_COMPATIBLE),
+    "api.deepseek.com": ("deepseek", "DeepSeek", ProviderFormatEnum.OPENAI_COMPATIBLE),
+}
+
+
 def _resolve_provider_config(
     provider_config: ProviderConfig | None,
     api_base: str | None,
     api_key: str | None,
     model: str | None,
+    *,
+    provider: str | ProviderFormatEnum | None = None,
 ) -> ProviderConfig:
     """Build a ``ProviderConfig`` for the in-process LLM call.
 
@@ -28,50 +137,70 @@ def _resolve_provider_config(
     ``ProviderManager`` before calling this module. Core never reaches
     upward into ``omniscribe.api`` to look up provider state.
 
-    If the caller passes an explicit ``api_base`` we construct a
-    one-shot OPENAI_COMPATIBLE config so the OCR pipeline can run
-    end-to-end without touching the API layer (tests, embedded
-    workflows, CLI use).
+    If ``provider`` is explicitly passed, it is mapped to a ``ProviderFormatEnum``
+    and ``ProviderConfig``.
 
-    If neither is provided we fail fast with ``LLMCallError`` — the
-    caller must pass ``provider_config`` or ``api_base``.
+    If the caller passes an explicit ``api_base`` we construct a
+    one-shot config so the OCR pipeline can run end-to-end without
+    touching the API layer (tests, embedded workflows, CLI use),
+    inferring provider format from hostname and port.
+
+    If neither is provided we fail fast with ``LLMCallError``.
     """
     if provider_config is not None:
         return provider_config
+
+    if provider is not None:
+        p_str = (
+            provider.value
+            if isinstance(provider, ProviderFormatEnum)
+            else str(provider).strip().lower()
+        )
+        if p_str in _EXPLICIT_PROVIDERS:
+            p_id, p_name, p_format, default_url = _EXPLICIT_PROVIDERS[p_str]
+        else:
+            p_id = p_str
+            p_name = p_str.title()
+            p_format = ProviderFormatEnum.OPENAI_COMPATIBLE
+            default_url = ""
+
+        effective_url = api_base or default_url
+        if not effective_url:
+            raise LLMCallError(f"Provider {provider!r} requires an `api_base` URL.")
+
+        return ProviderConfig(
+            id=p_id,
+            display_name=p_name,
+            format=p_format,
+            api_url=effective_url,
+            api_key=api_key,
+            models=[model] if model else [],
+        )
+
     if api_base:
-        base = api_base.lower()
-        if ":1234" in base:
+        parsed = urlsplit(api_base)
+        host = (parsed.hostname or "").lower()
+        port = parsed.port
+
+        if port == 1234:
             p_id = "lmstudio"
             p_name = "LM Studio"
             p_format = ProviderFormatEnum.OPENAI_COMPATIBLE
-        elif ":11434" in base:
+        elif port == 11434:
             p_id = "ollama"
             p_name = "Ollama"
             p_format = ProviderFormatEnum.OLLAMA_COMPATIBLE
-        elif "anthropic.com" in base:
-            p_id = "anthropic"
-            p_name = "Anthropic"
-            p_format = ProviderFormatEnum.ANTHROPIC_COMPATIBLE
-        elif "openai.com" in base:
-            p_id = "openai"
-            p_name = "OpenAI"
-            p_format = ProviderFormatEnum.OPENAI_COMPATIBLE
-        elif "openrouter.ai" in base:
-            p_id = "openrouter"
-            p_name = "OpenRouter"
-            p_format = ProviderFormatEnum.OPENAI_COMPATIBLE
-        elif "groq.com" in base:
-            p_id = "groq"
-            p_name = "Groq"
-            p_format = ProviderFormatEnum.OPENAI_COMPATIBLE
-        elif "deepseek.com" in base:
-            p_id = "deepseek"
-            p_name = "DeepSeek"
-            p_format = ProviderFormatEnum.OPENAI_COMPATIBLE
+        elif host in _PROVIDER_HOSTS:
+            # Explicit equality lookup against _PROVIDER_HOSTS — NOT a
+            # substring or endswith match. See security note on the
+            # _PROVIDER_HOSTS constant above.
+            p_id, p_name, p_format = _PROVIDER_HOSTS[host]
         else:
             p_id = "custom"
             p_name = "Custom"
             p_format = ProviderFormatEnum.OPENAI_COMPATIBLE
+
+        logger.info("Auto-detected provider %r from api_base hostname %r", p_id, host)
 
         return ProviderConfig(
             id=p_id,
@@ -81,6 +210,7 @@ def _resolve_provider_config(
             api_key=api_key,
             models=[model] if model else [],
         )
+
     raise LLMCallError(
         "call_llm / call_vlm requires either `provider_config` or `api_base`. "
         "Resolve the active provider at the API layer via ProviderManager "
@@ -192,6 +322,7 @@ async def call_vlm(
     model: str | None = None,
     api_base: str | None = None,
     api_key: str | None = None,
+    provider: str | None = None,
     temperature: float = 0.0,
     max_tokens: int = 4096,
     timeout: float | None = None,
@@ -200,7 +331,7 @@ async def call_vlm(
 ) -> str:
     """Make an asynchronous VLM call using active ProviderManager configuration or explicit settings."""
     provider_config = _resolve_provider_config(
-        provider_config, api_base, api_key, model
+        provider_config, api_base, api_key, model, provider=provider
     )
 
     return await complete_vlm_prompt(
@@ -220,6 +351,7 @@ async def call_llm(
     model: str | None = None,
     api_base: str | None = None,
     api_key: str | None = None,
+    provider: str | None = None,
     messages: list[dict[str, Any]] | None = None,
     prompt: str | None = None,
     image_b64: str | None = None,
@@ -244,7 +376,7 @@ async def call_llm(
     )
 
     provider_config = _resolve_provider_config(
-        provider_config, api_base, api_key, model
+        provider_config, api_base, api_key, model, provider=provider
     )
 
     return await complete_vlm_prompt(

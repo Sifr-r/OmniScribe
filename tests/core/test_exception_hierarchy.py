@@ -29,6 +29,8 @@ from omniscribe.core.errors import (
     SSRFBlockedError,
     TranslationUnavailableError,
     redact_details,
+    redact_exception,
+    sanitize_job_error,
 )
 
 
@@ -271,3 +273,57 @@ def test_empty_details_dict_treated_as_no_details() -> None:
     exc = OCRError("msg", details={})
     assert str(exc) == "msg"
     assert exc.details == {}
+
+
+def test_sanitize_job_error_core() -> None:
+    assert sanitize_job_error(None) is None
+    assert sanitize_job_error("") == ""
+    assert sanitize_job_error("Standard error message") == "Standard error message"
+    assert (
+        sanitize_job_error('Traceback:\n  File "x.py", line 1\nZeroDivisionError')
+        == "An internal processing error occurred."
+    )
+    assert (
+        sanitize_job_error("sqlite3.OperationalError: disk I/O error")
+        == "A storage error occurred."
+    )
+    assert (
+        sanitize_job_error("Failed with token=secret_val_12345")
+        == "Failed with token=[redacted]"
+    )
+    assert sanitize_job_error("Failed at /var/log/secret.log") == "Failed at [path]"
+
+
+def test_redact_exception() -> None:
+    # Empty message uses class name
+    assert redact_exception(RuntimeError()) == "RuntimeError"
+    assert redact_exception(ValueError("")) == "ValueError"
+
+    # Standard exception message
+    assert redact_exception(ValueError("Invalid page index")) == "Invalid page index"
+
+    # Traceback in exception
+    assert (
+        redact_exception(
+            Exception('Traceback (most recent call last):\n  File "a.py", line 1')
+        )
+        == "An internal processing error occurred."
+    )
+
+    # Database exception
+    assert (
+        redact_exception(Exception("sqlite3.IntegrityError: constraint failed"))
+        == "A storage error occurred."
+    )
+
+    # Secret redaction
+    assert (
+        redact_exception(Exception("Failed with api_key: secret-1234"))
+        == "Failed with api_key: [redacted]"
+    )
+
+    # File path scrubbing
+    assert (
+        redact_exception(Exception(r"Cannot read C:\Windows\System32\drivers.sys"))
+        == "Cannot read [path]"
+    )

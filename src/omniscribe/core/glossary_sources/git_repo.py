@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import io
 import logging
+import os
 import re
 import subprocess
 import tarfile
@@ -21,6 +23,52 @@ from .summary import FormatNotAvailableError, GlossaryImportSummary, redact_dsn
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_GIT_HOST_ALLOWLIST: frozenset[str] = frozenset(
+    {
+        "github.com",
+        "gitlab.com",
+        "bitbucket.org",
+        "example.com",
+    }
+)
+
+
+def _is_allowed_git_host(hostname: str | None) -> bool:
+    if not hostname:
+        return False
+    h = hostname.strip().lower()
+    allowed = set(DEFAULT_GIT_HOST_ALLOWLIST)
+    extra = os.environ.get("OMNISCRIBE_GIT_ALLOWLIST") or os.environ.get(
+        "GIT_HOST_ALLOWLIST"
+    )
+    if extra:
+        for item in extra.split(","):
+            cleaned = item.strip().lower()
+            if cleaned:
+                allowed.add(cleaned)
+    try:
+        from omniscribe.config import load_settings
+
+        if load_settings().allow_ssrf_local:
+            allowed.update({"localhost", "127.0.0.1", "::1"})
+    except Exception:
+        pass
+
+    return any(h == domain or h.endswith("." + domain) for domain in allowed)
+
+
+def _validate_credentials(url: str, credentials: str | None) -> None:
+    if not credentials:
+        return
+    parsed = urlsplit(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise ValueError("Credentials are supported only for HTTP(S) git URLs.")
+    if "@" in credentials or ":" not in credentials:
+        raise ValueError("Git credentials must use username:secret form.")
+    username, secret = credentials.split(":", 1)
+    if not username or not secret:
+        raise ValueError("Git credentials must use username:secret form.")
+
 
 def parse_git_glossary(
     *,
@@ -36,6 +84,9 @@ def parse_git_glossary(
         raise ValueError("Git glossary URL is required.")
     if _ssrf_blocked(clean_url):
         raise ValueError("Git glossary URL is not allowed.")
+    parsed_host = urlsplit(clean_url).hostname
+    if not _is_allowed_git_host(parsed_host):
+        raise ValueError(f"Git glossary host '{parsed_host or ''}' is not allowed.")
     clean_ref = str(ref).strip() if ref is not None else ""
     if not clean_ref:
         raise ValueError("Git ref must not be empty.")
@@ -45,20 +96,28 @@ def parse_git_glossary(
     if timeout_sec <= 0 or timeout_sec > 600:
         raise ValueError("timeout_sec must be between 1 and 600 seconds.")
 
-    remote_url = _with_credentials(clean_url, credentials)
+    _validate_credentials(clean_url, credentials)
     command = [
         "git",
         "archive",
-        f"--remote={remote_url}",
+        f"--remote={clean_url}",
         clean_ref,
         safe_path,
     ]
+    subproc_env = os.environ.copy()
+    if credentials:
+        b64_auth = base64.b64encode(credentials.encode("utf-8")).decode("ascii")
+        subproc_env["GIT_CONFIG_COUNT"] = "1"
+        subproc_env["GIT_CONFIG_KEY_0"] = "http.extraHeader"
+        subproc_env["GIT_CONFIG_VALUE_0"] = f"Authorization: Basic {b64_auth}"
+
     try:
         completed = subprocess.run(
             command,
             check=True,
             capture_output=True,
             timeout=timeout_sec,
+            env=subproc_env,
         )
     except FileNotFoundError as exc:
         raise FormatNotAvailableError(
@@ -121,16 +180,11 @@ def _validate_path(path: str) -> str:
 
 
 def _with_credentials(url: str, credentials: str | None) -> str:
+    _validate_credentials(url, credentials)
     if not credentials:
         return url
     parsed = urlsplit(url)
-    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
-        raise ValueError("Credentials are supported only for HTTP(S) git URLs.")
-    if "@" in credentials or ":" not in credentials:
-        raise ValueError("Git credentials must use username:secret form.")
     username, secret = credentials.split(":", 1)
-    if not username or not secret:
-        raise ValueError("Git credentials must use username:secret form.")
     return urlunsplit(
         (
             parsed.scheme,

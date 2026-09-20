@@ -87,7 +87,8 @@ class ApiClient {
 
   static String _assertBaseUrlIsTransportSafe(String url) {
     final parsed = Uri.tryParse(url);
-    if (parsed == null || (parsed.scheme != 'http' && parsed.scheme != 'https')) {
+    if (parsed == null || parsed.host.isEmpty || parsed.userInfo.isNotEmpty ||
+        (parsed.scheme != 'http' && parsed.scheme != 'https')) {
       throw ArgumentError(
         'api_base must be http(s); got $url',
       );
@@ -101,6 +102,8 @@ class ApiClient {
     }
     return url;
   }
+
+  static String validateBaseUrl(String url) => _assertBaseUrlIsTransportSafe(url);
 
   void setAuthToken(String? token) {
     _staticAuthToken = token;
@@ -501,6 +504,12 @@ class ApiClient {
           error: error ?? 'unauthorized',
           detail: detail,
         ),
+    402: (message, error, detail) => PaymentRequiredException(
+          message: message,
+          statusCode: 402,
+          error: error ?? 'payment_required',
+          detail: detail,
+        ),
     403: (message, error, detail) => ForbiddenException(
           message: message,
           error: error ?? 'forbidden',
@@ -570,10 +579,32 @@ class ApiClient {
           : (rawDetail != null ? jsonEncode(rawDetail) : null);
       return (errorType, detailMessage, rawDetail);
     }
+    // Byte-response routes (ResponseType.bytes) deliver error bodies as raw
+    // bytes, so without decoding, the server's {error, detail} envelope is
+    // lost and callers only see dio's generic exception text.
+    if (data is List<int>) {
+      return _extractErrorDetails(_decodeBodyBytes(data));
+    }
     if (data is String) {
       return (null, data, null);
     }
     return (null, null, null);
+  }
+
+  /// Decodes an error body received as bytes into a Map (JSON) or String,
+  /// or null when the bytes are not valid UTF-8 / are empty.
+  static dynamic _decodeBodyBytes(List<int> bytes) {
+    try {
+      final text = utf8.decode(bytes);
+      if (text.isEmpty) return null;
+      try {
+        return jsonDecode(text);
+      } on FormatException {
+        return text;
+      }
+    } on FormatException {
+      return null;
+    }
   }
 
   ApiException _translateDioError(DioException error) {

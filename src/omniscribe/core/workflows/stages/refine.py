@@ -10,6 +10,7 @@ from PIL import Image
 from omniscribe.core.document import BBox
 from omniscribe.core.imaging.utils import decode_base64_image
 from omniscribe.core.ocr import OCRProcessor
+from omniscribe.core.ocr.exceptions import LLMBalanceError
 from omniscribe.core.ocr.resilience import CircuitOpenError
 from omniscribe.core.workflows.base import (
     CancelCheck,
@@ -147,13 +148,19 @@ class HybridRefiner:
                 [safe_bbox for _, _, safe_bbox in validated],
             )
 
+        is_cancelled = False
+
         async def refine_one(
             p_num: int, idx: int, bbox: BBox, crop_b64: str | None
         ) -> tuple[int, int, str]:
+            if is_cancelled:
+                raise OCRCancelled("Refine cancelled before processing box.")
             try:
                 if crop_b64 is None:
                     return p_num, idx, ""
                 async with semaphore:
+                    if is_cancelled:
+                        raise OCRCancelled("Refine cancelled before processing box.")
                     text = await self.ocr_processor.perform_ocr_on_crop(
                         crop_b64,
                         self_correction=self_correction,
@@ -162,6 +169,8 @@ class HybridRefiner:
                     )
                 return p_num, idx, text
             except CircuitOpenError:
+                raise
+            except LLMBalanceError:
                 raise
             except OCRCancelled:
                 raise
@@ -194,6 +203,7 @@ class HybridRefiner:
                     completed += 1
 
                     if cancel_check is not None and cancel_check():
+                        is_cancelled = True
                         raise OCRCancelled(
                             f"OCR cancelled after refine box {completed}/{total}."
                         )
@@ -208,6 +218,8 @@ class HybridRefiner:
         except* OCRCancelled as eg:
             raise eg.exceptions[0] from None
         except* CircuitOpenError as eg:
+            raise eg.exceptions[0] from None
+        except* LLMBalanceError as eg:
             raise eg.exceptions[0] from None
 
         for p_num, idxs in refined_indices.items():

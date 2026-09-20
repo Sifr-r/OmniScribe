@@ -16,6 +16,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Awaitable, Callable
 from typing import Any
+from urllib.parse import urlsplit
 
 from fastapi import HTTPException
 
@@ -29,7 +30,11 @@ from omniscribe.core.imaging.page_preprocess import (
 from omniscribe.core.workflows.repair import RepairOptions
 from omniscribe.pipeline import OCRPipeline
 from omniscribe.plugins.ocr.schemas import OCRRequest
-from omniscribe.utils.security import check_ssrf_target_sync
+from omniscribe.utils.security import (
+    _rewrite_url_with_resolved_ip,
+    check_ssrf_target_sync,
+    is_same_origin,
+)
 
 _LOGGER = logging.getLogger("omniscribe.plugins.ocr.bridge")
 
@@ -53,16 +58,27 @@ def build_pipeline(
         build_document_processors,
     )
 
-    if request.api_base and request.api_base.strip():
-        check = check_ssrf_target_sync(request.api_base.strip())
+    clean_base = (request.api_base or "").strip()
+    resolved_ip: str | None = None
+    if clean_base:
+        check = check_ssrf_target_sync(clean_base)
         if not check.allowed:
             raise HTTPException(
                 status_code=400,
                 detail=f"Invalid api_base URL (SSRF blocked: {check.reason})",
             )
+        resolved_ip = check.resolved_ip
+        if not is_same_origin(clean_base, settings.llm_api_base):
+            api_key = (request.api_key or "").strip()
+        else:
+            api_key = (request.api_key or settings.llm_api_key).strip()
+        api_base = clean_base
+        if urlsplit(api_base).scheme.lower() == "http" and resolved_ip:
+            api_base = _rewrite_url_with_resolved_ip(api_base, resolved_ip)
+    else:
+        api_base = settings.llm_api_base.strip()
+        api_key = (request.api_key or settings.llm_api_key).strip()
 
-    api_base = (request.api_base or settings.llm_api_base).strip()
-    api_key = (request.api_key or settings.llm_api_key).strip()
     model = (request.model or settings.llm_model).strip()
     processors = build_document_processors(request.document_processors)
 
@@ -71,8 +87,9 @@ def build_pipeline(
             api_base=api_base,
             api_key=api_key,
             model=model,
-            max_image_dim=1024,
-            concurrency=1,
+            max_image_dim=request.max_image_dim or settings.ocr_max_image_dim,
+            concurrency=request.concurrency or settings.ocr_concurrency,
+            dpi=request.dpi or settings.ocr_dpi,
         )
         return OCRPipeline(
             pdf_handler=PDFHandler(),
@@ -124,6 +141,10 @@ def resolve_run_kwargs(
         )
 
     kwargs: dict[str, Any] = {
+        "dpi": request.dpi or settings.ocr_dpi,
+        "concurrency": request.concurrency or settings.ocr_concurrency,
+        "dense_threshold": request.dense_threshold or settings.ocr_dense_threshold,
+        "max_image_dim": request.max_image_dim or settings.ocr_max_image_dim,
         "pages": request.pages,
         "dense_mode": request.dense_mode,
         "spellcheck": spellcheck,

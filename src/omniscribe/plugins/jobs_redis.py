@@ -6,6 +6,7 @@ from :mod:`omniscribe.plugins.jobs`. Completes RFC 003 §12 and RFC 004 §4 R3.
 Data Model:
 - ``omniscribe:jobs:queue`` (ZSET: score = timestamp) for pending jobs.
 - ``omniscribe:jobs:active`` (ZSET: score = claim_time + visibility_timeout) for claimed jobs.
+- ``omniscribe:jobs:lease:{id}`` (STRING) identifies the worker that owns a claim.
 - ``omniscribe:jobs:payload:{id}`` (STRING JSON) for serialized job payload.
 - ``omniscribe:jobs:heartbeat:{worker_id}`` (STRING with TTL) for worker liveness.
 - ``omniscribe:jobs:attempts:{id}`` (STRING counter) for retry attempts.
@@ -40,12 +41,14 @@ from omniscribe.plugins.state_backend import (
     JobRecord,
     StateBackend,
 )
+from omniscribe.utils.security import redact_redis_url
 
 _LOGGER = logging.getLogger("omniscribe.plugins.jobs_redis")
 
 #: Redis key names and prefixes.
 KEY_QUEUE = "omniscribe:jobs:queue"
 KEY_ACTIVE = "omniscribe:jobs:active"
+KEY_LEASE_PREFIX = "omniscribe:jobs:lease:"
 KEY_PAYLOAD_PREFIX = "omniscribe:jobs:payload:"
 KEY_HEARTBEAT_PREFIX = "omniscribe:jobs:heartbeat:"
 KEY_ATTEMPTS_PREFIX = "omniscribe:jobs:attempts:"
@@ -67,6 +70,8 @@ local cancelled_key = KEYS[3]
 local active_score = tonumber(ARGV[1])
 local job_prefix = ARGV[2]
 local payload_prefix = ARGV[3]
+local lease_prefix = ARGV[4]
+local lease_owner = ARGV[5]
 
 while true do
     local items = redis.call('ZRANGE', queue_key, 0, 0)
@@ -94,12 +99,84 @@ while true do
 
     if not is_cancelled then
         redis.call('ZADD', active_key, active_score, job_id)
+        if lease_owner ~= '' then
+            redis.call('SET', lease_prefix .. job_id, lease_owner)
+        else
+            redis.call('DEL', lease_prefix .. job_id)
+        end
         local payload_raw = redis.call('GET', payload_prefix .. job_id)
         return {job_id, payload_raw or ''}
     else
         redis.call('DEL', payload_prefix .. job_id)
     end
 end
+"""
+
+#: Extends a lease only when the caller still owns the current claim. A worker
+#: that wakes after recovery must not revive or finish a newer worker's claim.
+_RENEW_LEASE_LUA = """
+local active_key = KEYS[1]
+local lease_key = KEYS[2]
+local job_id = ARGV[1]
+local owner = ARGV[2]
+local active_score = tonumber(ARGV[3])
+
+if redis.call('GET', lease_key) ~= owner then
+    return 0
+end
+if not redis.call('ZSCORE', active_key, job_id) then
+    return 0
+end
+redis.call('ZADD', active_key, active_score, job_id)
+return 1
+"""
+
+#: Removes an active lease only for its owner, preventing a late worker from
+#: deleting the payload of a recovered claim.
+_FINISH_LEASE_LUA = """
+local active_key = KEYS[1]
+local lease_key = KEYS[2]
+local payload_key = KEYS[3]
+local attempts_key = KEYS[4]
+local owner = ARGV[1]
+
+if redis.call('GET', lease_key) ~= owner then
+    return 0
+end
+redis.call('ZREM', active_key, ARGV[2])
+redis.call('DEL', lease_key)
+redis.call('DEL', payload_key)
+redis.call('DEL', attempts_key)
+return 1
+"""
+
+#: Recovers a lease only when it is still expired at the point of mutation.
+_RECOVER_STALE_JOB_LUA = """
+local active_key = KEYS[1]
+local queue_key = KEYS[2]
+local lease_key = KEYS[3]
+local payload_key = KEYS[4]
+local attempts_key = KEYS[5]
+local job_id = ARGV[1]
+local now = tonumber(ARGV[2])
+local max_retries = tonumber(ARGV[3])
+
+local score = redis.call('ZSCORE', active_key, job_id)
+if not score or tonumber(score) > now then
+    return ''
+end
+if redis.call('ZREM', active_key, job_id) == 0 then
+    return ''
+end
+redis.call('DEL', lease_key)
+local attempts = redis.call('INCR', attempts_key)
+if attempts > max_retries then
+    redis.call('DEL', payload_key)
+    redis.call('DEL', attempts_key)
+    return 'failed'
+end
+redis.call('ZADD', queue_key, now, job_id)
+return 'requeued'
 """
 
 
@@ -110,7 +187,7 @@ def _decode_str(val: Any) -> str:
     return str(val)
 
 
-def serialize_payload(payload: Any) -> str:
+def serialize_payload(payload: Any, *, job_id: str = "") -> str:
     """Serialize an arbitrary job payload into a JSON envelope.
 
     Handles OCR payloads, translation payloads, glossary payloads,
@@ -124,6 +201,7 @@ def serialize_payload(payload: Any) -> str:
             {
                 "__type__": "ocr",
                 "submission_id": getattr(payload, "submission_id", ""),
+                "job_id": job_id or getattr(payload, "job_id", ""),
                 "input_path": str(getattr(payload, "input_path", "")),
                 "filename": getattr(payload, "filename", ""),
                 "request": req_dict,
@@ -138,6 +216,7 @@ def serialize_payload(payload: Any) -> str:
             {
                 "__type__": "translate",
                 "submission_id": getattr(payload, "submission_id", ""),
+                "job_id": job_id or getattr(payload, "job_id", ""),
                 "request": req_dict,
             }
         )
@@ -206,6 +285,7 @@ def deserialize_payload(raw_json: str) -> Any:
             input_path=Path(envelope.get("input_path", "")),
             filename=envelope.get("filename", ""),
             request=OCRRequest(**envelope.get("request", {})),
+            job_id=envelope.get("job_id", ""),
         )
 
     if payload_type == "translate":
@@ -214,6 +294,7 @@ def deserialize_payload(raw_json: str) -> Any:
 
         return _TranslatePayload(
             submission_id=envelope.get("submission_id", ""),
+            job_id=envelope.get("job_id", ""),
             request=AsyncTranslationRequest(**envelope.get("request", {})),
         )
 
@@ -292,7 +373,7 @@ class RedisJobQueue:
             await self._redis.ping()
         except Exception as exc:
             raise RuntimeError(
-                f"Redis reachable check failed at {self._redis_url}: {exc}"
+                f"Redis reachable check failed at {redact_redis_url(self._redis_url)}: {exc}"
             ) from exc
 
         # Pre-load Lua claim script
@@ -371,13 +452,17 @@ class RedisJobQueue:
         )
 
         # 2. Store payload and push to queue ZSET
-        payload_json = serialize_payload(request).encode("utf-8")
+        payload_json = serialize_payload(request, job_id=job_id).encode("utf-8")
         payload_key = f"{KEY_PAYLOAD_PREFIX}{job_id}"
 
-        async with self._client.pipeline(transaction=True) as pipe:
-            pipe.set(payload_key, payload_json)
-            pipe.zadd(KEY_QUEUE, {job_id: now})
-            await pipe.execute()
+        try:
+            async with self._client.pipeline(transaction=True) as pipe:
+                pipe.set(payload_key, payload_json)
+                pipe.zadd(KEY_QUEUE, {job_id: now})
+                await pipe.execute()
+        except Exception:
+            await self._backend.delete_job(job_id)
+            raise
 
         # 3. Emit JobQueued event
         await self._ctx.emit(JobQueued(job_id=job_id))
@@ -427,31 +512,33 @@ class RedisJobQueue:
         return await self._backend.list_jobs(limit=limit, offset=offset)
 
     async def clear(self) -> int:
-        """Clear all jobs from queue, active set, payloads, and StateBackend."""
+        """Clear only terminal jobs from StateBackend and their payload keys."""
         if self._redis is None:
             await self.open()
 
-        count = await self._backend.clear_jobs()
-
-        # Delete all queue data structures
-        async with self._client.pipeline(transaction=True) as pipe:
-            pipe.delete(KEY_QUEUE)
-            pipe.delete(KEY_ACTIVE)
-            pipe.delete(KEY_CANCELLED_SET)
-            await pipe.execute()
-
-        # Clean up payloads via scan
-        cursor = 0
+        all_jobs: list[JobRecord] = []
+        offset = 0
         while True:
-            cursor, keys = await self._client.scan(
-                cursor, match=f"{KEY_PAYLOAD_PREFIX}*", count=100
-            )
-            if keys:
-                await self._client.delete(*keys)
-            if cursor == 0:
+            batch = await self._backend.list_jobs(limit=100, offset=offset)
+            if not batch:
                 break
+            all_jobs.extend(batch)
+            offset += len(batch)
 
-        self._cancelled.clear()
+        terminal_statuses = _TERMINAL_STATUSES | {"failed"}
+        count = 0
+        async with self._client.pipeline(transaction=True) as pipe:
+            for job in all_jobs:
+                if job.status in terminal_statuses:
+                    await self._backend.delete_job(job.job_id)
+                    pipe.delete(f"{KEY_PAYLOAD_PREFIX}{job.job_id}")
+                    pipe.delete(f"{KEY_LEASE_PREFIX}{job.job_id}")
+                    pipe.srem(KEY_CANCELLED_SET, job.job_id)
+                    self._cancelled.discard(job.job_id)
+                    count += 1
+            if count > 0:
+                await pipe.execute()
+
         return count
 
     # -- JobQueueProtocol aliases ----------------------------------------------
@@ -494,7 +581,13 @@ class RedisJobQueue:
             try:
                 result = await claim_script(
                     keys=[KEY_QUEUE, KEY_ACTIVE, KEY_CANCELLED_SET],
-                    args=[active_score, job_prefix, KEY_PAYLOAD_PREFIX],
+                    args=[
+                        active_score,
+                        job_prefix,
+                        KEY_PAYLOAD_PREFIX,
+                        KEY_LEASE_PREFIX,
+                        worker_id,
+                    ],
                 )
             except Exception as exc:
                 _LOGGER.warning(
@@ -513,12 +606,16 @@ class RedisJobQueue:
                     active_score,
                     job_prefix,
                     KEY_PAYLOAD_PREFIX,
+                    KEY_LEASE_PREFIX,
+                    worker_id,
                 )
             except Exception as exc:
                 _LOGGER.debug(
                     "Direct Lua eval failed in claim (%s); falling back to WATCH", exc
                 )
-                return await self._claim_watch(active_score=active_score)
+                return await self._claim_watch(
+                    active_score=active_score, worker_id=worker_id
+                )
 
         if not result or not isinstance(result, (list, tuple)) or len(result) < 2:
             return None
@@ -528,7 +625,11 @@ class RedisJobQueue:
 
         # Double check cancelled status
         if self.is_cancelled(job_id):
-            await self.fail(job_id, error="Job was cancelled")
+            await self.fail(
+                job_id,
+                error="Job was cancelled",
+                lease_owner=worker_id or None,
+            )
             return None
 
         payload = deserialize_payload(payload_raw)
@@ -538,12 +639,13 @@ class RedisJobQueue:
         self,
         *,
         active_score: float,
+        worker_id: str,
     ) -> tuple[str, Any] | None:
         """WATCH/MULTI/EXEC fallback for atomic job claim when Lua is unavailable."""
         while not self._closed:
             try:
                 async with self._client.pipeline() as pipe:
-                    await pipe.watch(KEY_QUEUE, KEY_CANCELLED_SET)
+                    await pipe.watch(KEY_QUEUE, KEY_CANCELLED_SET, KEY_ACTIVE)
                     items = await self._client.zrange(KEY_QUEUE, 0, 0)
                     if not items:
                         await pipe.unwatch()
@@ -585,6 +687,11 @@ class RedisJobQueue:
                     pipe.multi()
                     pipe.zrem(KEY_QUEUE, raw_jid)
                     pipe.zadd(KEY_ACTIVE, {job_id: active_score})
+                    lease_key = f"{KEY_LEASE_PREFIX}{job_id}"
+                    if worker_id:
+                        pipe.set(lease_key, worker_id)
+                    else:
+                        pipe.delete(lease_key)
                     await pipe.execute()
 
                     payload = (
@@ -601,25 +708,121 @@ class RedisJobQueue:
                 return None
         return None
 
-    async def complete(self, job_id: str) -> None:
+    async def renew_lease(
+        self, job_id: str, lease_owner: str, visibility_timeout: float
+    ) -> bool:
+        """Extend one active claim, returning ``False`` after ownership changes."""
+        if self._redis is None or not lease_owner or visibility_timeout <= 0:
+            return False
+        active_score = time.time() + visibility_timeout
+        lease_key = f"{KEY_LEASE_PREFIX}{job_id}"
+        try:
+            result = await self._client.eval(
+                _RENEW_LEASE_LUA,
+                2,
+                KEY_ACTIVE,
+                lease_key,
+                job_id,
+                lease_owner,
+                active_score,
+            )
+            return bool(int(result))
+        except Exception as exc:
+            _LOGGER.debug("Lease renewal Lua unavailable (%s); using WATCH", exc)
+
+        while not self._closed:
+            try:
+                async with self._client.pipeline() as pipe:
+                    await pipe.watch(KEY_ACTIVE, lease_key)
+                    owner = await self._client.get(lease_key)
+                    score = await self._client.zscore(KEY_ACTIVE, job_id)
+                    if _decode_str(owner or "") != lease_owner or score is None:
+                        await pipe.unwatch()
+                        return False
+                    pipe.multi()
+                    pipe.zadd(KEY_ACTIVE, {job_id: active_score})
+                    await pipe.execute()
+                    return True
+            except Exception as exc:
+                if "WatchError" in exc.__class__.__name__:
+                    continue
+                _LOGGER.warning("Lease renewal fallback failed for %s: %s", job_id, exc)
+                return False
+        return False
+
+    async def owns_lease(self, job_id: str, lease_owner: str) -> bool:
+        """Return whether ``lease_owner`` still owns ``job_id``'s active lease."""
+        if self._redis is None or not lease_owner:
+            return False
+        return (
+            _decode_str(await self._client.get(f"{KEY_LEASE_PREFIX}{job_id}") or "")
+            == lease_owner
+        )
+
+    async def _finish(self, job_id: str, lease_owner: str | None) -> bool:
+        if not lease_owner:
+            async with self._client.pipeline(transaction=True) as pipe:
+                pipe.zrem(KEY_ACTIVE, job_id)
+                pipe.delete(f"{KEY_LEASE_PREFIX}{job_id}")
+                pipe.delete(f"{KEY_PAYLOAD_PREFIX}{job_id}")
+                pipe.delete(f"{KEY_ATTEMPTS_PREFIX}{job_id}")
+                await pipe.execute()
+            return True
+        lease_key = f"{KEY_LEASE_PREFIX}{job_id}"
+        payload_key = f"{KEY_PAYLOAD_PREFIX}{job_id}"
+        attempts_key = f"{KEY_ATTEMPTS_PREFIX}{job_id}"
+        try:
+            result = await self._client.eval(
+                _FINISH_LEASE_LUA,
+                4,
+                KEY_ACTIVE,
+                lease_key,
+                payload_key,
+                attempts_key,
+                lease_owner,
+                job_id,
+            )
+            return bool(int(result))
+        except Exception as exc:
+            _LOGGER.debug("Lease finish Lua unavailable (%s); using WATCH", exc)
+
+        while not self._closed:
+            try:
+                async with self._client.pipeline() as pipe:
+                    await pipe.watch(KEY_ACTIVE, lease_key)
+                    if (
+                        _decode_str(await self._client.get(lease_key) or "")
+                        != lease_owner
+                    ):
+                        await pipe.unwatch()
+                        return False
+                    pipe.multi()
+                    pipe.zrem(KEY_ACTIVE, job_id)
+                    pipe.delete(lease_key)
+                    pipe.delete(payload_key)
+                    pipe.delete(attempts_key)
+                    await pipe.execute()
+                    return True
+            except Exception as exc:
+                if "WatchError" in exc.__class__.__name__:
+                    continue
+                _LOGGER.warning("Lease finish fallback failed for %s: %s", job_id, exc)
+                return False
+        return False
+
+    async def complete(self, job_id: str, *, lease_owner: str | None = None) -> bool:
         """Mark job complete: remove from active set and delete payload."""
         if self._redis is None:
-            return
-        async with self._client.pipeline(transaction=True) as pipe:
-            pipe.zrem(KEY_ACTIVE, job_id)
-            pipe.delete(f"{KEY_PAYLOAD_PREFIX}{job_id}")
-            pipe.delete(f"{KEY_ATTEMPTS_PREFIX}{job_id}")
-            await pipe.execute()
+            return False
+        return await self._finish(job_id, lease_owner)
 
-    async def fail(self, job_id: str, error: str = "") -> None:
+    async def fail(
+        self, job_id: str, error: str = "", *, lease_owner: str | None = None
+    ) -> bool:
         """Mark job failed: remove from active set and delete payload."""
         if self._redis is None:
-            return
-        async with self._client.pipeline(transaction=True) as pipe:
-            pipe.zrem(KEY_ACTIVE, job_id)
-            pipe.delete(f"{KEY_PAYLOAD_PREFIX}{job_id}")
-            pipe.delete(f"{KEY_ATTEMPTS_PREFIX}{job_id}")
-            await pipe.execute()
+            return False
+        return await self._finish(job_id, lease_owner)
 
     async def requeue(self, job_id: str) -> None:
         """Requeue an active job back into the pending queue (e.g. on worker drain)."""
@@ -664,47 +867,84 @@ class RedisJobQueue:
         recovered: list[str] = []
         for raw_id in expired_ids:
             jid = _decode_str(raw_id)
-            # Increment attempts
-            attempts = await self._client.incr(f"{KEY_ATTEMPTS_PREFIX}{jid}")
-            if attempts > max_retries:
-                # Exceeded maximum retry threshold: fail the job
-                async with self._client.pipeline(transaction=True) as pipe:
-                    pipe.zrem(KEY_ACTIVE, jid)
-                    pipe.delete(f"{KEY_PAYLOAD_PREFIX}{jid}")
-                    pipe.delete(f"{KEY_ATTEMPTS_PREFIX}{jid}")
-                    await pipe.execute()
-
-                record = await self._backend.get_job(jid)
+            outcome = await self._recover_expired_job(
+                jid, current_time=current_time, max_retries=max_retries
+            )
+            if not outcome:
+                continue
+            now = time.time()
+            record = await self._backend.get_job(jid)
+            if outcome == "failed":
                 err_msg = (
                     f"Visibility timeout exceeded ({max_retries} attempts exhausted)"
                 )
                 if record is not None and record.status not in _TERMINAL_STATUSES:
                     await self._backend.upsert_job(
-                        replace(
-                            record,
-                            status="error",
-                            error=err_msg,
-                            updated_at=time.time(),
-                        )
+                        replace(record, status="error", error=err_msg, updated_at=now)
                     )
                 await self._ctx.emit(JobFailed(job_id=jid, error=err_msg))
-                recovered.append(jid)
             else:
-                # Requeue job
-                async with self._client.pipeline(transaction=True) as pipe:
-                    pipe.zrem(KEY_ACTIVE, jid)
-                    pipe.zadd(KEY_QUEUE, {jid: time.time()})
-                    await pipe.execute()
-
-                record = await self._backend.get_job(jid)
                 if record is not None and record.status not in _TERMINAL_STATUSES:
                     await self._backend.upsert_job(
-                        replace(record, status="queued", updated_at=time.time())
+                        replace(record, status="queued", updated_at=now)
                     )
                 await self._ctx.emit(JobQueued(job_id=jid))
-                recovered.append(jid)
+            recovered.append(jid)
 
         return recovered
+
+    async def _recover_expired_job(
+        self, job_id: str, *, current_time: float, max_retries: int
+    ) -> str:
+        """Atomically recover ``job_id`` if its active lease remains expired."""
+        lease_key = f"{KEY_LEASE_PREFIX}{job_id}"
+        payload_key = f"{KEY_PAYLOAD_PREFIX}{job_id}"
+        attempts_key = f"{KEY_ATTEMPTS_PREFIX}{job_id}"
+        try:
+            result = await self._client.eval(
+                _RECOVER_STALE_JOB_LUA,
+                5,
+                KEY_ACTIVE,
+                KEY_QUEUE,
+                lease_key,
+                payload_key,
+                attempts_key,
+                job_id,
+                current_time,
+                max_retries,
+            )
+            return _decode_str(result) if result else ""
+        except Exception as exc:
+            _LOGGER.debug("Recovery Lua unavailable (%s); using WATCH", exc)
+
+        while not self._closed:
+            try:
+                async with self._client.pipeline() as pipe:
+                    await pipe.watch(KEY_ACTIVE, lease_key)
+                    score = await self._client.zscore(KEY_ACTIVE, job_id)
+                    if score is None or float(score) > current_time:
+                        await pipe.unwatch()
+                        return ""
+                    attempts_raw = await self._client.get(attempts_key)
+                    attempts = int(_decode_str(attempts_raw or "0")) + 1
+                    outcome = "failed" if attempts > max_retries else "requeued"
+                    pipe.multi()
+                    pipe.zrem(KEY_ACTIVE, job_id)
+                    pipe.delete(lease_key)
+                    pipe.incr(attempts_key)
+                    if outcome == "failed":
+                        pipe.delete(payload_key)
+                        pipe.delete(attempts_key)
+                    else:
+                        pipe.zadd(KEY_QUEUE, {job_id: current_time})
+                    await pipe.execute()
+                    return outcome
+            except Exception as exc:
+                if "WatchError" in exc.__class__.__name__:
+                    continue
+                _LOGGER.warning("Recovery fallback failed for %s: %s", job_id, exc)
+                return ""
+        return ""
 
     # -- Internal pub/sub listener --------------------------------------------
 
@@ -740,6 +980,7 @@ __all__ = [
     "KEY_CANCELLED_SET",
     "KEY_CONTROL_CHANNEL",
     "KEY_HEARTBEAT_PREFIX",
+    "KEY_LEASE_PREFIX",
     "KEY_PAYLOAD_PREFIX",
     "KEY_QUEUE",
     "RedisJobQueue",

@@ -11,13 +11,18 @@ from __future__ import annotations
 
 import logging
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 
 from omniscribe.plugins.transcribe.schemas import (
     TranscriptionConfigResponse,
 )
-from omniscribe.utils.security import is_ssrf_target
+from omniscribe.utils.security import (
+    _PinnedIPTransport,
+    _rewrite_url_with_resolved_ip,
+    is_ssrf_target,
+)
 
 _LOGGER = logging.getLogger("omniscribe.plugins.transcribe")
 
@@ -137,8 +142,11 @@ async def discover_transcription_models(
     """
     fallback = list(TRANSCRIPTION_FALLBACK_MODELS)
 
-    if not (await is_ssrf_target(api_base)).allowed:
+    ssrf_check = await is_ssrf_target(api_base)
+    if not ssrf_check.allowed:
         return fallback
+
+    resolved_ip = getattr(ssrf_check, "resolved_ip", None)
 
     headers: dict[str, str] = {}
     if api_key and api_key != "lm-studio":
@@ -153,8 +161,24 @@ async def discover_transcription_models(
         candidate_urls.append(f"{base}/models")
     candidate_urls.append(f"{base}/api/tags")
 
+    target_host = urlsplit(base).hostname or ""
+    is_https = urlsplit(base).scheme.lower() == "https"
+
     try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
+        if is_https and resolved_ip:
+            transport = _PinnedIPTransport(target_host, resolved_ip)
+            client = httpx.AsyncClient(transport=transport, timeout=5.0)
+        else:
+            client = httpx.AsyncClient(timeout=5.0)
+            if not is_https and resolved_ip and target_host != resolved_ip:
+                candidate_urls = [
+                    _rewrite_url_with_resolved_ip(u, resolved_ip)
+                    for u in candidate_urls
+                ]
+                if target_host:
+                    headers = {**headers, "Host": target_host}
+
+        async with client:
             for url in candidate_urls:
                 try:
                     resp = await client.get(url, headers=headers)

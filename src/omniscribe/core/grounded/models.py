@@ -62,6 +62,8 @@ class GroundedOCRBackend(Protocol):
         pdf_path: str,
         progress: ProgressCallback | None = None,
         on_warning: WarningCallback | None = None,
+        *,
+        pages: str | None = None,
     ) -> GroundedResponse: ...
 
 

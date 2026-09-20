@@ -154,17 +154,20 @@ class ProcessResponse {
     required this.jobId,
     required this.status,
     this.statusUrl,
+    this.resultToken,
   });
 
   final String jobId;
   final String status;
   final String? statusUrl;
+  final String? resultToken;
 
   factory ProcessResponse.fromJson(Map<String, dynamic> json) {
     return ProcessResponse(
       jobId: json['job_id']?.toString() ?? '',
       status: json['status']?.toString() ?? 'pending',
       statusUrl: json['status_url']?.toString(),
+      resultToken: json['result_token'] as String?,
     );
   }
 
@@ -172,6 +175,7 @@ class ProcessResponse {
         'job_id': jobId,
         'status': status,
         if (statusUrl != null) 'status_url': statusUrl,
+        if (resultToken != null) 'result_token': resultToken,
       };
 }
 

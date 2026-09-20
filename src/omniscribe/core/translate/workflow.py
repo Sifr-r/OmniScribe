@@ -32,6 +32,7 @@ from omniscribe.core.translate.nodes import (
     _optional_dependency_message,
     _state_settings,  # noqa: F401  (re-export for tests)
     build_evaluation_prompt,
+    evaluate_chunk,
     evaluate_node,
     parse_evaluation_response,
     retrieve_lexicon_context,
@@ -140,6 +141,14 @@ class _Chunker:
         if not text:
             return
 
+        if len(text) > self.max_chunk_size:
+            if self._current:
+                self.chunks.append(self._current)
+                self._current = ""
+            for i in range(0, len(text), self.max_chunk_size):
+                self.chunks.append(text[i : i + self.max_chunk_size])
+            return
+
         if not self._current:
             self._current = text
             return
@@ -188,7 +197,11 @@ def chunk_text(text: str, max_chunk_size: int = 4000) -> list[str]:
                 else:
                     # Line is too large, split by words
                     for word in line.split(" "):
-                        chunker.add(word, " ")
+                        if len(word) > max_chunk_size:
+                            for i in range(0, len(word), max_chunk_size):
+                                chunker.add(word[i : i + max_chunk_size], " ")
+                        else:
+                            chunker.add(word, " ")
 
     return chunker.finalize()
 
@@ -229,6 +242,10 @@ def run_translation(
                 f"for chunk starting: {chunk[:80]!r}"
             )
         translated = result.get("translated_chunk", "")
+        if chunk.strip() and not translated.strip():
+            raise TranslationError(
+                f"Empty translation received for chunk starting: {chunk[:80]!r}"
+            )
         if translated:
             translated_chunks.append(translated)
 
@@ -240,6 +257,7 @@ __all__ = [
     "_Chunker",
     "build_evaluation_prompt",
     "chunk_text",
+    "evaluate_chunk",
     "evaluate_node",
     "get_translation_app",
     "parse_evaluation_response",

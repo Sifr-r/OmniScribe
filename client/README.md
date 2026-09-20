@@ -81,8 +81,8 @@ flutter run --dart-define=OMNISCRIBE_API_BASE=http://192.168.1.42:8000
   See [`../docs/SECURITY.md`](../docs/SECURITY.md).
 - **Anything else** — run `make doctor` from the repo root. It checks
   Python, `uv`, Redis reachability, and VLM reachability in one pass.
-  The full cross-platform troubleshooting guide is being added under
-  `docs/TROUBLESHOOTING.md` (Phase 2 of the remediation plan).
+  The full cross-platform troubleshooting guide is available at
+  docs/TROUBLESHOOTING.md.
 
 ## Where the code lives
 

@@ -6,7 +6,6 @@ import ast
 import sys
 from pathlib import Path
 
-
 FILES = [
     "src/omniscribe/plugins/documents/routes.py",
     "src/omniscribe/plugins/glossary/routes.py",
@@ -55,7 +54,7 @@ def main() -> int:
             ):
                 with_doc += 1
         ratio = with_doc / len(defs) if defs else 1.0
-        print(f"{rel}: {len(defs)} defs, {with_doc} docs, {ratio*100:.0f}%")
+        print(f"{rel}: {len(defs)} defs, {with_doc} docs, {ratio * 100:.0f}%")
     if failed:
         print("FAILED:")
         for f in failed:

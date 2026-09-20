@@ -49,6 +49,7 @@ from .schema import (
 from .search import HybridSearchEngine
 from .store import (
     GlossaryMeta,
+    GlossaryNotFoundError,
     LexiconEntry,
     LexiconHit,
     LexiconQuery,
@@ -634,10 +635,6 @@ class LanceDBLexiconStore:
 
     def _build_where(self, query: LexiconQuery) -> str | None:
         return self._search_engine.build_where(query)
-
-
-class GlossaryNotFoundError(KeyError):
-    """Raised when a requested glossary id does not exist in the store."""
 
 
 __all__ = [

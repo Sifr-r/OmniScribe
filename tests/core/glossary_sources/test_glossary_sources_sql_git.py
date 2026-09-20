@@ -243,6 +243,7 @@ def git_env(monkeypatch: pytest.MonkeyPatch) -> dict:
     def fake_run(command, **kwargs):
         captured["command"] = command
         captured["timeout"] = kwargs.get("timeout")
+        captured["env"] = kwargs.get("env")
         return subprocess.CompletedProcess(
             command, 0, stdout=captured.get("stdout", b""), stderr=b""
         )
@@ -278,6 +279,10 @@ class TestGitValidation:
     def test_path_traversal_rejected(self, git_env: dict, bad_path: str) -> None:
         with pytest.raises(ValueError, match="path is invalid"):
             parse_git_glossary(url="https://example.com/repo.git", path=bad_path)
+
+    def test_unallowlisted_host_rejected(self, git_env: dict) -> None:
+        with pytest.raises(ValueError, match="not allowed"):
+            parse_git_glossary(url="https://unallowlisted-domain.com/repo.git")
 
 
 class TestGitFetch:
@@ -343,13 +348,23 @@ class TestGitFetch:
 
 class TestGitCredentials:
     def test_credentials_land_in_remote_url_not_summary(self, git_env: dict) -> None:
+        import base64
+
         git_env["stdout"] = b"Hello -> Hola\n"
         summary = parse_git_glossary(
             url="https://github.com/org/repo.git",
             credentials="user:supersecret",
         )
         command = " ".join(git_env["command"])
-        assert "user:supersecret@github.com" in command
+        assert "supersecret" not in command
+        assert "--remote=https://github.com/org/repo.git" in command
+        env = git_env.get("env") or {}
+        assert env.get("GIT_CONFIG_COUNT") == "1"
+        assert env.get("GIT_CONFIG_KEY_0") == "http.extraHeader"
+        expected_auth = base64.b64encode(b"user:supersecret").decode("ascii")
+        assert f"Authorization: Basic {expected_auth}" in env.get(
+            "GIT_CONFIG_VALUE_0", ""
+        )
         # The summary flows into API responses — it must stay redacted.
         assert "supersecret" not in (summary.source_uri or "")
 

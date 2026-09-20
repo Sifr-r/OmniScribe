@@ -12,11 +12,12 @@ import contextlib
 import logging
 import time
 import uuid
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, is_dataclass, replace
 from typing import Any, NamedTuple, Protocol, cast, runtime_checkable
 
 from pydantic import BaseModel
 
+from omniscribe.core.errors import redact_exception
 from omniscribe.core.interfaces import JobQueueProtocol
 from omniscribe.harness.context import Context
 from omniscribe.harness.events import AgentEvent, SessionEvent
@@ -27,6 +28,7 @@ from omniscribe.plugins.state_backend_types import (
     JobRecord,
     StateBackend,
 )
+from omniscribe.utils.security import redact_redis_url
 
 _LOGGER = logging.getLogger("omniscribe.plugins.jobs")
 
@@ -88,6 +90,7 @@ class JobOutcome:
 
     blob: bytes
     content_type: str
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @runtime_checkable
@@ -238,6 +241,12 @@ class InMemoryJobQueue:
                 updated_at=now,
             )
         )
+        if (
+            is_dataclass(request)
+            and not isinstance(request, type)
+            and hasattr(request, "job_id")
+        ):
+            request = replace(request, job_id=job_id)
         self._payloads[job_id] = request
         await self._queue.put(job_id)
         await self._ctx.emit(JobQueued(job_id=job_id))
@@ -275,15 +284,28 @@ class InMemoryJobQueue:
         return await self._backend.list_jobs(limit=limit, offset=offset)
 
     async def clear(self) -> int:
-        """Erase every job row + in-memory payload cache.
+        """Clear only jobs that have a terminal status (complete, error, cancelled).
 
-        Does NOT touch running jobs (the worker keeps going on the
-        current payload). Used by the test harness for setup/teardown.
+        Does not clear queued or active jobs.
         """
-        count = await self._backend.clear_jobs()
-        self._payloads.clear()
-        self._cancelled.clear()
-        return count
+        all_jobs: list[JobRecord] = []
+        offset = 0
+        while True:
+            batch = await self._backend.list_jobs(limit=100, offset=offset)
+            if not batch:
+                break
+            all_jobs.extend(batch)
+            offset += len(batch)
+
+        terminal_statuses = _TERMINAL_STATUSES
+        cleared = 0
+        for job in all_jobs:
+            if job.status in terminal_statuses:
+                await self._backend.delete_job(job.job_id)
+                self._payloads.pop(job.job_id, None)
+                self._cancelled.discard(job.job_id)
+                cleared += 1
+        return cleared
 
     # -- JobQueueProtocol aliases ----------------------------------------------
     enqueue = submit
@@ -298,7 +320,7 @@ class InMemoryJobQueue:
         Idempotent: a second call is a no-op so the plugin ``apply``
         can call this safely even if the queue was already started.
         """
-        if self._worker is None:
+        if self._worker is None or self._worker.done():
             self._worker = asyncio.get_running_loop().create_task(
                 self._run(), name="omniscribe-job-worker"
             )
@@ -328,24 +350,21 @@ class InMemoryJobQueue:
         self._payloads.clear()
 
     async def _run(self) -> None:
-        # Phase 3.5 (4.7, 2026-09-05): the previous
-        # ``except Exception: _LOGGER.exception(...)`` block was the
-        # second source of error reporting — it logged but never
-        # emitted ``JobFailed`` to the client, so a runner that
-        # consistently raised (e.g. an LLM provider stuck in a
-        # retry loop) would flood the log and the status response
-        # would silently stay ``processing`` forever. ``_process_one``
-        # already catches ``BaseException`` and emits ``JobFailed``;
-        # removing the worker-level catch makes the inner handler
-        # the single source of truth. An exception escaping
-        # ``_process_one`` is a worker bug, not a job bug, and
-        # killing the worker is the right signal in that case.
+        # Storage and dispatch failures must not terminate the only worker.
         while True:
             job_id = await self._queue.get()
             try:
                 await self._process_one(job_id)
             except asyncio.CancelledError:
                 raise
+            except Exception as exc:
+                message = redact_exception(exc)
+                _LOGGER.exception("Job %s failed outside its runner", job_id)
+                try:
+                    await self._set_error(job_id, message)
+                    await self._ctx.emit(JobFailed(job_id=job_id, error=message))
+                except Exception:
+                    _LOGGER.exception("Unable to persist failure for job %s", job_id)
             finally:
                 self._queue.task_done()
 
@@ -388,7 +407,7 @@ class InMemoryJobQueue:
             await self._mark_cancelled(job_id, emit=True)
             return
         record = await self._backend.get_job(job_id)
-        if record is None:
+        if record is None or record.status in _TERMINAL_STATUSES:
             return
         runner = self._resolve_runner(payload)
         # Phase 3.4 (4.6, 2026-09-05): persist ``started_at`` so the
@@ -417,7 +436,7 @@ class InMemoryJobQueue:
                 return
             if not isinstance(exc, Exception):
                 raise
-            message = str(exc) or exc.__class__.__name__
+            message = redact_exception(exc)
             await self._set_error(job_id, message)
             await self._ctx.emit(JobFailed(job_id=job_id, error=message))
             return
@@ -438,6 +457,7 @@ class InMemoryJobQueue:
                     status="complete",
                     result_artifact_id=handle.id,
                     result_artifact_token=handle.token,
+                    request_meta={**current.request_meta, **outcome.metadata},
                     updated_at=time.time(),
                 )
             )
@@ -463,7 +483,7 @@ class InMemoryJobQueue:
 
     async def _set_error(self, job_id: str, message: str) -> None:
         record = await self._backend.get_job(job_id)
-        if record is not None:
+        if record is not None and record.status not in _TERMINAL_STATUSES:
             await self._backend.upsert_job(
                 replace(record, status="error", error=message, updated_at=time.time())
             )
@@ -507,7 +527,10 @@ class JobsPlugin(Plugin):
             await redis_queue.open()
             ctx.service(JobQueue, redis_queue)
             ctx.effect(redis_queue.aclose)
-            _LOGGER.info("jobs plugin mounted (mode=redis, url=%s)", settings.redis_url)
+            _LOGGER.info(
+                "jobs plugin mounted (mode=redis, url=%s)",
+                redact_redis_url(settings.redis_url),
+            )
         else:
             worker_count = int(self.config.get("worker_count", 1))
             if worker_count != 1:

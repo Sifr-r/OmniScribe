@@ -81,10 +81,8 @@ async def test_translate_tree_emits_one_chunk_per_translated_block():
 
     assert len(chunks) == 3
     assert [c[0] for c in chunks] == [0, 1, 2]
-    # The translated text is the translator's fixed output.
-    assert all(c[2].startswith("OUT_") for c in chunks)
-    # source_chars is the length of the post-translation text.
-    assert [c[1] for c in chunks] == [len(c[2]) for c in chunks]
+    # source_chars is the length of the original source text before translation.
+    assert [c[1] for c in chunks] == [len(f"block {i}") for i in range(3)]
     # Target language flows through unchanged.
     assert all(c[3] == "Spanish" for c in chunks)
 

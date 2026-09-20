@@ -89,15 +89,17 @@ def _extract_client_ip(
     """Extract client IP from ASGI scope, honoring forwarded headers from trusted proxies.
 
     If the direct connection is from a trusted proxy (e.g. localhost reverse proxy
-    or Starlette TestClient) or unknown, the leftmost IP in ``X-Forwarded-For`` (or
-    ``X-Real-IP``) is used. Otherwise, the direct socket IP is returned.
+    or Starlette TestClient), the leftmost IP in ``X-Forwarded-For`` (or
+    ``X-Real-IP``) is used. Unparseable or absent direct sockets without a client
+    tuple remain ``"unknown"`` and ignore forwarded headers. Otherwise, the direct
+    socket IP is returned.
     """
     client = scope.get("client")
     direct_ip = "unknown"
     if client and isinstance(client, (tuple, list)) and len(client) > 0:
         direct_ip = str(client[0]).strip()
 
-    if direct_ip in trusted_proxies or direct_ip == "unknown":
+    if direct_ip in trusted_proxies:
         headers: list[tuple[bytes, bytes]] = list(scope.get("headers") or [])
         for raw_name, raw_value in headers:
             if raw_name.lower() == b"x-forwarded-for":

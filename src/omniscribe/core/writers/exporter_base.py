@@ -1,4 +1,4 @@
-"""Base document export protocol and shared types.
+"""Base document export base class and shared types.
 
 Defines the typed boundary for document exporters transforming
 :class:`~omniscribe.core.document.DocumentResult` and
@@ -10,34 +10,11 @@ from __future__ import annotations
 
 import abc
 import io
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from omniscribe.core.block_tree import DocumentTree
     from omniscribe.core.document import DocumentResult
-
-
-@runtime_checkable
-class DocumentExportProtocol(Protocol):
-    """Protocol for document exporters operating on DocumentTree and DocumentResult."""
-
-    def export_tree(
-        self, tree: DocumentTree, **kwargs: Any
-    ) -> bytes | str | io.BytesIO:
-        """Export a structured DocumentTree into the target format."""
-        ...
-
-    def export_document(
-        self, document: DocumentResult, **kwargs: Any
-    ) -> bytes | str | io.BytesIO:
-        """Export a DocumentResult into the target format."""
-        ...
-
-    def export(
-        self, source: DocumentTree | DocumentResult, **kwargs: Any
-    ) -> bytes | str | io.BytesIO:
-        """Export either a DocumentTree or a DocumentResult into the target format."""
-        ...
 
 
 class BaseDocumentExporter(abc.ABC):
@@ -77,5 +54,4 @@ class BaseDocumentExporter(abc.ABC):
 
 __all__ = [
     "BaseDocumentExporter",
-    "DocumentExportProtocol",
 ]

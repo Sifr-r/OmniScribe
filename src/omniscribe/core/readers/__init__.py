@@ -26,7 +26,10 @@ from omniscribe.core.readers.dispatch import (
 from omniscribe.core.readers.docx_reader import DocxReader
 from omniscribe.core.readers.html_reader import HtmlReader
 from omniscribe.core.readers.markdown_reader import MarkdownReader
-from omniscribe.core.readers.pdf_renderer import render_synthetic_pdf
+from omniscribe.core.readers.pdf_renderer import (
+    render_pdf_from_document_result,
+    render_synthetic_pdf,
+)
 
 __all__ = [
     "BaseDocumentReader",
@@ -41,6 +44,7 @@ __all__ = [
     "get_reader_for_suffix",
     "layout_synthetic_blocks",
     "register_reader",
+    "render_pdf_from_document_result",
     "render_synthetic_pdf",
     "resolve_source_bytes",
     "supported_suffixes",

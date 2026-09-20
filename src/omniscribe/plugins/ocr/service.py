@@ -111,6 +111,7 @@ class _OcrPayload:
     input_path: Path
     filename: str
     request: OCRRequest
+    job_id: str = ""
 
 
 def _resolve_preflight_coordinates(
@@ -304,6 +305,7 @@ class OCRServiceImpl:
         filename: str,
         content_type: str | None = None,
     ) -> Response:
+        options = self._snapshot_options(options)
         # Audit 2.8: the sync path also streams the upload to disk before
         # calling ``_execute`` so the worker reuses one file-write instead
         # of holding the bytes on the heap for the OCR duration.
@@ -340,7 +342,9 @@ class OCRServiceImpl:
         filename: str,
         content_type: str | None = None,
     ) -> AsyncSubmitResponse:
+        options = self._snapshot_options(options)
         submission_id = secrets.token_hex(16)
+        result_token = secrets.token_urlsafe(32)
         # Audit 2.8: stream the upload to a per-job tempfile so the queue
         # payload only carries a path, not the bytes. ``run_job`` reads
         # the file and ``run_sync`` shares the same per-job directory so
@@ -359,6 +363,7 @@ class OCRServiceImpl:
             payload,
             request_meta={
                 "submission_id": submission_id,
+                "result_access_token": result_token,
                 "filename": filename,
                 "model": options.model or self._settings.llm_model,
                 "pipeline_mode": options.pipeline_mode,
@@ -379,21 +384,53 @@ class OCRServiceImpl:
         # between submits, but the next terminal event / shutdown closes
         # the gap.
         return AsyncSubmitResponse(
-            job_id=handle.job_id, status="pending", status_url=handle.status_url
+            job_id=handle.job_id,
+            status="pending",
+            status_url=handle.status_url,
+            result_token=result_token,
+        )
+
+    def _snapshot_options(self, options: OCRRequest) -> OCRRequest:
+        """Freeze effective processing limits before a job waits in the queue."""
+        keys = ("dpi", "concurrency", "dense_threshold", "max_image_dim")
+        return options.model_copy(
+            update={
+                key: getattr(options, key)
+                if getattr(options, key) is not None
+                else getattr(self._settings, f"ocr_{key}")
+                for key in keys
+            }
         )
 
     async def run_job(self, payload: Any) -> JobOutcome:
         """The JobRunner the queue worker injects at claim time."""
         if not isinstance(payload, _OcrPayload):
             raise ValueError("OCR job queue received a foreign payload")
-        job_id = self._submission_to_job.get(payload.submission_id, "")
+        job_id = payload.job_id or self._submission_to_job.get(
+            payload.submission_id, ""
+        )
         cancel_check = self._cancel_check(job_id, payload.request.progress_channel)
-        pdf_bytes, _, _trust_summary = await self._execute(
+        pdf_bytes, pages_data, trust_summary = await self._execute(
             payload.request, payload.input_path, payload.filename, job_id=job_id
         )
         if cancel_check is not None and cancel_check():
             raise OCRCancelled(f"job {job_id} cancelled")
-        return JobOutcome(blob=pdf_bytes, content_type="application/pdf")
+        text_handle = await self._artifacts.put(
+            json.dumps(
+                {str(idx): "\n".join(lines) for idx, lines in pages_data.items()}
+            ).encode("utf-8"),
+            content_type="application/json",
+            owner_job_id=job_id,
+        )
+        return JobOutcome(
+            blob=pdf_bytes,
+            content_type="application/pdf",
+            metadata={
+                "text_artifact_id": text_handle.id,
+                "text_artifact_token": text_handle.token,
+                "document_trust": trust_summary,
+            },
+        )
 
     async def _execute(
         self,
@@ -553,7 +590,7 @@ class OCRServiceImpl:
             completed_at=record.updated_at if terminal else None,
             duration_s=(record.updated_at - record.created_at) if terminal else None,
             error=error,
-            text_artifact_id=record.result_artifact_id,
+            text_artifact_id=record.request_meta.get("text_artifact_id"),
             failed_pages=[],
         )
 
@@ -595,7 +632,15 @@ class OCRServiceImpl:
         # dominates the constant-time compare by orders of
         # magnitude so there is no practical side channel here.
         expected = record.result_artifact_token if record else ""
-        if expected and (not token or not secrets.compare_digest(token, expected)):
+        access_token = (
+            record.request_meta.get("result_access_token", "") if record else ""
+        )
+        if not token or not any(
+            isinstance(candidate, str)
+            and candidate
+            and secrets.compare_digest(token, candidate)
+            for candidate in (expected, access_token)
+        ):
             raise not_found
         if record is None or record.status != "complete":
             raise not_found
@@ -606,15 +651,27 @@ class OCRServiceImpl:
         # (because the record has no stored token), and the runtime
         # contract is: caller-supplied token wins when present, the
         # stored token is used when the caller did not pass one.
-        resolved_token = cast("str", token if token is not None else expected)
+        resolved_token = cast("str", expected)
         artifact = await self._artifacts.get(
             record.result_artifact_id or "", resolved_token
         )
         if artifact is None:
             raise not_found
+        headers: dict[str, str] = {}
+        for key, header in (
+            ("text_artifact_id", "X-Text-Artifact-Id"),
+            ("text_artifact_token", "X-Text-Artifact-Token"),
+        ):
+            value = record.request_meta.get(key)
+            if isinstance(value, str) and value:
+                headers[header] = value
+        trust = record.request_meta.get("document_trust")
+        if isinstance(trust, dict):
+            headers["X-Document-Trust"] = json.dumps(trust)
         return Response(
             content=artifact.blob,
             media_type=artifact.record.content_type or "application/pdf",
+            headers=headers,
         )
 
     async def cancel_job(self, job_id: str) -> bool | None:
@@ -634,26 +691,50 @@ class OCRServiceImpl:
     ) -> bytes | None:
         """Render one page of the original upload as a PNG.
 
-        Returns ``None`` when the job has no recorded input path (older
-        jobs, jobs whose source was never written to disk, or jobs from
-        an in-memory backend that has been wiped on restart). The route
-        surfaces a 404 in that case so the client can fall back to its
-        placeholder.
+        Falls back to the completed output artifact when the temporary input
+        was cleaned up. OCR output is a PDF with the same page layout, so this
+        preserves the workstation overlay without retaining source uploads.
         """
         record = await self._queue.status(job_id)
         if record is None:
             return None
         input_path_str = record.input_path
-        if not input_path_str:
-            return None
-        input_path = Path(input_path_str)
-        if not input_path.is_file():
-            return None
+        input_path = Path(input_path_str) if input_path_str else None
+        result_blob: bytes | None = None
+        if input_path is None or not input_path.is_file():
+            if (
+                record.status != "complete"
+                or not record.result_artifact_id
+                or not record.result_artifact_token
+            ):
+                return None
+            artifact = await self._artifacts.get(
+                record.result_artifact_id, record.result_artifact_token
+            )
+            if artifact is None:
+                return None
+            result_blob = artifact.blob
 
         # Off-load PyMuPDF (a C extension) to a worker thread so the event
         # loop stays responsive while the page rasterizes.
         def _render() -> bytes | None:
             import pymupdf as fitz  # local: not every test env has it
+
+            if result_blob is not None:
+                doc = fitz.open(  # type: ignore[no-untyped-call]
+                    stream=result_blob, filetype="pdf"
+                )
+                try:
+                    if page_index < 0 or page_index >= doc.page_count:
+                        return None
+                    page = doc[page_index]
+                    pix = page.get_pixmap(dpi=dpi, alpha=False)
+                    return bytes(pix.tobytes("png"))  # type: ignore[no-untyped-call]
+                finally:
+                    doc.close()  # type: ignore[no-untyped-call]
+
+            if input_path is None:
+                return None
 
             suffix = input_path.suffix.lower()
             digital_reader = get_reader_for_suffix(suffix)
@@ -816,8 +897,16 @@ class OCRServiceImpl:
                         status_code=400,
                         detail=f"Invalid api_base URL (SSRF blocked: {check.reason})",
                     )
+        numeric_keys = ("dpi", "concurrency", "dense_threshold", "max_image_dim")
+        numeric_updates = {
+            key: updates[key] for key in numeric_keys if updates.get(key) is not None
+        }
+        # Validate the entire update before mutating config or persisting any key.
+        validated = OCRRequest.model_validate(numeric_updates)
+        normalized = dict(updates)
+        normalized.update({key: getattr(validated, key) for key in numeric_updates})
         changed_keys: set[str] = set()
-        for key, value in updates.items():
+        for key, value in normalized.items():
             if value is None or key not in self._config:
                 continue
             if key == "api_key" and value == "******":
@@ -840,14 +929,10 @@ class OCRServiceImpl:
         if "model" in changed_keys:
             self._settings.llm_model = str(self._config["model"])
             persist_env_key("LLM_MODEL", self._settings.llm_model)
-        if "concurrency" in changed_keys:
-            persist_env_key("OCR_CONCURRENCY", str(self._config["concurrency"]))
-        if "dpi" in changed_keys:
-            persist_env_key("OCR_DPI", str(self._config["dpi"]))
-        if "dense_threshold" in changed_keys:
-            persist_env_key("OCR_DENSE_THRESHOLD", str(self._config["dense_threshold"]))
-        if "max_image_dim" in changed_keys:
-            persist_env_key("OCR_MAX_IMAGE_DIM", str(self._config["max_image_dim"]))
+        for key in numeric_keys:
+            if key in changed_keys:
+                setattr(self._settings, f"ocr_{key}", self._config[key])
+                persist_env_key(f"OCR_{key.upper()}", str(self._config[key]))
         return self.get_config()
 
     # -- SSE replay -----------------------------------------------------------------
@@ -948,11 +1033,9 @@ def event_entry(event: Event) -> dict[str, Any]:
     """
     data: dict[str, Any] = {"job_id": getattr(event, "job_id", "")}
     if isinstance(event, JobCompleted):
-        # The async client uses ``artifact_token`` to authorize the
-        # result download (this is the out-of-band channel that pairs
-        # with the sync path's ``X-Text-Artifact-Token`` response header).
+        # Result download is authorized via the submission response's result_token
+        # (capability isolation), rather than broadcast in event payloads.
         data["artifact_id"] = event.artifact_id
-        data["artifact_token"] = event.artifact_token
     elif isinstance(event, JobFailed):
         data["error"] = event.error
     elif isinstance(event, ProgressFrame):

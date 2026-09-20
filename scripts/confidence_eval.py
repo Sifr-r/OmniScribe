@@ -162,9 +162,7 @@ def render_report(console: Console, reports: list):
 def render_markdown_report(
     console: Console, md_reports: list[tuple[str, MarkdownScoreReport]]
 ) -> None:
-    table = Table(
-        title="Markdown evaluation (OmniDocBench metrics)", show_lines=True
-    )
+    table = Table(title="Markdown evaluation (OmniDocBench metrics)", show_lines=True)
     table.add_column("document")
     table.add_column("path")
     table.add_column("CER", justify="right")

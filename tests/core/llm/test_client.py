@@ -161,6 +161,115 @@ class TestResolveProviderConfig:
                 model=None,
             )
 
+    # ------------------------------------------------------------------
+    # Explicit hostname -> provider mapping (MEDIUM-severity foot-gun fix).
+    #
+    # The lookup is an exact-equality dict match against
+    # ``omniscribe.core.llm.client._PROVIDER_HOSTS``. These tests pin
+    # down the behavior so a future maintainer cannot silently revert
+    # to ``endswith`` / regex / substring matching, which would let
+    # attacker-controlled hosts like ``evil-anthropic.com`` be
+    # misclassified as the Anthropic provider.
+    # ------------------------------------------------------------------
+
+    def test_resolve_provider_config_explicit_anthropic_host(self) -> None:
+        resolved = _resolve_provider_config(
+            provider_config=None,
+            api_base="https://api.anthropic.com",
+            api_key="sk-ant-test",
+            model="claude-3-5-sonnet",
+        )
+        assert resolved.id == "anthropic"
+        assert resolved.display_name == "Anthropic"
+        assert resolved.format == ProviderFormatEnum.ANTHROPIC_COMPATIBLE
+        assert resolved.api_url == "https://api.anthropic.com"
+
+    def test_resolve_provider_config_explicit_openai_host(self) -> None:
+        resolved = _resolve_provider_config(
+            provider_config=None,
+            api_base="https://api.openai.com",
+            api_key="sk-test",
+            model="gpt-4o",
+        )
+        assert resolved.id == "openai"
+        assert resolved.display_name == "OpenAI"
+        assert resolved.format == ProviderFormatEnum.OPENAI_COMPATIBLE
+        assert resolved.api_url == "https://api.openai.com"
+
+    @pytest.mark.parametrize(
+        "api_base",
+        [
+            # Substring-attack style: a real provider label as a suffix
+            # of an attacker-controlled host.
+            "https://evil-anthropic.com",
+            "https://anthropic.com.attacker.tld",
+            "https://evilanthropic.com.attacker.tld",
+            "https://openai.com.evil.example",
+            "https://fake-openrouter.ai.attacker.tld",
+            "https://groq.com.evil.example",
+            "https://deepseek.com.evil.example",
+        ],
+    )
+    def test_resolve_provider_config_rejects_substring_attack(
+        self, api_base: str
+    ) -> None:
+        """Hosts that merely *contain* a provider label must fall through
+        to the ``custom`` provider, never to a built-in provider.
+
+        This is the regression test for the ``endswith`` foot-gun in
+        ``_resolve_provider_config``: substring matching would route
+        these hosts (and any credentials attached to the request) to
+        an attacker-controlled endpoint while still being treated as
+        Anthropic / OpenAI / etc.
+        """
+        resolved = _resolve_provider_config(
+            provider_config=None,
+            api_base=api_base,
+            api_key="key",
+            model="model",
+        )
+        assert resolved.id == "custom"
+        assert resolved.display_name == "Custom"
+        assert resolved.format == ProviderFormatEnum.OPENAI_COMPATIBLE
+        assert resolved.api_url == api_base
+
+    def test_resolve_provider_config_explicit_lmstudio_port(self) -> None:
+        resolved = _resolve_provider_config(
+            provider_config=None,
+            api_base="http://localhost:1234/v1",
+            api_key="key",
+            model="qwen2.5-vl-7b",
+        )
+        assert resolved.id == "lmstudio"
+        assert resolved.display_name == "LM Studio"
+        assert resolved.format == ProviderFormatEnum.OPENAI_COMPATIBLE
+        assert resolved.api_url == "http://localhost:1234/v1"
+
+    def test_resolve_provider_config_explicit_ollama_port(self) -> None:
+        resolved = _resolve_provider_config(
+            provider_config=None,
+            api_base="http://localhost:11434",
+            api_key="key",
+            model="llama3.2-vision",
+        )
+        assert resolved.id == "ollama"
+        assert resolved.display_name == "Ollama"
+        assert resolved.format == ProviderFormatEnum.OLLAMA_COMPATIBLE
+        assert resolved.api_url == "http://localhost:11434"
+
+    def test_resolve_provider_config_unknown_host_is_custom(self) -> None:
+        """Sanity check: a host that is not in ``_PROVIDER_HOSTS`` and
+        not on a known port resolves to ``custom`` with the
+        OpenAI-compatible format."""
+        resolved = _resolve_provider_config(
+            provider_config=None,
+            api_base="http://10.0.0.1:8000/v1",
+            api_key="key",
+            model="model",
+        )
+        assert resolved.id == "custom"
+        assert resolved.format == ProviderFormatEnum.OPENAI_COMPATIBLE
+
 
 class TestExtractPromptAndImage:
     """Tests for ``_extract_prompt_and_image``."""
@@ -449,3 +558,176 @@ class TestCallLlm:
             LLMCallError, match="requires either `provider_config` or `api_base`"
         ):
             await call_llm(prompt="Hello")
+
+    async def test_call_llm_with_provider_string(self) -> None:
+        with patch(
+            "omniscribe.core.llm.client.complete_vlm_prompt",
+            new_callable=AsyncMock,
+            return_value="Groq response",
+        ) as mock_complete:
+            result = await call_llm(
+                prompt="Fast inference",
+                provider="groq",
+                api_key="gsk-123",
+            )
+            assert result == "Groq response"
+            call_kwargs = mock_complete.await_args.kwargs  # type: ignore[union-attr]
+            resolved_cfg: ProviderConfig = call_kwargs["provider_config"]
+            assert resolved_cfg.id == "groq"
+            assert resolved_cfg.display_name == "Groq"
+            assert resolved_cfg.format == ProviderFormatEnum.OPENAI_COMPATIBLE
+            assert resolved_cfg.api_url == "https://api.groq.com/openai/v1"
+            assert resolved_cfg.api_key == "gsk-123"
+
+    async def test_call_vlm_with_provider_string(self) -> None:
+        with patch(
+            "omniscribe.core.llm.client.complete_vlm_prompt",
+            new_callable=AsyncMock,
+            return_value="Claude vision response",
+        ) as mock_complete:
+            result = await call_vlm(
+                prompt="Analyze chart",
+                image_b64="b64data",
+                provider="anthropic",
+                api_key="sk-ant-123",
+            )
+            assert result == "Claude vision response"
+            call_kwargs = mock_complete.await_args.kwargs  # type: ignore[union-attr]
+            resolved_cfg: ProviderConfig = call_kwargs["provider_config"]
+            assert resolved_cfg.id == "anthropic"
+            assert resolved_cfg.display_name == "Anthropic"
+            assert resolved_cfg.format == ProviderFormatEnum.ANTHROPIC_COMPATIBLE
+            assert resolved_cfg.api_url == "https://api.anthropic.com"
+
+
+class TestExplicitProviderRouting:
+    """Tests for explicit provider routing in _resolve_provider_config."""
+
+    @pytest.mark.parametrize(
+        "provider,expected_id,expected_name,expected_fmt,expected_url",
+        [
+            (
+                "openai",
+                "openai",
+                "OpenAI",
+                ProviderFormatEnum.OPENAI_COMPATIBLE,
+                "https://api.openai.com/v1",
+            ),
+            (
+                "anthropic",
+                "anthropic",
+                "Anthropic",
+                ProviderFormatEnum.ANTHROPIC_COMPATIBLE,
+                "https://api.anthropic.com",
+            ),
+            (
+                "ollama",
+                "ollama",
+                "Ollama",
+                ProviderFormatEnum.OLLAMA_COMPATIBLE,
+                "http://localhost:11434",
+            ),
+            (
+                "lmstudio",
+                "lmstudio",
+                "LM Studio",
+                ProviderFormatEnum.OPENAI_COMPATIBLE,
+                "http://localhost:1234/v1",
+            ),
+            (
+                "openrouter",
+                "openrouter",
+                "OpenRouter",
+                ProviderFormatEnum.OPENAI_COMPATIBLE,
+                "https://openrouter.ai/api/v1",
+            ),
+            (
+                "groq",
+                "groq",
+                "Groq",
+                ProviderFormatEnum.OPENAI_COMPATIBLE,
+                "https://api.groq.com/openai/v1",
+            ),
+            (
+                "deepseek",
+                "deepseek",
+                "DeepSeek",
+                ProviderFormatEnum.OPENAI_COMPATIBLE,
+                "https://api.deepseek.com/v1",
+            ),
+            (
+                ProviderFormatEnum.ANTHROPIC_COMPATIBLE,
+                "anthropic",
+                "Anthropic",
+                ProviderFormatEnum.ANTHROPIC_COMPATIBLE,
+                "https://api.anthropic.com",
+            ),
+            (
+                ProviderFormatEnum.OLLAMA_COMPATIBLE,
+                "ollama",
+                "Ollama",
+                ProviderFormatEnum.OLLAMA_COMPATIBLE,
+                "http://localhost:11434",
+            ),
+        ],
+    )
+    def test_explicit_provider_known_mappings(
+        self,
+        provider: str | ProviderFormatEnum,
+        expected_id: str,
+        expected_name: str,
+        expected_fmt: ProviderFormatEnum,
+        expected_url: str,
+    ) -> None:
+        resolved = _resolve_provider_config(
+            provider_config=None,
+            api_base=None,
+            api_key="key",
+            model="model",
+            provider=provider,
+        )
+        assert resolved.id == expected_id
+        assert resolved.display_name == expected_name
+        assert resolved.format == expected_fmt
+        assert resolved.api_url == expected_url
+
+    def test_explicit_custom_provider_with_api_base(self) -> None:
+        resolved = _resolve_provider_config(
+            provider_config=None,
+            api_base="https://custom.endpoint/v1",
+            api_key="key",
+            model="model",
+            provider="custom",
+        )
+        assert resolved.id == "custom"
+        assert resolved.display_name == "Custom"
+        assert resolved.format == ProviderFormatEnum.OPENAI_COMPATIBLE
+        assert resolved.api_url == "https://custom.endpoint/v1"
+
+    def test_explicit_custom_provider_without_api_base_raises(self) -> None:
+        with pytest.raises(LLMCallError, match="requires an `api_base` URL"):
+            _resolve_provider_config(
+                provider_config=None,
+                api_base=None,
+                api_key="key",
+                model="model",
+                provider="custom",
+            )
+
+    def test_auto_detect_provider_logging(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        import logging
+
+        with caplog.at_level(logging.INFO, logger="omniscribe.core.llm.client"):
+            resolved = _resolve_provider_config(
+                provider_config=None,
+                api_base="https://api.anthropic.com/v1",
+                api_key="key",
+                model="model",
+            )
+            assert resolved.id == "anthropic"
+            assert (
+                "Auto-detected provider 'anthropic' from api_base hostname 'api.anthropic.com'"
+                in caplog.text
+            )

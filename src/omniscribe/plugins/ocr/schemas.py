@@ -14,6 +14,7 @@ from typing import Any, Literal, get_args, get_origin
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from omniscribe.core.document import DenseMode
+from omniscribe.core.pdf.page_range import parse_page_range
 from omniscribe.utils.env import parse_bool
 
 PipelineMode = Literal["hybrid", "grounded"]
@@ -83,6 +84,10 @@ class OCRRequest(BaseModel):
     spellcheck: str | None = None
     document_processors: list[str] = Field(default_factory=list)
     pages: str | None = None
+    dpi: int | None = Field(default=None, ge=36, le=600)
+    concurrency: int | None = Field(default=None, ge=1, le=32)
+    dense_threshold: int | None = Field(default=None, ge=1, le=10000)
+    max_image_dim: int | None = Field(default=None, ge=128, le=8192)
     preprocess_pages: bool | None = None
     orientation_detection: bool = False
     deskew: bool = False
@@ -94,6 +99,15 @@ class OCRRequest(BaseModel):
     quality_loop_enabled: bool | None = None
     quality_target: float = Field(default=0.85, ge=0.5, le=1.0)
     quality_max_retries: int = Field(default=2, ge=0, le=5)
+
+    @field_validator("pages")
+    @classmethod
+    def _validate_pages(cls, value: str | None) -> str | None:
+        if value is None or not value.strip():
+            return None
+        if parse_page_range(value) is None:
+            raise ValueError("pages must be a positive page range, for example 1-3,5")
+        return value.strip()
 
     @field_validator("document_processors", mode="before")
     @classmethod
@@ -166,6 +180,7 @@ class AsyncSubmitResponse(BaseModel):
         "pending"
     )
     status_url: str
+    result_token: str | None = None
 
 
 class JobStatusResponse(BaseModel):

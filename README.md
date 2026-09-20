@@ -96,7 +96,8 @@ uv sync --extra web --extra preprocessing --extra async-translation
 ```
 
 If you also want the translation lexicon (LanceDB-backed vector store
-for domain terminology), add the `memory` extra. The async-translation
+for domain terminology), install with the `lexicon` extra (`uv sync --extra lexicon`;
+note that `memory` is supported as a one-release deprecation alias for `lexicon`). The async-translation
 extra alone does **not** install ChromaDB or sentence-transformers,
 so it stays light (no torch / no multi-GB ML stack):
 
@@ -126,14 +127,11 @@ Real OCR requires an OpenAI-compatible VLM endpoint. The local-development defau
 
 | Platform | Backend (Python) | Frontend (Flutter) | Binary install |
 | --- | --- | --- | --- |
-| Windows 10/11 | ✅ | ✅ Windows desktop | ❌ *deferred to v0.3+* (see [RFC 001](docs/rfcs/2026-09-end-user-install.md)) |
+| Windows 10/11 | ✅ | ✅ Windows desktop | ✅ Windows server bundle (v0.3.0+) (see [docs/deployment/windows-bundle.md](docs/deployment/windows-bundle.md)) |
 | macOS 13+ | ✅ | ✅ macOS desktop | ❌ *deferred to v0.3+* |
 | Ubuntu 22.04+ / Debian 12+ | ✅ | ✅ Linux desktop | ❌ *deferred to v0.3+* |
 
-The **source install** above is the supported v0.2.0 path on every platform
-— a single-binary distribution was being scoped for v0.2.0 but is
-deferred to v0.3+ (blocked on a PyInstaller + `anyio` bundling
-issue). The 12-step source install is documented in
+The **source install** above is supported on all platforms, and a Windows onefile PyInstaller binary (`omniscribe-server.exe`) is supported as of v0.3.0 (with macOS and Linux using source install). The 12-step source install is documented in
 [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) and is the path
 [CONTRIBUTING.md](CONTRIBUTING.md) recommends for new contributors.
 Docker is supported on all three (see [DEPLOYMENT.md](docs/DEPLOYMENT.md)

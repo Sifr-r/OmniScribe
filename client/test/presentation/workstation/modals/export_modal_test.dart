@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:omniscribe_client/core/theme/app_theme.dart';
+import 'package:omniscribe_client/data/models/bbox_item.dart';
 import 'package:omniscribe_client/data/models/document_result.dart';
 import 'package:omniscribe_client/data/models/feature_models.dart';
 import 'package:omniscribe_client/data/providers/repository_providers.dart';
@@ -222,6 +223,68 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.textContaining('flagged for review'), findsNothing);
+    });
+
+    testWidgets(
+        'ExportFormat.docx falls back to filename when bboxes are whitespace-only',
+        (tester) async {
+      // Regression guard for the blank-DOCX bug: when every OCR bbox is
+      // whitespace-only, ``docText`` must not be sent verbatim (the server's
+      // markdown parser would skip every line and emit a content-free DOCX).
+      // The modal should swap in the filename as a visible fallback.
+      when(() => mockRepo.exportDocx(any())).thenAnswer(
+        (_) async => Uint8List.fromList([1, 2, 3, 4]),
+      );
+
+      final container = ProviderContainer(
+        overrides: [
+          featureRepositoryProvider.overrideWithValue(mockRepo),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      container.read(workstationProvider.notifier).loadDocument(
+            Uint8List.fromList([1, 2, 3]),
+            'scan.pdf',
+          );
+      container.read(workstationProvider.notifier).addOrUpdateBBox(
+            0,
+            const BBoxItem(
+              blockId: 'p0_b0',
+              page: 0,
+              block: 0,
+              bbox: [0.0, 0.0, 1.0, 0.1],
+              text: '   ',
+            ),
+          );
+      container.read(workstationProvider.notifier).addOrUpdateBBox(
+            0,
+            const BBoxItem(
+              blockId: 'p0_b1',
+              page: 0,
+              block: 1,
+              bbox: [0.0, 0.1, 1.0, 0.2],
+              text: '\n\n',
+            ),
+          );
+
+      await tester.pumpWidget(buildExportModal(container));
+      await tester.pumpAndSettle();
+
+      // Select Word Document (default is Searchable PDF).
+      await tester.tap(find.byType(AppSelect<ExportFormat>));
+      await tester.pumpAndSettle();
+      final docxItem = find.textContaining('Word Document');
+      await tester.tap(docxItem.last);
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.widgetWithText(AppButton, 'Export Document'));
+      await tester.pumpAndSettle();
+
+      verify(() => mockRepo.exportDocx(any(
+            that: isA<ExportDocxRequest>()
+                .having((r) => r.text, 'text', 'scan.pdf'),
+          ))).called(1);
     });
   });
 }

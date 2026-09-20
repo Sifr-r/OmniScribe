@@ -98,6 +98,16 @@ class RuntimeSettings(BaseSettings):
         default=DEFAULT_GROUNDED_MODEL,
         validation_alias="OMNISCRIBE_GROUNDED_MODEL",
     )
+    ocr_dpi: int = Field(default=192, validation_alias="OCR_DPI", ge=36, le=600)
+    ocr_concurrency: int = Field(
+        default=3, validation_alias="OCR_CONCURRENCY", ge=1, le=32
+    )
+    ocr_dense_threshold: int = Field(
+        default=150, validation_alias="OCR_DENSE_THRESHOLD", ge=1, le=10000
+    )
+    ocr_max_image_dim: int = Field(
+        default=1024, validation_alias="OCR_MAX_IMAGE_DIM", ge=128, le=8192
+    )
 
     vlm_page_timeout: float = Field(
         default=240.0, validation_alias="OMNISCRIBE_VLM_PAGE_TIMEOUT", gt=0
@@ -183,9 +193,9 @@ class RuntimeSettings(BaseSettings):
     # artifact metadata, and progress-channel state across restarts in a
     # single file at ``<artifact_dir>/omniscribe-state.db`` (WAL mode).
     # ``memory`` keeps every store in the local process; setting it
-    # explicitly triggers a ``WARN`` log at boot. ``redis`` is deferred
-    # and not yet implemented in the harness. The selector is validated
-    # at startup; unsupported backends fail fast.
+    # explicitly triggers a ``WARN`` log at boot. ``redis`` shares state
+    # across workers when paired with ``REDIS_URL``. The selector is
+    # validated at startup; unsupported backends fail fast.
     state_backend: str = Field(
         default="sqlite",
         validation_alias="OMNISCRIBE_STATE_BACKEND",
@@ -279,12 +289,12 @@ class RuntimeSettings(BaseSettings):
     @classmethod
     def _normalize_state_backend(cls, value: object) -> str:
         if value is None or (isinstance(value, str) and not value.strip()):
-            return "memory"
+            return "sqlite"
         normalized = str(value).strip().lower()
-        if normalized not in {"memory", "sqlite"}:
+        if normalized not in {"memory", "sqlite", "redis"}:
             raise ValueError(
-                f"state backend '{normalized}' is not yet implemented in the plugin harness; "
-                "supported backends are 'memory' and 'sqlite'"
+                f"unsupported state backend '{normalized}'; supported backends are "
+                "'memory', 'sqlite', and 'redis'"
             )
         return normalized
 

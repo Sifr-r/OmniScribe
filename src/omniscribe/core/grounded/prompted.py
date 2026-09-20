@@ -36,6 +36,7 @@ from omniscribe.core.grounded.rasterize import _rasterize_to_jpeg_pages
 from omniscribe.core.llm.client import call_llm
 from omniscribe.core.llm.temperatures import TEMPERATURE_GROUNDED
 from omniscribe.core.ocr import (
+    LLMBalanceError,
     ModelNotLoadedError,
     _format_model_not_loaded,
     _list_loaded_model_ids,
@@ -224,7 +225,7 @@ class PromptedGroundedOCR:
         self,
         api_base: str | None = None,
         model: str | None = None,
-        api_key: str = "lm-studio",
+        api_key: str | None = None,
         max_image_dim: int = 1024,
         dpi: int = 150,
         prompt: str | None = None,
@@ -247,7 +248,9 @@ class PromptedGroundedOCR:
             api_base or settings.llm_api_base or "http://localhost:1234/v1"
         )
         self.model: str = model or settings.llm_model or "qwen/qwen3-vl-8b"
-        self.api_key: str = api_key or settings.llm_api_key or "lm-studio"
+        self.api_key: str = (
+            api_key if api_key is not None else (settings.llm_api_key or "lm-studio")
+        )
         self.max_image_dim = max_image_dim
         self.dpi = dpi
         self.prompt = prompt or DEFAULT_GROUNDING_PROMPT
@@ -451,6 +454,8 @@ class PromptedGroundedOCR:
         pdf_path: str,
         progress: ProgressCallback | None = None,
         on_warning: WarningCallback | None = None,
+        *,
+        pages: str | None = None,
     ) -> GroundedResponse:
         # 1. Rasterize every page, remembering dimensions.
         # Offloaded to a worker thread — fitz.open / get_pixmap are blocking
@@ -458,11 +463,20 @@ class PromptedGroundedOCR:
         # is cached on the instance (audit P2-9) so the repair loop's
         # ``ocr_crop`` reuses it.
         page_imgs = await self._get_page_images(pdf_path)
+        from omniscribe.core.pdf.page_range import parse_page_range_with_total
+
+        page_indices = (
+            parse_page_range_with_total(pages, len(page_imgs))
+            if pages and pages.strip()
+            else list(range(len(page_imgs)))
+        )
+        if not page_indices:
+            raise ValueError("The selected page range contains no document pages.")
 
         # 2. Call the VLM per page, streaming progress and isolating failures
         # so one bad page doesn't tank a multi-page document.
         sem = asyncio.Semaphore(max(1, self.concurrency))
-        total_pages = len(page_imgs)
+        total_pages = len(page_indices)
 
         async def run_one(
             page_idx: int,
@@ -480,7 +494,7 @@ class PromptedGroundedOCR:
                         )
 
                     return page_idx, blocks, None
-                except (CircuitOpenError, OCRCancelled):
+                except (CircuitOpenError, OCRCancelled, LLMBalanceError):
                     raise
                 except Exception as e:
                     # Per-page isolation: log the failure and return zero
@@ -495,7 +509,7 @@ class PromptedGroundedOCR:
                     )
                     return page_idx, [], e
 
-        tasks = [asyncio.create_task(run_one(i)) for i in range(total_pages)]
+        tasks = [asyncio.create_task(run_one(i)) for i in page_indices]
         blocks_by_page: dict[int, list[GroundedBlock]] = {}
         failed_pages: list[int] = []
         completed = 0
@@ -530,7 +544,7 @@ class PromptedGroundedOCR:
 
         # Flatten in page order for a stable, deterministic output.
         flat_blocks: list[GroundedBlock] = []
-        for page_idx in range(total_pages):
+        for page_idx in page_indices:
             flat_blocks.extend(blocks_by_page.get(page_idx, []))
         return GroundedResponse(
             blocks=flat_blocks,

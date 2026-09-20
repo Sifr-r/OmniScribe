@@ -1,4 +1,4 @@
-"""Cordis-style plugin harness: Context, Service, Event, EffectScope, Loader."""
+"""Cordis-style plugin harness: Context, Event, EffectScope, Loader."""
 
 from __future__ import annotations
 
@@ -15,7 +15,6 @@ from omniscribe.harness.errors import (
 from omniscribe.harness.events import AgentEvent, CapabilityEvent, Event, SessionEvent
 from omniscribe.harness.loader import Loader, PluginRow
 from omniscribe.harness.plugin import Plugin
-from omniscribe.harness.service import Service
 
 __all__ = [
     "AgentEvent",
@@ -32,7 +31,6 @@ __all__ = [
     "Plugin",
     "PluginLoadError",
     "PluginRow",
-    "Service",
     "ServiceNotFoundError",
     "SessionEvent",
     "effect_scope",

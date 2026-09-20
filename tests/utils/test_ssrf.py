@@ -274,3 +274,49 @@ async def test_dual_stack_loopback_names_blocked_without_local_opt_in(
 
     assert res.allowed is False
     assert res.reason == "resolved-blocked-ip"
+
+
+# ---------------------------------------------------------------------------
+# Pin-target selection when the candidate set mixes private and public IPs
+# (audit MEDIUM follow-up: ``_pick_pinned_address`` previously returned
+# ``candidates[0]`` even when a public address was available further down
+# the DNS answer — a public host would be pinned to its loopback lead-in
+# under ``ALLOW_SSRF_LOCAL=1``).
+# ---------------------------------------------------------------------------
+
+
+def test_pick_pinned_address_prefers_public_over_private() -> None:
+    """Public address must win when the candidate set mixes private and public IPs."""
+    import ipaddress
+
+    from omniscribe.utils.security import _pick_pinned_address
+
+    private = (ipaddress.ip_address("127.0.0.1"), "resolved-blocked-but-allowed")
+    public = (ipaddress.ip_address("1.2.3.4"), None)
+
+    # Private first — public must still be selected.
+    chosen_ip, chosen_reason = _pick_pinned_address([private, public])
+    assert chosen_ip == ipaddress.ip_address("1.2.3.4")
+    assert chosen_reason is None
+
+    # Public first — still public, and the leading reason is preserved.
+    chosen_ip, chosen_reason = _pick_pinned_address([public, private])
+    assert chosen_ip == ipaddress.ip_address("1.2.3.4")
+    assert chosen_reason is None
+
+
+def test_pick_pinned_address_ipv4_preferred_when_all_private() -> None:
+    """All-private candidates keep the IPv4-preference ordering for loopback servers."""
+    import ipaddress
+
+    from omniscribe.utils.security import _pick_pinned_address
+
+    ipv6 = (ipaddress.ip_address("::1"), "resolved-blocked-but-allowed")
+    ipv4 = (ipaddress.ip_address("127.0.0.1"), "resolved-blocked-but-allowed")
+
+    chosen_ip, _ = _pick_pinned_address([ipv6, ipv4])
+    assert chosen_ip == ipaddress.ip_address("127.0.0.1")
+
+    # Order of the two private candidates shouldn't change the answer.
+    chosen_ip, _ = _pick_pinned_address([ipv4, ipv6])
+    assert chosen_ip == ipaddress.ip_address("127.0.0.1")
