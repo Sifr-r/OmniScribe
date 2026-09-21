@@ -1,7 +1,8 @@
 import 'dart:math' as math;
 import 'dart:typed_data';
 
-import 'package:flutter/foundation.dart' show visibleForTesting, FlutterError, FlutterErrorDetails;
+import 'package:flutter/foundation.dart'
+    show visibleForTesting, FlutterError, FlutterErrorDetails;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:omniscribe_client/data/models/bbox_item.dart';
 import 'package:omniscribe_client/data/models/document_result.dart';
@@ -20,6 +21,16 @@ final workstationProvider =
     NotifierProvider<WorkstationNotifier, WorkstationState>(
   WorkstationNotifier.new,
 );
+
+/// Internal record used by [WorkstationNotifier.hydratePagesFromTextArtifact]
+/// while sorting server-side text-artifact lines back into per-page bbox
+/// entries. Not exposed outside this file.
+class _HydratedEntry {
+  const _HydratedEntry(this.page, this.blockIdx, this.text);
+  final int page;
+  final int blockIdx;
+  final String text;
+}
 
 /// Riverpod 2.x [Notifier] managing the Workstation document state (pages,
 /// previews, bboxes) and canvas document data. OCR job orchestration lives in
@@ -399,6 +410,89 @@ class WorkstationNotifier extends Notifier<WorkstationState> {
     );
   }
 
+  /// Hydrate the workstation pages from a server-side text artifact when
+  /// the WebSocket progress stream never delivered `block_complete` frames
+  /// (e.g. WS connection silently failed, or the OCR job completed before
+  /// the client WS handshake finished).
+  ///
+  /// Server text artifact shape (from `plugins/documents/service.py::
+  /// load_pages`):
+  ///   `{"<page_index>": "<lines joined by \n>"}`
+  ///
+  /// Each non-empty line becomes a synthetic `BBoxItem` with a
+  /// placeholder bbox — no real coordinates are stored server-side,
+  /// only line-broken text. This is enough to drive the export modal's
+  /// local formats (Markdown, Plain Text, HTML, Block Tree JSON,
+  /// DOCX-from-markdown) without requiring a fresh OCR run.
+  ///
+  /// Returns the total number of bboxes written, or `-1` when nothing
+  /// needed hydrating (workstation already had bboxes).
+  int hydratePagesFromTextArtifact(Map<String, dynamic> artifact) {
+    if (state.allBBoxes.isNotEmpty) {
+      // WS already populated bboxes — don't clobber real coords with
+      // placeholder lines. Caller should not invoke this when frames
+      // were already received.
+      return -1;
+    }
+
+    final entries = <_HydratedEntry>[];
+    artifact.forEach((key, value) {
+      final pageIndex = int.tryParse(key);
+      if (pageIndex == null || pageIndex < 0) return;
+      final text = value is String ? value : '';
+      final lines = text.split('\n');
+      for (var i = 0; i < lines.length; i++) {
+        final line = lines[i];
+        if (line.trim().isEmpty) continue;
+        entries.add(_HydratedEntry(pageIndex, i, line));
+      }
+    });
+    if (entries.isEmpty) return 0;
+
+    // Sort by page, then by line order so the export modal's
+    // `bboxesWithContent.join('\n\n')` produces readable output.
+    entries.sort((a, b) {
+      final pageCmp = a.page.compareTo(b.page);
+      return pageCmp != 0 ? pageCmp : a.blockIdx.compareTo(b.blockIdx);
+    });
+
+    final newPages = <PageResult>[];
+    var currentPageIdx = -1;
+    var currentBBoxes = <BBoxItem>[];
+    var blockCounter = 0;
+    for (final entry in entries) {
+      if (entry.page != currentPageIdx) {
+        if (currentPageIdx >= 0) {
+          newPages.add(PageResult(
+            page: currentPageIdx,
+            bboxes: currentBBoxes,
+          ));
+        }
+        currentPageIdx = entry.page;
+        currentBBoxes = <BBoxItem>[];
+        blockCounter = 0;
+      }
+      currentBBoxes.add(BBoxItem(
+        blockId: 'p${entry.page}_b${entry.blockIdx}_hydrated',
+        page: entry.page,
+        block: blockCounter++,
+        bbox: const [0.0, 0.0, 1.0, 1.0],
+        text: entry.text,
+        kind: 'paragraph',
+        label: 'hydrated-from-artifact',
+      ));
+    }
+    if (currentPageIdx >= 0) {
+      newPages.add(PageResult(page: currentPageIdx, bboxes: currentBBoxes));
+    }
+
+    state = state.copyWith(
+      pages: newPages,
+      pageCount: newPages.length,
+    );
+    return entries.length;
+  }
+
   /// Adds a new bounding box or updates an existing bounding box on a page.
   void addOrUpdateBBox(int page, BBoxItem bbox) {
     if (page < 0) return;
@@ -569,9 +663,7 @@ class WorkstationNotifier extends Notifier<WorkstationState> {
   /// with default settings (the workstation dock's tweaked values are not
   /// observable from the AppShell key handler in Phase A).
   Future<void> processCurrentDocument() {
-    return ref
-        .read(jobOrchestrationProvider.notifier)
-        .processCurrentDocument();
+    return ref.read(jobOrchestrationProvider.notifier).processCurrentDocument();
   }
 
   /// Fetches a canonical fixture PDF from the server and stages it as the

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -122,8 +123,9 @@ class JobOrchestrationState {
       percent: percent ?? this.percent,
       stage: stage ?? this.stage,
       statusMessage: statusMessage ?? this.statusMessage,
-      warnings:
-          warnings == null ? this.warnings : List<String>.unmodifiable(warnings),
+      warnings: warnings == null
+          ? this.warnings
+          : List<String>.unmodifiable(warnings),
       channelId: clearChannelId ? null : (channelId ?? this.channelId),
       activeJobId: clearActiveJobId ? null : (activeJobId ?? this.activeJobId),
       lastSubmittedJobId: clearLastSubmittedJobId
@@ -433,6 +435,44 @@ class JobOrchestrationNotifier extends Notifier<JobOrchestrationState> {
         textArtifactId: result.textArtifactId,
         textArtifactToken: result.textArtifactToken,
       );
+
+      // Fallback hydration: if the WebSocket never delivered any
+      // block_complete frames (e.g. the WS handshake failed silently and
+      // the export modal would otherwise see an empty bbox store),
+      // pull the page-broken text back from the server's text artifact
+      // and synthesise one bbox per non-empty line. This keeps the
+      // local Markdown / Plain Text / HTML / Block Tree JSON /
+      // DOCX-from-markdown exports non-blank even when WS frames were
+      // lost. Real bbox coords (and `confidence` values) only come from
+      // the WS stream, so users still see "Live progress not received"
+      // in the status to flag the degraded path.
+      if (result.textArtifactId != null &&
+          result.textArtifactToken != null &&
+          ref.read(workstationProvider).allBBoxes.isEmpty) {
+        try {
+          final artifactJson = await _ocrRepo.getTextArtifact(
+            result.textArtifactId!,
+            result.textArtifactToken!,
+          );
+          final parsed = jsonDecode(artifactJson);
+          if (parsed is Map<String, dynamic>) {
+            final written = ref
+                .read(workstationProvider.notifier)
+                .hydratePagesFromTextArtifact(parsed);
+            if (written > 0) {
+              state = state.copyWith(
+                statusMessage:
+                    'Document OCR complete (live progress not received — '
+                    'recovered text from artifact)',
+              );
+            }
+          }
+        } catch (e) {
+          // Best-effort: the export modal still has DOCX Tree Layout and
+          // PDF paths that don't need local bboxes. Log but don't fail
+          // the whole OCR run.
+        }
+      }
     } catch (e) {
       if (_isCurrentRun(runId)) {
         state = state.copyWith(
@@ -586,9 +626,12 @@ class JobOrchestrationNotifier extends Notifier<JobOrchestrationState> {
       final status = await _ocrRepo.getJobStatus(jobId);
       if (!_isCurrentRun(runId) || state.activeJobId != jobId) return;
       if (status.isComplete) {
-        final result = await _ocrRepo.downloadProcessedResult(jobId, token: _resultToken);
+        final result =
+            await _ocrRepo.downloadProcessedResult(jobId, token: _resultToken);
         if (!_isCurrentRun(runId) || state.activeJobId != jobId) return;
-        ref.read(workstationProvider.notifier).adoptProcessedDocument(result.pdfBytes);
+        ref
+            .read(workstationProvider.notifier)
+            .adoptProcessedDocument(result.pdfBytes);
         state = state.copyWith(
           isProcessing: false,
           percent: 100,
@@ -598,6 +641,36 @@ class JobOrchestrationNotifier extends Notifier<JobOrchestrationState> {
           textArtifactToken: result.textArtifactToken,
           trustSummary: result.trustSummary,
         );
+
+        // Same fallback hydration as the sync path: if the WS stream
+        // never delivered block_complete frames, recover the page-broken
+        // text from the artifact so the local export formats stay usable.
+        if (result.textArtifactId != null &&
+            result.textArtifactToken != null &&
+            ref.read(workstationProvider).allBBoxes.isEmpty) {
+          try {
+            final artifactJson = await _ocrRepo.getTextArtifact(
+              result.textArtifactId!,
+              result.textArtifactToken!,
+            );
+            final parsed = jsonDecode(artifactJson);
+            if (parsed is Map<String, dynamic>) {
+              final written = ref
+                  .read(workstationProvider.notifier)
+                  .hydratePagesFromTextArtifact(parsed);
+              if (written > 0) {
+                state = state.copyWith(
+                  statusMessage:
+                      'Document OCR complete (live progress not received — '
+                      'recovered text from artifact)',
+                );
+              }
+            }
+          } catch (_) {
+            // Best-effort: PDF + DOCX Tree Layout still work via the
+            // server artifact; the other formats just stay blank.
+          }
+        }
         reachedTerminalState = true;
       } else if (status.isCancelled) {
         state = state.copyWith(
@@ -640,7 +713,9 @@ class JobOrchestrationNotifier extends Notifier<JobOrchestrationState> {
       if (_statusCheckRunId == runId) {
         _statusCheckRunId = null;
       }
-      if (_isCurrentRun(runId) && state.isProcessing && state.activeJobId == jobId) {
+      if (_isCurrentRun(runId) &&
+          state.isProcessing &&
+          state.activeJobId == jobId) {
         _scheduleStatusCheck(runId);
       }
     }
@@ -725,9 +800,8 @@ class JobOrchestrationNotifier extends Notifier<JobOrchestrationState> {
       clearError: true,
     );
     try {
-      final bytes = await ref
-          .read(samplePdfRepositoryProvider)
-          .fetchSamplePdf(name);
+      final bytes =
+          await ref.read(samplePdfRepositoryProvider).fetchSamplePdf(name);
       ref.read(workstationProvider.notifier).stageSampleDocument(bytes, name);
       state = state.copyWith(
         isProcessing: false,
@@ -787,9 +861,8 @@ class JobOrchestrationNotifier extends Notifier<JobOrchestrationState> {
           if (updatedAvg == null) {
             updatedAvg = b.confidence;
           } else {
-            updatedAvg =
-                (updatedAvg * state.scoredBlocks + b.confidence!) /
-                    newScoredBlocks;
+            updatedAvg = (updatedAvg * state.scoredBlocks + b.confidence!) /
+                newScoredBlocks;
           }
         }
 
