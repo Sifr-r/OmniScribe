@@ -4,8 +4,8 @@ These knobs control how :mod:`omniscribe.core.pdf.rasterizer`,
 :mod:`omniscribe.core.pdf.embedder`, and
 :mod:`omniscribe.core.grounded.rasterize` encode page images and bound
 memory usage. They were originally hardcoded module-level constants in
-``rasterizer.py``; the deep-refactor audit (``.qoder/deep_refactor_report.md``
-§4.7) recommended externalization so operators can tune memory/quality
+``rasterizer.py``; the deep-refactor audit (§4.7, preserved in Git history)
+recommended externalization so operators can tune memory/quality
 trade-offs without code edits.
 
 Env vars (all optional; invalid or out-of-range values fall back to the

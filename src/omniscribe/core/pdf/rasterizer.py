@@ -29,9 +29,10 @@ from omniscribe.core.pdf.page_range import (
 
 _LOGGER = logging.getLogger(__name__)
 
-# Worker count for parallel page rasterization. PyMuPDF is C-bound so
-# 4-8 workers is the sweet spot before context-switch overhead starts
-# to dominate. Operators can override via OMNISCRIBE_RASTERIZER_WORKERS.
+# Retained for backward-compatibility in API signatures. PyMuPDF Document
+# instances are not thread-safe across threads (MuPDF native state can
+# corrupt or race), so page rasterization is performed serially over `doc`.
+# Operators may still configure OMNISCRIBE_RASTERIZER_WORKERS without error.
 _DEFAULT_RASTERIZER_WORKERS = max(
     1, min(8, int(os.getenv("OMNISCRIBE_RASTERIZER_WORKERS", "4")))
 )
@@ -83,7 +84,7 @@ MAX_SAFE_PIXELS: int
 # hardcoded values are kept as the defaults in
 # ``RasterizationSettings`` so behaviour is unchanged when no env vars
 # are set; operators can override via ``OMNISCRIBE_RASTERIZER_*``.
-# See deep_refactor_report.md §4.7.
+# See deep-refactor audit §4.7 (preserved in Git history).
 from omniscribe.core.pdf.rasterization_settings import (  # noqa: E402
     RasterizationSettings as _RasterizationSettings,
 )
@@ -246,6 +247,15 @@ def _generator_from_pdf_source(
     max_image_dim: int,
     parallelism: int = _DEFAULT_RASTERIZER_WORKERS,
 ) -> Iterator[tuple[int, Image.Image, str]]:
+    """Stream rasterized pages serially from a PDF source.
+
+    Note: PyMuPDF documents are not thread-safe across threads (see
+    https://pymupdf.readthedocs.io/en/latest/recipes-multiprocessing.html).
+    Sharing a single `fitz.Document` instance across threads causes memory
+    corruption and race conditions in MuPDF native state. Therefore, per-page
+    rendering is strictly performed serially over `doc`. The `parallelism`
+    parameter is retained for backward-compatibility.
+    """
     _emit_pymupdf_agpl_notice()
 
     if isinstance(source, bytes):
@@ -270,6 +280,8 @@ def _generator_from_pdf_source(
         if not page_nums:
             return
 
+        # PyMuPDF documents are not thread-safe across threads; render serially
+        # over `doc` to prevent native memory corruption.
         for page_num in page_nums:
             yield _rasterize_one_page(doc, page_num, dpi, max_image_dim)
     finally:
@@ -291,10 +303,9 @@ def convert_generator(
     exhausted; the caller MUST consume the iterator (or call ``.close()``
     on it) so PyMuPDF releases the file handle promptly.
 
-    ``parallelism`` controls the worker count used to rasterize pages in
-    parallel (PyMuPDF is thread-safe per-page). Defaults to
-    ``OMNISCRIBE_RASTERIZER_WORKERS`` (capped at 8). ``parallelism=1``
-    forces serial.
+    PyMuPDF documents are not thread-safe across threads, so per-page
+    rendering is performed serially. The ``parallelism`` parameter is
+    retained for backward-compatibility.
 
     Raises ``ValueError`` for empty paths / empty bytes / non-positive DPI.
     """

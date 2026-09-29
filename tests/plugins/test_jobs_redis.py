@@ -14,9 +14,12 @@ from __future__ import annotations
 
 import asyncio
 import json
+import shutil
+import tempfile
 import time
 from collections.abc import AsyncIterator
 from dataclasses import replace
+from pathlib import Path
 from typing import Any
 
 import fakeredis.aioredis
@@ -26,6 +29,7 @@ from omniscribe.harness.context import Context
 from omniscribe.plugins import artifacts as art_plugin
 from omniscribe.plugins.artifacts import ArtifactStore
 from omniscribe.plugins.jobs import (
+    JobCompleted,
     JobFailed,
     JobHandle,
     JobOutcome,
@@ -110,6 +114,12 @@ async def harness(
 
 
 # -- 1. Basic Protocol Methods ------------------------------------------------
+
+
+def test_redis_uses_shared_spool_containment() -> None:
+    from omniscribe.plugins import jobs, jobs_redis
+
+    assert jobs_redis._is_strictly_inside_spool is jobs._is_strictly_inside_spool
 
 
 async def test_job_queue_submit_and_status(harness: dict[str, Any]) -> None:
@@ -431,23 +441,31 @@ async def test_expired_worker_cannot_finish_recovered_claim(
 
 
 async def test_redis_ocr_payload_carries_job_id_to_other_workers(
-    harness: dict[str, Any], tmp_path: Any
+    harness: dict[str, Any],
 ) -> None:
     """Redis deserialization preserves the job ID needed for cancellation."""
     queue: RedisJobQueue = harness["queue"]
-    payload = _OcrPayload(
-        submission_id="submission",
-        input_path=tmp_path / "input.pdf",
-        filename="input.pdf",
-        request=OCRRequest(),
-    )
+    submission_id = "submission"
+    work_dir = Path(tempfile.gettempdir()) / f"omniscribe-ocr-{submission_id}"
+    work_dir.mkdir(parents=True, exist_ok=True)
+    input_file = work_dir / "input.pdf"
+    input_file.write_bytes(b"%PDF-1.4 dummy")
+    try:
+        payload = _OcrPayload(
+            submission_id=submission_id,
+            input_path=input_file,
+            filename="input.pdf",
+            request=OCRRequest(),
+        )
 
-    handle = await queue.submit(payload)
-    claim = await queue.claim(worker_id="worker-a")
-    assert claim is not None
-    _claimed_id, claimed_payload = claim
-    assert isinstance(claimed_payload, _OcrPayload)
-    assert claimed_payload.job_id == handle.job_id
+        handle = await queue.submit(payload, input_path=str(input_file))
+        claim = await queue.claim(worker_id="worker-a")
+        assert claim is not None
+        _claimed_id, claimed_payload = claim
+        assert isinstance(claimed_payload, _OcrPayload)
+        assert claimed_payload.job_id == handle.job_id
+    finally:
+        shutil.rmtree(work_dir, ignore_errors=True)
 
 
 # -- 5. Worker Heartbeat -------------------------------------------------------
@@ -647,3 +665,107 @@ async def test_handle_job_failure_lease_lost(harness: dict[str, Any]) -> None:
     record = await queue.status(job_id)
     assert record is not None
     assert record.status == "queued"
+
+
+async def test_worker_broadcasts_terminal_progress_frame_to_redis_and_context(
+    harness: dict[str, Any],
+) -> None:
+    worker_ctx: Context = harness["ctx"]
+    queue: RedisJobQueue = harness["queue"]
+    backend: StateBackend = harness["backend"]
+    artifacts: ArtifactStore = harness["artifacts"]
+    fake_redis = harness["redis"]
+
+    # Separate API server context (simulating separate API server process)
+    api_ctx = Context()
+    api_backend = RedisStateBackend(redis_url="redis://fake:6379/0")
+    api_backend._redis = fake_redis
+    await api_backend.open()
+    api_ctx.service(StateBackend, api_backend)
+
+    api_progress = ProgressServiceImpl(
+        api_ctx,
+        api_backend,
+        redis_client=fake_redis,
+        redis_mode=True,
+    )
+    await api_progress.open()
+    api_ctx.service(ProgressService, api_progress)
+
+    api_completed_events: list[JobCompleted] = []
+
+    async def on_completed(ev: Any) -> None:
+        if isinstance(ev, JobCompleted):
+            api_completed_events.append(ev)
+
+    api_ctx.on(JobCompleted, on_completed)
+
+    async def sample_runner(req: Any) -> JobOutcome:
+        return JobOutcome(blob=b"PDF RESULT", content_type="application/pdf")
+
+    worker_ctx.service(JobRunner, sample_runner)
+
+    handle = await queue.submit({"filename": "sample.pdf"})
+    claim = await queue.claim(worker_id="worker-test")
+    assert claim is not None
+    job_id, payload = claim
+    assert job_id == handle.job_id
+
+    await _execute_job(
+        job_id,
+        payload,
+        worker_ctx,
+        queue,
+        backend,
+        artifacts,
+        lease_owner="worker-test",
+    )
+
+    # Wait for pubsub propagation to API server context
+    deadline = time.monotonic() + 2.0
+    while time.monotonic() < deadline and not api_completed_events:
+        await asyncio.sleep(0.05)
+
+    assert len(api_completed_events) == 1
+    assert api_completed_events[0].job_id == job_id
+    assert api_completed_events[0].artifact_id != ""
+
+    await api_progress.aclose()
+    await api_backend.aclose()
+
+
+async def test_ocr_service_wait_for_events_unblocks_on_terminal_backend(
+    harness: dict[str, Any],
+) -> None:
+    from omniscribe.config import load_settings
+    from omniscribe.plugins.ocr.service import OCRServiceImpl
+
+    queue: RedisJobQueue = harness["queue"]
+    backend: StateBackend = harness["backend"]
+    artifacts: ArtifactStore = harness["artifacts"]
+    settings = load_settings()
+
+    service = OCRServiceImpl(
+        settings,
+        queue,
+        artifacts,
+        progress=None,
+        max_upload_mb=10,
+    )
+    service._backend = backend
+
+    handle = await queue.submit({"filename": "doc.pdf"})
+    job_id = handle.job_id
+
+    # Flip job to complete directly in backend (simulating separate worker process)
+    rec = await backend.get_job(job_id)
+    assert rec is not None
+    await backend.upsert_job(replace(rec, status="complete", updated_at=time.time()))
+
+    # wait_for_events should detect terminal backend record and return immediately
+    start_t = time.monotonic()
+    await service.wait_for_events(job_id)
+    elapsed = time.monotonic() - start_t
+
+    assert elapsed < 1.0
+    assert service.is_done(job_id) is True

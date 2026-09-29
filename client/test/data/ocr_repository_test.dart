@@ -123,6 +123,60 @@ void main() {
       expect(captured.files.any((f) => f.key == 'file'), isFalse);
     });
 
+    test('keeps the cached document ID when the response omits it', () async {
+      when(() => apiClient.postMultipartBytes(
+            ApiConstants.documentPreview,
+            formData: any(named: 'formData'),
+            receiveTimeout: any(named: 'receiveTimeout'),
+          )).thenAnswer((_) async => ApiResponse<Uint8List>(
+            data: Uint8List.fromList([1]),
+            statusCode: 200,
+            headers: const {'x-total-pages': 'invalid'},
+          ));
+
+      final result = await repo.renderDocumentPagePreview(
+        filename: 'cached.pdf',
+        docId: 'cached-id',
+      );
+
+      expect(result?.docId, 'cached-id');
+      expect(result?.totalPages, 1);
+      expect(result?.width, isNull);
+      expect(result?.height, isNull);
+    });
+
+    test('retries upload when cached preview fails', () async {
+      var calls = 0;
+      when(() => apiClient.postMultipartBytes(
+            ApiConstants.documentPreview,
+            formData: any(named: 'formData'),
+            receiveTimeout: any(named: 'receiveTimeout'),
+          )).thenAnswer((_) async {
+        if (calls++ == 0) throw StateError('stale document');
+        return ApiResponse<Uint8List>(
+          data: Uint8List.fromList([2]),
+          statusCode: 200,
+          headers: const {'x-document-id': 'fresh-id'},
+        );
+      });
+
+      final result = await repo.renderDocumentPagePreview(
+        fileBytes: Uint8List.fromList([1]),
+        filename: 'cached.pdf',
+        docId: 'stale-id',
+      );
+
+      expect(result?.docId, 'fresh-id');
+      final requests = verify(() => apiClient.postMultipartBytes(
+            ApiConstants.documentPreview,
+            formData: captureAny(named: 'formData'),
+            receiveTimeout: any(named: 'receiveTimeout'),
+          )).captured.cast<FormData>();
+      expect(requests.length, 2);
+      expect(requests.first.files, isEmpty);
+      expect(requests.last.files.any((part) => part.key == 'file'), isTrue);
+    });
+
     test('returns null without network call when both fileBytes and docId are null',
         () async {
       final result = await repo.renderDocumentPagePreview(

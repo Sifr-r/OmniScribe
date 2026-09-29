@@ -82,12 +82,24 @@ def test_export_markdown_get_success(api_client: TestClient) -> None:
         "/api/export/markdown",
         params={
             "text_artifact_id": artifact_id,
-            "text_artifact_token": token,
         },
+        headers={"X-Artifact-Token": token},
     )
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/markdown")
     assert "SECTION ONE" in response.text
+
+    # Also verify Authorization: Bearer <token>
+    auth_resp = api_client.get(
+        "/api/export/markdown",
+        params={
+            "text_artifact_id": artifact_id,
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert auth_resp.status_code == 200
+    assert auth_resp.headers["content-type"].startswith("text/markdown")
+    assert "SECTION ONE" in auth_resp.text
 
 
 def test_export_markdown_not_found(api_client: TestClient) -> None:
@@ -105,8 +117,8 @@ def test_export_markdown_not_found(api_client: TestClient) -> None:
         "/api/export/markdown",
         params={
             "text_artifact_id": "0" * 32,
-            "text_artifact_token": "t" * 43,
         },
+        headers={"X-Artifact-Token": "t" * 43},
     )
     assert get_resp.status_code == 404
 
@@ -157,16 +169,29 @@ def test_export_chunks_get_success(api_client: TestClient) -> None:
         "/api/export/chunks",
         params={
             "text_artifact_id": artifact_id,
-            "text_artifact_token": token,
             "max_chars": 800,
             "overlap_chars": 80,
             "min_chars": 150,
         },
+        headers={"Authorization": f"Bearer {token}"},
     )
     assert response.status_code == 200
     data = response.json()
     assert data["total_chunks"] > 0
     assert len(data["chunks"]) == data["total_chunks"]
+
+    # Also verify X-Artifact-Token
+    x_resp = api_client.get(
+        "/api/export/chunks",
+        params={
+            "text_artifact_id": artifact_id,
+            "max_chars": 800,
+            "overlap_chars": 80,
+            "min_chars": 150,
+        },
+        headers={"X-Artifact-Token": token},
+    )
+    assert x_resp.status_code == 200
 
 
 def test_export_chunks_knob_validation(api_client: TestClient) -> None:
@@ -193,13 +218,82 @@ def test_export_chunks_knob_validation(api_client: TestClient) -> None:
         "/api/export/chunks",
         params={
             "text_artifact_id": artifact_id,
-            "text_artifact_token": token,
             "max_chars": 100,
             "min_chars": 200,
         },
+        headers={"X-Artifact-Token": token},
     )
     assert get_resp.status_code == 400
     assert get_resp.json()["error"] == "bad_request"
+
+
+def test_export_query_param_token_not_authorized(api_client: TestClient) -> None:
+    artifact_id, token = _seed_text_artifact(
+        api_client,
+        {"0": "SECTION ONE\nSome narrative body content."},
+    )
+
+    # Passing text_artifact_token as query param must NOT authorize GET /api/export/markdown
+    resp_md = api_client.get(
+        "/api/export/markdown",
+        params={
+            "text_artifact_id": artifact_id,
+            "text_artifact_token": token,
+        },
+    )
+    assert resp_md.status_code == 401
+    assert resp_md.json()["error"] == "unauthorized"
+
+    # Passing text_artifact_token as query param must NOT authorize GET /api/export/chunks
+    resp_chunks = api_client.get(
+        "/api/export/chunks",
+        params={
+            "text_artifact_id": artifact_id,
+            "text_artifact_token": token,
+        },
+    )
+    assert resp_chunks.status_code == 401
+    assert resp_chunks.json()["error"] == "unauthorized"
+
+
+def test_export_metadata_token_requires_header(api_client: TestClient) -> None:
+    text_id, text_token = _seed_text_artifact(
+        api_client,
+        {"0": "SECTION ONE\nSome narrative body content."},
+    )
+    metadata_id, metadata_token = _seed_artifact(
+        api_client,
+        blob=json.dumps({"page_count": 1}).encode("utf-8"),
+    )
+
+    for path in ("/api/export/markdown", "/api/export/chunks"):
+        query_token_response = api_client.get(
+            path,
+            params={
+                "text_artifact_id": text_id,
+                "metadata_artifact_id": metadata_id,
+                "metadata_artifact_token": metadata_token,
+            },
+            headers={"X-Artifact-Token": text_token},
+        )
+        assert query_token_response.status_code == 401
+        assert query_token_response.json()["error"] == "unauthorized"
+        assert (
+            query_token_response.json()["detail"] == "metadata artifact token required"
+        )
+
+        header_token_response = api_client.get(
+            path,
+            params={
+                "text_artifact_id": text_id,
+                "metadata_artifact_id": metadata_id,
+            },
+            headers={
+                "X-Artifact-Token": text_token,
+                "X-Metadata-Artifact-Token": metadata_token,
+            },
+        )
+        assert header_token_response.status_code == 200
 
 
 def test_routes_not_captured_by_parameterized_export_route(

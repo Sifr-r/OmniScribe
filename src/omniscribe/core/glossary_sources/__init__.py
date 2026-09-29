@@ -6,11 +6,12 @@ from collections.abc import Callable
 from dataclasses import replace
 from typing import Any
 
-from . import csv_tsv, git_repo, json_pairs, sql_table, tbx, tmx, xliff
+from . import csv_tsv, git_repo, json_pairs, lanes_lexicon, sql_table, tbx, tmx, xliff
 from .csv_tsv import parse_csv, parse_csv_tsv, parse_tsv
 from .encoding import decode_bytes, detect_encoding, read_text_auto_detect
 from .git_repo import parse_git_glossary
 from .json_pairs import parse_json_pairs
+from .lanes_lexicon import parse_lanes_lexicon_sqlite, parse_lanes_lexicon_xml
 from .sql_table import parse_sql_table
 from .summary import FormatNotAvailableError, GlossaryImportSummary, redact_dsn
 from .tbx import parse_tbx
@@ -27,6 +28,8 @@ __all__ = [
     "parse_csv_tsv",
     "parse_git_glossary",
     "parse_json_pairs",
+    "parse_lanes_lexicon_sqlite",
+    "parse_lanes_lexicon_xml",
     "parse_sql_table",
     "parse_tbx",
     "parse_tmx",
@@ -45,6 +48,8 @@ PARSERS: dict[str, str] = {
     "git_glossary": "git_repo.parse_git_glossary",
     "sql_table": "sql_table.parse_sql_table",
     "json_pairs": "json_pairs.parse_json_pairs",
+    "lanes_sqlite": "lanes_lexicon.parse_lanes_lexicon_sqlite",
+    "lanes_xml": "lanes_lexicon.parse_lanes_lexicon_xml",
 }
 
 _FORMAT_MODULES = {
@@ -55,6 +60,7 @@ _FORMAT_MODULES = {
     "git_repo": git_repo,
     "sql_table": sql_table,
     "json_pairs": json_pairs,
+    "lanes_lexicon": lanes_lexicon,
 }
 
 
@@ -86,6 +92,13 @@ def parse(format: str, **kwargs: Any) -> GlossaryImportSummary:
         if data is None:
             raise ValueError("Glossary source data is required.")
         summary = parser(data, **parser_kwargs)
+    elif format_name in {"lanes_sqlite", "lanes_xml"}:
+        # ``max_entries`` is mapped to the parser's ``limit`` kwarg here so
+        # callers get a uniform ``max_entries`` knob. Other locals-only
+        # formats (sql_table, git_glossary) keep their own semantics.
+        if "limit" not in parser_kwargs and max_entries is not None:
+            parser_kwargs["limit"] = max_entries
+        summary = parser(**parser_kwargs)
     else:
         summary = parser(**parser_kwargs)
 

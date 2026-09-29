@@ -456,39 +456,50 @@ class WorkstationNotifier extends Notifier<WorkstationState> {
       return pageCmp != 0 ? pageCmp : a.blockIdx.compareTo(b.blockIdx);
     });
 
-    final newPages = <PageResult>[];
-    var currentPageIdx = -1;
-    var currentBBoxes = <BBoxItem>[];
-    var blockCounter = 0;
+    final bboxesByPage = <int, List<BBoxItem>>{};
+    final blockCounterByPage = <int, int>{};
     for (final entry in entries) {
-      if (entry.page != currentPageIdx) {
-        if (currentPageIdx >= 0) {
-          newPages.add(PageResult(
-            page: currentPageIdx,
-            bboxes: currentBBoxes,
-          ));
-        }
-        currentPageIdx = entry.page;
-        currentBBoxes = <BBoxItem>[];
-        blockCounter = 0;
-      }
-      currentBBoxes.add(BBoxItem(
+      final counter = blockCounterByPage[entry.page] ?? 0;
+      blockCounterByPage[entry.page] = counter + 1;
+      (bboxesByPage[entry.page] ??= []).add(BBoxItem(
         blockId: 'p${entry.page}_b${entry.blockIdx}_hydrated',
         page: entry.page,
-        block: blockCounter++,
+        block: counter,
         bbox: const [0.0, 0.0, 1.0, 1.0],
         text: entry.text,
         kind: 'paragraph',
         label: 'hydrated-from-artifact',
       ));
     }
-    if (currentPageIdx >= 0) {
-      newPages.add(PageResult(page: currentPageIdx, bboxes: currentBBoxes));
+
+    final updatedPages = List<PageResult>.from(state.pages);
+
+    for (final pageIdx in bboxesByPage.keys) {
+      while (updatedPages.length <= pageIdx) {
+        updatedPages.add(PageResult(page: updatedPages.length));
+      }
+    }
+
+    for (var i = 0; i < updatedPages.length; i++) {
+      final currentBBoxes = bboxesByPage[i];
+      if (currentBBoxes != null) {
+        final existing = updatedPages[i];
+        updatedPages[i] = PageResult(
+          page: i,
+          width: existing.width,
+          height: existing.height,
+          bboxes: currentBBoxes,
+          text: existing.text,
+          raw: existing.raw,
+          imageUrl: existing.imageUrl,
+          previewBytes: existing.previewBytes,
+        );
+      }
     }
 
     state = state.copyWith(
-      pages: newPages,
-      pageCount: newPages.length,
+      pages: updatedPages,
+      pageCount: updatedPages.length,
     );
     return entries.length;
   }

@@ -6,14 +6,57 @@ the project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Documentation
+
+- **2026-09-21 — Living-doc cleanup.** Removed completed predecessor audits,
+  two implemented design specs, and a generated verification snapshot;
+  condensed the architecture ledger and outstanding-work list; corrected
+  current auth, privacy, Redis, deployment, client-target, and CI guidance.
+  Removed audit details remain available in Git history.
+
 ### User-visible changes
 
 _See [v0.3.0](#030--2026-09-06) for the most recent release and
 [docs/RELEASE-NOTES-v0.3.0.md](RELEASE-NOTES-v0.3.0.md) for the
 full v0.3.0 release report._
 
-- **2026-09-13 — Remediation wave (roadmap P1.1–P4.5,
-  [`docs/audits/2026-09-13-remediation-roadmap.md`](audits/2026-09-13-remediation-roadmap.md)).**
+- **2026-09-27 — Security, Concurrency, Pipeline Performance & Glossary Hardening.**
+  - **Security & Network Hardening:**
+    - Extended `BearerAuthMiddleware` to gate ASGI `websocket` scopes, validating bearer token via `Authorization: Bearer` or `?auth_token=` / `?token=` query parameters and rejecting unauthenticated handshakes with WebSocket close code 4401 (`src/omniscribe/middleware/auth.py`).
+    - Added `create_pinned_client` in `omniscribe.utils.security` to bind HTTP client transport connections to pre-validated SSRF target IPs for both HTTP and HTTPS; wired into `documents` and `translate` services to eliminate DNS rebinding TOCTOU vulnerabilities.
+    - Enforced header-only capability tokens on GET `/api/export/markdown` and `/api/export/chunks` (`X-Artifact-Token`, `Authorization: Bearer`, `X-Metadata-Artifact-Token`), eliminating sensitive tokens from query parameters and access logs (`src/omniscribe/plugins/documents/routes.py`).
+    - Added `X-Job-Token` and `X-Metadata-Artifact-Token` to CORS `allow_headers` in `server.py`.
+  - **Concurrency, Worker Lifecycle & Redis Hardening:**
+    - Enforced strict spool directory containment on Redis job payloads and bound payload paths to persisted `JobRecord.input_path` and claimed job ID (`src/omniscribe/plugins/jobs_redis.py`).
+    - Added atomic Lua script (`_REQUEUE_JOB_LUA`) for lease-checked requeue during graceful worker drain, preventing TOCTOU races.
+    - Worker lifecycle (`worker.py`): Persist terminal `JobRecord` in `StateBackend` *before* worker queue lease acknowledgement/completion. Broadcast terminal frames (`complete`, `failed`, `cancelled`) over Redis Pub/Sub channels and re-emit them into local `Context` event bus in `ProgressService`, unblocking distributed SSE event listeners.
+    - Hardened `OCRService.wait_for_events` against SSE polling deadlocks with 2.0s bounded wait timeouts and proactive `StateBackend` terminal state checks.
+    - Enforced staged OCR upload cleanup beneath spool roots on job cancellation and shutdown.
+  - **OCR & Core Pipeline Performance:**
+    - Serialized page rasterization over single PyMuPDF `fitz.Document` instances in `core.pdf.rasterizer` to eliminate thread-unsafe native MuPDF memory corruption and race conditions.
+    - Replaced PIL `ImageStat.Stat` with NumPy stddev (`np.std`) for blank-region detection (1.5x faster).
+    - Parallelized `crop_many_for_ocr_from_image` using a process-lived ThreadPoolExecutor (`utils/image.py`).
+    - Switched crop upscale resampling from LANCZOS to BICUBIC for 1.55x faster crop scaling.
+    - Memoized per-bbox crops in `repair_single_page` to eliminate duplicate crop overhead on repair retries.
+    - Batched per-page crop and JPEG encoding to amortize executor round-trips.
+  - **Glossary & Lexicon Extensions:**
+    - Added Lane's Arabic-English Lexicon source parsers for SQLite snapshot (`lanes_sqlite`) and TEI XML files (`lanes_xml`) in `core.glossary_sources.lanes_lexicon`.
+    - Added `omniscribe-import-lanes-lexicon` CLI entrypoint in `omniscribe.cli.import_lanes_lexicon`.
+    - Hardened LanceDB schema manager (`core.lexicon.schema`) with fail-closed error policy in `open_terms_table` and `ensure_meta_and_compat` instead of destructive table recreation.
+  - **Searchable PDF & Readers:**
+    - Added fallback default page (595x842 pt) in `embed_structured_text` and `_build_image_sandwich_pdf` when embedding empty page collections.
+    - Added Unicode font chain fast-path (`_is_latin` / `_pick_embed_font`) in synthetic PDF renderer (`core.readers.pdf_renderer`) for Arabic, CJK, Hebrew, and Cyrillic scripts.
+    - Added `eps = 1e-3` boundary tolerance and coordinate clamping in `_normalize_bbox` (`core.document`) and grounded workflow page grouping (`_accumulate_pages`).
+    - Re-exported `MarkdownExporter` as backwards-compatibility alias for `MarkdownWriter` in `core.writers.markdown`.
+  - **Flutter Client:**
+    - Hardened `JobOrchestrationNotifier.cancelOcr` to guarantee local cancellation (`isProcessing: false`, stage `'Cancelled'`) and teardown with warning attribution even if remote server cancel fails.
+    - Bounded status failure retry tracking (`_consecutiveStatusFailures = 3`) before declaring status check failures.
+    - Preserved existing `PageResult` previews, dimensions, and image URLs on artifact hydration without collapsing sparse page indices.
+    - Optimized `WorkstationState` buffer comparison/hash to use length rather than deep byte traversal and hashing.
+    - Caught server URL validation errors and displayed red floating SnackBar notifications in `SettingsScreen`.
+
+- **2026-09-13 — Remediation wave (historical roadmap P1.1–P4.5,
+  preserved in Git history).**
   - **Fix (translation):** async LangGraph translation crashed with
     `"No synchronous function provided"` when driven from a context with a
     running event loop; `run_translation` / `_LazyTranslationApp.invoke` now
@@ -89,9 +132,8 @@ full v0.3.0 release report._
   never joined with a filesystem path; an unknown name
   returns 404. See the new `## "I just installed this — does
   it work?" (no PDF handy)` entry in
-  [`docs/TROUBLESHOOTING.md`](TROUBLESHOOTING.md) and
-  `docs/rfcs/2026-09-v0.3.0-scope.md`
-  §4 for the product call.
+  [`docs/TROUBLESHOOTING.md`](TROUBLESHOOTING.md); the original product
+  decision is preserved in Git history.
 
 ### Maintenance
 
@@ -169,8 +211,7 @@ full v0.3.0 release report._
 > The Sprint 1 root-cause analysis that fixed the bundling
 > failure is at
 > [docs/rfcs/2026-09-bundle-sprint-1-findings.md](rfcs/2026-09-bundle-sprint-1-findings.md).
-> The v0.3.0 plan is at
-> `docs/rfcs/2026-09-v0.3.0-scope.md`.
+> The v0.3.0 plan is preserved in Git history.
 
 ### Bundle & Distribution (Phase 4 — closed)
 
@@ -288,15 +329,13 @@ full v0.3.0 release report._
 > (Phase 4) deferred to v0.3+ pending an upstream PyInstaller +
 > anyio bundling resolution. The full release report is at
 > [docs/RELEASE-NOTES-v0.2.0.md](RELEASE-NOTES-v0.2.0.md). The
-> audit + plan that drove this work are at
-> [docs/audits/2026-09-04-five-lens-audit.md](audits/2026-09-04-five-lens-audit.md)
-> and `docs/audits/2026-09-04-remediation-plan.md`.
+> audit and plan that drove this work are preserved in Git history.
 
 ### Audit & Remediation (2026-09-05 Five-Lens Audit Wave)
 
 - **Audit Completion & Verification**: Executed and validated all actions from the
-  2026-09-04 Five-Lens Audit (`docs/audits/2026-09-04-five-lens-audit.md`) and
-  Remediation Plan (`docs/audits/2026-09-04-remediation-plan.md`).
+  2026-09-04 Five-Lens Audit (preserved in Git history) and
+  Remediation Plan (preserved in Git history).
 - **Regression Resolution**: Fixed `EngineBase._reset_run_state()` in-place clearing
   to preserve `HybridOcrRunner.last_failed_pages` state tracking, added `argparse`
   support to `scripts/run_server.py`, synchronized `REQUIRED_TARGETS` in
@@ -721,8 +760,8 @@ full v0.3.0 release report._
   callers route through `GlossaryLibraryAdapter`. Translation lookup
   is now a one-query hybrid (similar terms, in this language pair, in
   this domain, in this user's enabled glossaries) instead of a
-  ChromaDB semantic search + a JSON side-lookup. Spec:
-  `docs/lexicon-migration-spec.md`.
+  ChromaDB semantic search + a JSON side-lookup. Current migration
+  operations are documented in [`DEPLOYMENT.md`](DEPLOYMENT.md).
 
 - **`omniscribe-migrate-lexicon` CLI** — explicit one-shot migration
   script for users who prefer a manual upgrade path. Supports
@@ -796,7 +835,7 @@ full v0.3.0 release report._
 - **Phase-2 remediation tests** — `tests/test_phase2_remediations.py`
   bundles 7 fixes from the 2026-08-17 audit's Domain 1 / Domain 2
   close-out into one regression file (splitting per-finding is a
-  follow-up; see `audits/2026-08-19-secondary-validation-pass.md` §F26).
+  follow-up; the secondary validation report is preserved in Git history).
 
 - **Misc 2026-08-17 → 2026-08-19** — `tests/test_security_middleware.py`,
   `tests/test_token_deprecation.py`,
@@ -1127,7 +1166,8 @@ full v0.3.0 release report._
   - `pyproject.toml` gains `[tool.omniscribe.ocr_quality]` workspace
     defaults, a `slow_dataset` pytest marker, and a `hypothesis` dev
     dependency for property tests on the pure trust formula.
-  - New user-facing docs at `docs/ocr_quality.md`. Phase 2 (defaults on,
+  - Added user-facing OCR-quality guidance, now consolidated into
+    [`ARCHITECTURE.md`](ARCHITECTURE.md). Phase 2 (defaults on,
     Web UI Trust panel) and Phase 3 (calibration training, dataset
     regression) are planned but not yet shipped.
 - **OCR quality trust layer (Phase 2, defaults on)** — wires the trust
@@ -1358,7 +1398,7 @@ full v0.3.0 release report._
     `client/` package is now in `.dockerignore`; `auth_required_banner`
     navigates to Settings on click; the export modal HTML-escapes
     user-controlled filenames and bbox text (XSS hardening).
-  - Plan: `docs/superpowers/plans/2026-08-28-audit-remediation.md`.
+  - Plan preserved in Git history.
 
 - **Sprint 2 + Sprint 3 + Sprint 4 follow-ups (2026-08-28)** —
   closes the most material remaining items from the 5-domain audit
@@ -1399,7 +1439,7 @@ full v0.3.0 release report._
     `tests/ops/test_arrow_substrait_present.py` asserts the
     DLL is shipped as a real file when the extra is installed.
 
-  Plan: `docs/superpowers/plans/2026-08-28-audit-remediation.md`.
+  Plan preserved in Git history.
 
 - **Sprint 5 audit remediation (DevOps & Config, 2026-08-28)** — the
   2026-08-28 5-domain audit's DevOps & Config findings are
@@ -1432,7 +1472,7 @@ full v0.3.0 release report._
     allkeys-lru` to the Redis service so a chatty broker cannot
     OOM the host.
 
-  Plan: `docs/superpowers/plans/2026-08-28-audit-remediation.md`.
+  Plan preserved in Git history.
 
 - **Sprint 4 audit remediation (Testing & QA, 2026-08-28)** — the
   2026-08-28 5-domain audit's Testing & QA findings are partially
@@ -1449,7 +1489,7 @@ full v0.3.0 release report._
     30-day artifact so developers can drill into uncovered
     branches without running coverage locally.
 
-  Plan: `docs/superpowers/plans/2026-08-28-audit-remediation.md`.
+  Plan preserved in Git history.
 
 - **Sprint 3 audit remediation (Frontend, 2026-08-28)** — the
   2026-08-28 5-domain audit's Frontend findings are partially
@@ -1482,7 +1522,7 @@ full v0.3.0 release report._
     `testWidgets` smoke that mounts `OmniScribeApp` and asserts
     the `MaterialApp` shell is present.
 
-  Plan: `docs/superpowers/plans/2026-08-28-audit-remediation.md`.
+  Plan preserved in Git history.
 
 - **Sprint 2 audit remediation (API & Security, 2026-08-28)** —
   the 2026-08-28 5-domain audit's API & Security findings are
@@ -1524,8 +1564,7 @@ full v0.3.0 release report._
     requests but allows the Flutter desktop client (no Origin
     header).
 
-  Plan: `docs/superpowers/plans/2026-08-28-audit-remediation.md`,
-  Sprint 2 file `2026-08-28-audit-remediation-sprint2-api.md`.
+  Plan and Sprint 2 detail preserved in Git history.
 
 - **Sprint 1 audit remediation (Core Pipeline, 2026-08-28)** — the 2026-08-28 5-domain audit's Core Pipeline findings are
   closed. All fixes land a regression test before the production
@@ -1576,7 +1615,7 @@ full v0.3.0 release report._
     rejected them, creating metric divergence between the two
     modules.
 
-  Plan: `docs/superpowers/plans/2026-08-28-audit-remediation.md`.
+  Plan preserved in Git history.
 
 - **Redis password is now CSPRNG-generated** — `start_app.vbs`
   generates the password via a PowerShell one-liner using
@@ -1689,5 +1728,6 @@ full v0.3.0 release report._
 - Single-worker FastAPI server with optional Celery background jobs.
 
 [Unreleased]: https://github.com/Sifr-r/OmniScribe/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/Sifr-r/OmniScribe/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/Sifr-r/OmniScribe/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Sifr-r/OmniScribe/releases/tag/v0.1.0

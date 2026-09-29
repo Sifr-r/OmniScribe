@@ -1,17 +1,9 @@
 # OmniScribe on Windows — the bundled binary
 
-> **Status (2026-09-06): v0.3.0 SHIPS the single-binary Windows
-> distribution.** Sprint 1 of the v0.3.0 RFC 002 (preserved in git
-> history) identified the bundling failure as a local spec
-> misclassification, not an upstream PyInstaller bug. The fix was four
-> lines in `omniscribe_server.spec` + one force-import in
-> `scripts/run_server.py`; the full 307 MB bundle now boots, serves
-> `/api/health -> 200`, `/api/jobs -> 200 []`, and `/openapi.json -> 200`
-> (45 KB) on a Windows 11 dev box. See the
-> [Sprint 1 findings doc](../rfcs/2026-09-bundle-sprint-1-findings.md)
-> for the full root-cause analysis. v0.2.0 shipped the **source
-> install** as the supported end-user path; v0.3.0 adds the bundle
-> on top.
+> **Status:** v0.3.0 and later support a single-file Windows server
+> bundle. The source install remains supported on every backend platform.
+> See the [Sprint 1 findings](../rfcs/2026-09-bundle-sprint-1-findings.md)
+> for the original PyInstaller root-cause analysis.
 
 ## What you get
 
@@ -28,7 +20,7 @@ console window appears with the server log.
 > for a $200–500/year codesigning cert. The full RFC discussion is
 > in `docs/rfcs/2026-09-end-user-install.md` §"Open questions."
 
-## Install (the 3-step path)
+## Install (the 4-step path)
 
 1. **Download** `omniscribe-server-windows-x.y.z.exe` from the
    [latest GitHub release](https://github.com/Sifr-r/OmniScribe/releases/latest).
@@ -63,17 +55,32 @@ on `PATH`.
 
 ## What the binary contains
 
-The PyInstaller onefile bundle is roughly **307 MB** (v0.3.0) and
-includes:
+The PyInstaller onefile bundle is large because it includes the Python and
+machine-learning runtime. Exact size varies by release; use the checksum and
+asset size published with the release. It includes:
 
-- Python 3.12 runtime
-- The full `omniscribe` package (server + plugin harness + 14
-  plugins)
-- All runtime dependencies: `torch`, `torchvision`, `surya-ocr`,
-  `pymupdf`, `pydantic`, `fastapi`, `uvicorn`, `httpx`, `redis`,
-  `pyspellchecker`, `python-docx`, `defusedxml`, `numpy`
-- The runtime data files at `src/omniscribe/resources/` —
-  `cordis.yml` (the plugin tree) and the bundled dictionaries
+- **Python 3.12 runtime** embedded directly.
+- **The full `omniscribe` package** (server + plugin harness + 14 plugins).
+- **The 4 entrypoint CLIs** defined in the project:
+  1. `omniscribe-server` (`omniscribe.server:main`): The primary FastAPI web server,
+     mounting the Cordis plugin harness, ASGI auth/rate/upload middlewares, and REST/WebSocket APIs.
+  2. `omniscribe-worker` (`omniscribe.worker:main`): Standalone multi-worker runner for
+     distributed job processing over Redis (`--concurrency`, `--redis-url`, `--visibility-timeout`).
+  3. `omniscribe-migrate-lexicon` (`omniscribe.cli.migrate_lexicon:main`): Database migration
+     tool upgrading legacy ChromaDB glossaries to the LanceDB vector store.
+  4. `omniscribe-import-lanes-lexicon` (`omniscribe.cli.import_lanes_lexicon:main`): Utility for
+     importing Lane's Arabic-English Lexicon into LanceDB from SQLite databases or TEI.2 XMLs.
+- **All runtime dependencies:** `torch`, `torchvision`, `surya-ocr`, `pymupdf`, `pydantic`,
+  `fastapi`, `uvicorn`, `httpx`, `redis`, `pyspellchecker`, `python-docx`, `defusedxml`, `numpy`.
+- **Runtime data resources at `src/omniscribe/resources/`** (mirrored via `DATAS`):
+  - `cordis.yml`: The declarative plugin tree defining active plugins, dependencies, and routes.
+  - **Bundled dictionaries:** Compressed language dictionaries under `resources/dictionaries/`
+    (`ara.json.gz`, `eng.json.gz`) used for dictionary-assisted spelling verification.
+  - **Calibration data:** Empirical confidence calibration models under `resources/calibration/`
+    (`qwen2_5_vl_72b.json`) used for token confidence evaluation and scoring.
+  - **Sample PDFs:** Five canonical test fixtures under `resources/sample_pdfs/` (`digital.pdf`,
+    `handwritten.pdf`, `hybrid.pdf`, `dense.pdf`, `notes.pdf`) serving the `/api/sample-pdf/*`
+    first-run demo endpoints.
 
 The first run takes ~5–10 seconds to extract the onefile archive
 to a temp dir. Subsequent runs are ~1 second to start.
@@ -84,9 +91,9 @@ to a temp dir. Subsequent runs are ~1 second to start.
   ~250 MB), Ollama, or any OpenAI-compatible endpoint.
 - **The Flutter client.** It's a separate download. The Flutter
   build pipeline is independent of the Python one.
-- **Your documents.** All state lives in `%LOCALAPPDATA%\omniscribe\`
-  (or wherever `OMNISCRIBE_ARTIFACT_DIR` points). The SQLite
-  state backend is the default since 2026-09-05.
+- **Your documents.** State uses `OMNISCRIBE_ARTIFACT_DIR`; when unset, it
+  falls back to the Windows temporary directory. Set a dedicated persistent
+  directory for normal use. The SQLite state backend is the default.
 
 ## What changed from the source install
 
@@ -140,8 +147,7 @@ binary-specific entries:
   above. Codesigning is a v0.3.0 stretch.
 - **"VCRUNTIME140.dll not found"** — install the
   [Microsoft Visual C++ Redistributable](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist?view=msvc-170)
-  (the bundle depends on it for `torch`'s native extensions). The
-  v0.2.0 release notes will include a one-click installer link.
+  (the bundle depends on it for `torch`'s native extensions).
 - **"First run is very slow"** — the onefile extract is
   ~5–10 seconds. Subsequent runs are <1 second. The Windows
   Defender real-time scan can add 30+ seconds the first time;
@@ -207,11 +213,9 @@ standalone `scripts/smoke_existing.py`) is the gate: it must report
 
 ## FAQ
 
-**Why is the binary 1 GB?** Torch alone is ~700 MB. Surya-OCR's
-ONNX models and pymupdf's native binaries add another ~300 MB.
-The bundle includes everything except your VLM and your documents.
-A 1 GB download is the realistic floor for a local-OCR product
-in 2026.
+**Why is the binary large?** Torch, Surya-OCR, native PDF libraries, and the
+Python runtime are bundled together. The exact compressed size changes with
+dependency versions; the VLM weights and your documents are not included.
 
 **Can I just run `omniscribe-server` from a terminal instead of
 double-clicking?** Yes. The console window is real stdout / stderr,
@@ -219,15 +223,14 @@ so you can redirect, pipe, and daemonize as you would any other
 CLI. The default config still reads `.env` from the current
 working directory.
 
-**Will the binary auto-update?** No. v0.2.0 ships the auto-update
-roadmap in v0.3.0 (the in-binary version check is ~50 LOC; not
-worth the code review weight for v0.2). For now, watch the
-GitHub releases page.
+**Will the binary auto-update?** No. Watch the GitHub releases page and replace
+the executable manually after verifying the published checksum.
 
-**Where does state go?** `OMNISCRIBE_ARTIFACT_DIR` defaults to
-`<binary-parent-dir>\omniscribe-data\` (next to the binary). The
-SQLite state file is at `<that-dir>\omniscribe-state.db`. Override
-with `OMNISCRIBE_ARTIFACT_DIR` to put it anywhere.
+**Where does state go?** `OMNISCRIBE_ARTIFACT_DIR` defaults to the operating
+system temporary directory. The SQLite state file is
+`<artifact-dir>\omniscribe-state.db`, and artifact blobs are sibling `.bin`
+files. Set `OMNISCRIBE_ARTIFACT_DIR` to a dedicated persistent directory for
+normal use.
 
 ## See also
 
@@ -236,4 +239,4 @@ with `OMNISCRIBE_ARTIFACT_DIR` to put it anywhere.
 - [`omniscribe_server.spec`](../../omniscribe_server.spec) — the PyInstaller spec.
 - [`README.md`](../../README.md) — the product overview.
 
-_Last updated: 2026-09-05_
+_Last updated: 2026-09-27_

@@ -8,8 +8,8 @@
 This is the v0.2.0 release of OmniScribe — the closing release of the
 **2026-09-04 Five-Lens Audit** remediation workstream. Six weeks
 of work across six phases, shipped behind a single annotated git
-tag. The full spec is the [Five-Lens Audit](audits/2026-09-04-five-lens-audit.md)
-and the Remediation Plan;
+tag. The full spec was the Five-Lens Audit (preserved in Git history)
+and the Remediation Plan (both preserved in Git history);
 this report is the user-facing summary.
 
 ---
@@ -67,8 +67,8 @@ this report is the user-facing summary.
   row added; the auth/rate-limit/upload middleware triad reframed
   as live (not "deferred"); REDIS_PASSWORD row updated to reflect
   the empty default.
-- **`docs/audits/2026-09-04-five-lens-audit.md`** (51 KB) **+**
-  **`docs/audits/2026-09-04-remediation-plan.md`**: the audit +
+- **2026-09-04 Five-Lens Audit** (51 KB; preserved in Git history) **+**
+  **Remediation Plan** (preserved in Git history): the audit +
   plan that drove this work, included as the durable reference
   for future contributors.
 
@@ -340,12 +340,12 @@ plan specs that drove the work.)
 
 ## 7. The audit + plan
 
-The full spec is the two docs under `docs/audits/`:
+The full spec was the audit and remediation plan (both preserved in Git history):
 
-- **`2026-09-04-five-lens-audit.md`** (51 KB) — the 5-lens audit
+- **2026-09-04 Five-Lens Audit** (51 KB; preserved in Git history) — the 5-lens audit
   (Dev / Sec / QA / PM / End-User) with the convergent findings
   and divergent specific findings.
-- **`2026-09-04-remediation-plan.md`** — the 6-phase plan that
+- **2026-09-04 Remediation Plan** (preserved in Git history) — the 6-phase plan that
   drove this release.
 
 Every audit finding (Critical, High, Medium, Low, Info) is in

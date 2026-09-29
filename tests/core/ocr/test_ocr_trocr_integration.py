@@ -12,10 +12,14 @@ from __future__ import annotations
 
 import base64
 import io
+from unittest.mock import AsyncMock
 
+import pytest
 from PIL import Image
 
 from omniscribe.core.ocr import OCRProcessor
+from omniscribe.core.ocr.exceptions import LLMBalanceError
+from omniscribe.core.ocr.resilience import CircuitOpenError
 from omniscribe.core.ocr.trocr import TrOCRResult
 
 
@@ -102,3 +106,20 @@ async def test_trocr_fallback_swallows_engine_errors(monkeypatch):
     # No exception escapes; the VLM's "x" becomes the result.
     result = await processor.perform_ocr_on_crop(_tiny_png_base64())
     assert result == "x"
+
+
+@pytest.mark.parametrize(
+    "error", [LLMBalanceError("VLM unavailable"), CircuitOpenError(3, 1.0)]
+)
+async def test_trocr_correction_propagates_vlm_errors(error: Exception):
+    processor = OCRProcessor(
+        api_base="http://localhost:0/v1",
+        handwriting_mode=True,
+        trocr_engine=_FakeTrOCREngine(TrOCRResult(text="hello", confidence=0.9)),  # type: ignore[arg-type]
+    )
+    processor._chat = AsyncMock(side_effect=["x", error])  # type: ignore[method-assign]
+
+    with pytest.raises(type(error)):
+        await processor.perform_ocr_on_crop(_tiny_png_base64())
+
+    assert processor._chat.await_count == 2

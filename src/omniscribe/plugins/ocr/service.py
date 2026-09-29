@@ -11,9 +11,13 @@ smaller helpers live under :mod:`omniscribe.plugins.ocr.services`.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
+import logging
+import os
 import secrets
 import shutil
+import sqlite3
 import tempfile
 from collections import deque
 from collections.abc import Awaitable, Callable, Mapping
@@ -26,6 +30,7 @@ from fastapi import HTTPException
 from fastapi.responses import Response
 
 from omniscribe.config import RuntimeSettings
+from omniscribe.core.callbacks import BlockCallbackSet
 from omniscribe.core.ocr_quality.summary import document_trust_summary
 from omniscribe.core.readers import get_reader_for_suffix, render_synthetic_pdf
 from omniscribe.core.workflows.base import OCRCancelled
@@ -72,6 +77,9 @@ from omniscribe.plugins.state_backend_types import (
 from omniscribe.utils.env import persist_env_key
 from omniscribe.utils.security import check_ssrf_target_sync
 
+_TERMINAL_STATUSES: frozenset[str] = frozenset(
+    TERMINAL_JOB_STATUSES | {"complete", "failed", "error", "cancelled"}
+)
 _TERMINAL_QUEUE_STATUSES = TERMINAL_JOB_STATUSES
 
 _EVENT_NAMES: dict[type, str] = {
@@ -85,6 +93,8 @@ _EVENT_NAMES: dict[type, str] = {
 _TERMINAL_EVENTS: tuple[type, ...] = (JobCompleted, JobFailed, JobCancelled)
 
 SSE_KEEPALIVE_SECONDS = 15.0
+
+_LOGGER = logging.getLogger("omniscribe.plugins.ocr.service")
 
 # Phase 3.8 (4.8, 2026-09-05): the error-sanitization regexes,
 # the content-type sniffing table + helper, and the config-seed
@@ -112,6 +122,60 @@ class _OcrPayload:
     filename: str
     request: OCRRequest
     job_id: str = ""
+
+
+def _is_safe_ocr_work_dir(work_dir: Path | str) -> bool:
+    """Validate that work_dir is safe to delete before invoking shutil.rmtree."""
+    try:
+        resolved = Path(work_dir).resolve()
+    except Exception:
+        return False
+
+    # Ensure it is not filesystem root
+    if (
+        resolved.parent == resolved
+        or len(resolved.parts) <= 1
+        or resolved == Path(resolved.anchor)
+    ):
+        return False
+
+    # Ensure it is not current working directory
+    try:
+        if resolved == Path(".").resolve() or resolved == Path.cwd().resolve():
+            return False
+    except Exception:
+        return False
+
+    # Ensure its directory name starts with "omniscribe-ocr-"
+    if not resolved.name.startswith("omniscribe-ocr-"):
+        return False
+
+    # Ensure it is strictly within the temp/spool root and not equal to the spool root
+    allowed_roots: list[Path] = [Path(tempfile.gettempdir()).resolve()]
+    for env_key in ("OMNISCRIBE_SPOOL_DIR", "OMNISCRIBE_ARTIFACT_DIR"):
+        val = os.environ.get(env_key)
+        if val:
+            with contextlib.suppress(Exception):
+                allowed_roots.append(Path(val).resolve())
+
+    strictly_within = False
+    for root in allowed_roots:
+        try:
+            if resolved != root and resolved.is_relative_to(root):
+                strictly_within = True
+                break
+        except Exception:
+            continue
+
+    return strictly_within
+
+
+def _get_spool_dir() -> Path:
+    """Return resolved trusted spool directory."""
+    spool_val = os.environ.get("OMNISCRIBE_SPOOL_DIR")
+    if spool_val and spool_val.strip():
+        return Path(spool_val.strip()).resolve()
+    return Path(tempfile.gettempdir()).resolve()
 
 
 def _resolve_preflight_coordinates(
@@ -233,6 +297,7 @@ class OCRServiceImpl:
         self._event_buffers: dict[str, deque[dict[str, Any]]] = {}
         self._event_notify: dict[str, asyncio.Event] = {}
         self._done_jobs: set[str] = set()
+        self._backend: Any = None
 
     # -- public surface (audit D7) ---------------------------------------------
     # Read-only views over the constructor-set state. Tests and operational
@@ -309,8 +374,11 @@ class OCRServiceImpl:
         # Audit 2.8: the sync path also streams the upload to disk before
         # calling ``_execute`` so the worker reuses one file-write instead
         # of holding the bytes on the heap for the OCR duration.
+        sync_id = secrets.token_hex(16)
         suffix = guess_suffix(filename, content_type)
-        work_dir = Path(tempfile.mkdtemp(prefix="omniscribe-ocr-"))
+        spool_dir = _get_spool_dir()
+        work_dir = spool_dir / f"omniscribe-ocr-{sync_id}"
+        work_dir.mkdir(parents=True, exist_ok=True)
         input_path = work_dir / f"input{suffix}"
         input_path.write_bytes(blob)
         pdf_bytes, pages_data, trust_summary = await self._execute(
@@ -350,7 +418,9 @@ class OCRServiceImpl:
         # the file and ``run_sync`` shares the same per-job directory so
         # the worker can re-use the already-written bytes.
         suffix = guess_suffix(filename, content_type)
-        work_dir = Path(tempfile.mkdtemp(prefix="omniscribe-ocr-"))
+        spool_dir = _get_spool_dir()
+        work_dir = spool_dir / f"omniscribe-ocr-{submission_id}"
+        work_dir.mkdir(parents=True, exist_ok=True)
         input_path = work_dir / f"input{suffix}"
         input_path.write_bytes(blob)
         payload = _OcrPayload(
@@ -359,18 +429,22 @@ class OCRServiceImpl:
             filename=filename,
             request=options,
         )
-        handle = await self._queue.submit(
-            payload,
-            request_meta={
-                "submission_id": submission_id,
-                "result_access_token": result_token,
-                "filename": filename,
-                "model": options.model or self._settings.llm_model,
-                "pipeline_mode": options.pipeline_mode,
-                "pages": options.pages,
-            },
-            input_path=str(input_path),
-        )
+        try:
+            handle = await self._queue.submit(
+                payload,
+                request_meta={
+                    "submission_id": submission_id,
+                    "result_access_token": result_token,
+                    "filename": filename,
+                    "model": options.model or self._settings.llm_model,
+                    "pipeline_mode": options.pipeline_mode,
+                    "pages": options.pages,
+                },
+                input_path=str(input_path),
+            )
+        except Exception:
+            shutil.rmtree(work_dir, ignore_errors=True)
+            raise
         self._submission_to_job[submission_id] = handle.job_id
         # Audit 2.6: the inline insertion-order trim on every submit
         # duplicated the ``prune()`` eviction policy with conflicting
@@ -445,8 +519,10 @@ class OCRServiceImpl:
         # directory; the output PDF is written alongside it.
         work_dir = input_path.parent
         output_path = work_dir / "output.pdf"
+        preserve_work_dir = False
         try:
             channel = options.progress_channel
+            block_callbacks = self._block_callbacks_adapter(job_id, channel)
 
             # Digital-Document Ingest Fast Path (RFC 004 R2)
             suffix = (input_path.suffix or guess_suffix(filename)).lower()
@@ -470,6 +546,25 @@ class OCRServiceImpl:
                 pdf_bytes = render_synthetic_pdf(doc_result)
                 output_path.write_bytes(pdf_bytes)
 
+                if block_callbacks is not None:
+                    for page in doc_result.pages:
+                        for block_idx, block in enumerate(page.blocks):
+                            if (
+                                block_callbacks.on_block is not None
+                                and block.text
+                                and block.text.strip()
+                            ):
+                                await block_callbacks.on_block(
+                                    page.page_index,
+                                    block_idx,
+                                    list(block.bbox),
+                                    block.text,
+                                    block.kind,
+                                    block.confidence,
+                                )
+                        if block_callbacks.on_page_complete is not None:
+                            await block_callbacks.on_page_complete(page.page_index)
+
                 if on_progress is not None:
                     await on_progress(100, "done", "Digital document ingest complete.")
 
@@ -480,7 +575,9 @@ class OCRServiceImpl:
                 trust_summary = document_trust_summary(doc_result)
                 return pdf_bytes, pages_data, trust_summary
 
-            pipeline = build_pipeline(self._settings, options)
+            pipeline = build_pipeline(
+                self._settings, options, block_callbacks=block_callbacks
+            )
             pages_data = await run_pipeline(
                 pipeline,
                 settings=self._settings,
@@ -500,8 +597,16 @@ class OCRServiceImpl:
                 else None
             )
             return output_path.read_bytes(), pages_data, trust_summary
+        except asyncio.CancelledError:
+            preserve_work_dir = True
+            raise
         finally:
-            shutil.rmtree(work_dir, ignore_errors=True)
+            if not preserve_work_dir and _is_safe_ocr_work_dir(work_dir):
+                shutil.rmtree(work_dir, ignore_errors=True)
+            elif not preserve_work_dir:
+                _LOGGER.warning("Refusing to delete unsafe OCR work_dir: %s", work_dir)
+
+    _run_ocr = _execute
 
     def _progress_adapter(
         self, job_id: str, channel: str | None
@@ -520,6 +625,134 @@ class OCRServiceImpl:
             )
 
         return on_progress
+
+    def _block_callbacks_adapter(
+        self, job_id: str, channel: str | None
+    ) -> BlockCallbackSet | None:
+        if self._progress is None or not channel:
+            return None
+
+        progress = self._progress
+
+        async def on_block(
+            page_idx: int,
+            block_idx: int,
+            bbox: list[float],
+            text: str,
+            kind: str,
+            confidence: float | None,
+        ) -> None:
+            payload: dict[str, Any] = {
+                "type": "block_complete",
+                "page_idx": page_idx,
+                "block_idx": block_idx,
+                "bbox": bbox,
+                "text": text,
+                "kind": kind,
+            }
+            if confidence is not None:
+                payload["confidence"] = confidence
+            try:
+                await progress.emit_progress(job_id, channel, payload)
+            except Exception as exc:
+                _LOGGER.debug(
+                    "Failed to emit block_complete on channel %s: %s", channel, exc
+                )
+
+        async def on_page_complete(page_idx: int) -> None:
+            try:
+                await progress.emit_progress(
+                    job_id, channel, {"type": "page_complete", "page_idx": page_idx}
+                )
+            except Exception as exc:
+                _LOGGER.debug(
+                    "Failed to emit page_complete on channel %s: %s", channel, exc
+                )
+
+        async def on_block_retry(
+            page_idx: int,
+            block_idx: int,
+            attempt: int,
+            confidence: float,
+            target: float,
+        ) -> None:
+            try:
+                await progress.emit_progress(
+                    job_id,
+                    channel,
+                    {
+                        "type": "block_retry",
+                        "page_idx": page_idx,
+                        "block_idx": block_idx,
+                        "attempt": attempt,
+                        "confidence": confidence,
+                        "target": target,
+                    },
+                )
+            except Exception as exc:
+                _LOGGER.debug(
+                    "Failed to emit block_retry on channel %s: %s", channel, exc
+                )
+
+        async def on_block_revised(
+            page_idx: int,
+            block_idx: int,
+            attempt: int,
+            bbox: list[float],
+            text: str,
+            kind: str,
+            confidence: float | None,
+        ) -> None:
+            payload: dict[str, Any] = {
+                "type": "block_revised",
+                "page_idx": page_idx,
+                "block_idx": block_idx,
+                "attempt": attempt,
+                "bbox": bbox,
+                "text": text,
+                "kind": kind,
+            }
+            if confidence is not None:
+                payload["confidence"] = confidence
+            try:
+                await progress.emit_progress(job_id, channel, payload)
+            except Exception as exc:
+                _LOGGER.debug(
+                    "Failed to emit block_revised on channel %s: %s", channel, exc
+                )
+
+        async def on_quality_summary(
+            scope: str,
+            page_idx: int | None,
+            target: float,
+            avg_confidence: float,
+            repaired_count: int,
+            below_target_count: int,
+        ) -> None:
+            payload: dict[str, Any] = {
+                "type": "quality_summary",
+                "scope": scope,
+                "target": target,
+                "avg_confidence": avg_confidence,
+                "repaired_count": repaired_count,
+                "below_target_count": below_target_count,
+            }
+            if page_idx is not None:
+                payload["page_idx"] = page_idx
+            try:
+                await progress.emit_progress(job_id, channel, payload)
+            except Exception as exc:
+                _LOGGER.debug(
+                    "Failed to emit quality_summary on channel %s: %s", channel, exc
+                )
+
+        return BlockCallbackSet(
+            on_block=on_block,
+            on_page_complete=on_page_complete,
+            on_block_retry=on_block_retry,
+            on_block_revised=on_block_revised,
+            on_quality_summary=on_quality_summary,
+        )
 
     def _warning_adapter(
         self, job_id: str, channel: str | None
@@ -952,6 +1185,21 @@ class OCRServiceImpl:
         buffer.append(entry)
         if type(event) in _TERMINAL_EVENTS:
             self._done_jobs.add(job_id)
+        elif isinstance(event, ProgressFrame) and isinstance(
+            getattr(event, "frame", None), dict
+        ):
+            frame = event.frame
+            stage = frame.get("stage")
+            percent = frame.get("percent")
+            status = frame.get("status")
+            frame_type = frame.get("type")
+            if (
+                stage == "done"
+                or (percent == 100 and stage != "ocr")
+                or status in ("complete", "Digital document ingest complete.")
+                or frame_type in ("complete", "failed", "cancelled")
+            ):
+                self._done_jobs.add(job_id)
         self._event_notify.setdefault(job_id, asyncio.Event()).set()
         self._prune_events_if_needed()
 
@@ -1003,26 +1251,137 @@ class OCRServiceImpl:
         return list(self._event_buffers.get(job_id, ()))
 
     def is_done(self, job_id: str) -> bool:
-        return job_id in self._done_jobs
+        if job_id in self._done_jobs:
+            return True
+
+        queue = getattr(self, "_queue", None)
+        if queue is not None and hasattr(queue, "is_cancelled"):
+            try:
+                if queue.is_cancelled(job_id):
+                    self._done_jobs.add(job_id)
+                    return True
+            except Exception:
+                pass
+
+        backend = (
+            (getattr(queue, "backend", None) if queue is not None else None)
+            or getattr(self, "_backend", None)
+            or (getattr(queue, "_backend", None) if queue is not None else None)
+        )
+        if backend is not None:
+            # If backend has in-memory _jobs dict (MemoryStateBackend), check if record is terminal.
+            if hasattr(backend, "_jobs") and isinstance(backend._jobs, dict):
+                record = backend._jobs.get(job_id)
+                if record is not None:
+                    status = (
+                        record.get("status")
+                        if isinstance(record, dict)
+                        else getattr(record, "status", None)
+                    )
+                    if status in _TERMINAL_STATUSES:
+                        self._done_jobs.add(job_id)
+                        return True
+
+            # If backend has _db_path (SQLiteStateBackend), query SELECT status FROM jobs WHERE job_id = ? and check if terminal.
+            if hasattr(backend, "_db_path") and backend._db_path:
+                try:
+                    conn = getattr(backend, "_conn", None)
+                    if conn is not None:
+                        cursor = conn.execute(
+                            "SELECT status FROM jobs WHERE job_id = ?", (job_id,)
+                        )
+                        row = cursor.fetchone()
+                        if row is not None:
+                            status = (
+                                row["status"]
+                                if isinstance(row, sqlite3.Row)
+                                else row[0]
+                            )
+                            if status in _TERMINAL_STATUSES:
+                                self._done_jobs.add(job_id)
+                                return True
+                    else:
+                        db_path = Path(backend._db_path)
+                        if db_path.is_file():
+                            db_conn = sqlite3.connect(
+                                str(db_path), check_same_thread=False
+                            )
+                            try:
+                                cursor = db_conn.execute(
+                                    "SELECT status FROM jobs WHERE job_id = ?",
+                                    (job_id,),
+                                )
+                                row = cursor.fetchone()
+                                if row is not None:
+                                    status = row[0]
+                                    if status in _TERMINAL_STATUSES:
+                                        self._done_jobs.add(job_id)
+                                        return True
+                            finally:
+                                db_conn.close()
+                except Exception:
+                    pass
+
+        return False
 
     async def wait_for_events(self, job_id: str) -> None:
         """Wait until at least one new event is recorded for ``job_id`` or the job is done.
 
         Guards against missed wake-ups and event flapping:
-        - If the job is already marked done (terminal event recorded), returns immediately
-          to prevent deadlocks.
+        - If the job is already marked done (terminal event recorded) or terminal in backend,
+          returns immediately to prevent deadlocks.
         - If events arrived just before waiting, the notification event is already set;
           it is cleared and returns immediately without suspending.
-        - Otherwise, awaits notification. On wake-up, clears the event for subsequent waits.
+        - Uses a bounded timeout (2.0s) so wait_for_events never deadlocks even if a signal
+          is dropped.
         """
-        if job_id in self._done_jobs:
+        if job_id in self._done_jobs or self.is_done(job_id):
             return
+
+        queue = getattr(self, "_queue", None)
+        backend = (
+            getattr(self, "_backend", None)
+            or (getattr(queue, "backend", None) if queue is not None else None)
+            or (getattr(queue, "_backend", None) if queue is not None else None)
+        )
+        if backend is not None and hasattr(backend, "get_job"):
+            try:
+                rec = await backend.get_job(job_id)
+                if (
+                    rec is not None
+                    and getattr(rec, "status", None) in _TERMINAL_STATUSES
+                ):
+                    self._done_jobs.add(job_id)
+                    return
+            except Exception:
+                pass
+        elif queue is not None and hasattr(queue, "status"):
+            try:
+                rec = await queue.status(job_id)
+                if rec is not None and rec.status in _TERMINAL_STATUSES:
+                    self._done_jobs.add(job_id)
+                    return
+            except Exception:
+                pass
+
         notify = self._event_notify.setdefault(job_id, asyncio.Event())
         if notify.is_set():
             notify.clear()
             return
-        await notify.wait()
+        with contextlib.suppress(TimeoutError, asyncio.TimeoutError):
+            await asyncio.wait_for(notify.wait(), timeout=2.0)
         notify.clear()
+
+        if backend is not None and hasattr(backend, "get_job"):
+            try:
+                rec = await backend.get_job(job_id)
+                if (
+                    rec is not None
+                    and getattr(rec, "status", None) in _TERMINAL_STATUSES
+                ):
+                    self._done_jobs.add(job_id)
+            except Exception:
+                pass
 
 
 def event_entry(event: Event) -> dict[str, Any]:

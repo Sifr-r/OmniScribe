@@ -131,5 +131,57 @@ void main() {
       expect(
           container.read(workstationProvider).allBBoxes.single.text, 'keep me');
     });
+
+    test('preserves existing page metadata and order during hydration', () {
+      final container = makeContainer();
+      final notifier = container.read(workstationProvider.notifier);
+
+      notifier.loadDocument(
+        Uint8List.fromList([1, 2, 3]),
+        'scan.pdf',
+        pageCount: 3,
+      );
+
+      final preview0 = Uint8List.fromList([10, 20, 30]);
+      final preview1 = Uint8List.fromList([40, 50, 60]);
+      final preview2 = Uint8List.fromList([70, 80, 90]);
+
+      notifier.setPagePreview(0, preview0);
+      notifier.setPagePreview(1, preview1);
+      notifier.setPagePreview(2, preview2);
+
+      expect(
+          container.read(workstationProvider).pages[0].previewBytes, preview0);
+      expect(
+          container.read(workstationProvider).pages[1].previewBytes, preview1);
+      expect(
+          container.read(workstationProvider).pages[2].previewBytes, preview2);
+
+      // Hydrate with only page 0 and page 2 (leaving page 1 without artifact entries)
+      final written = notifier.hydratePagesFromTextArtifact({
+        '0': 'Page 0 content',
+        '2': 'Page 2 line 1\nPage 2 line 2',
+      });
+
+      expect(written, 3);
+      final ws = container.read(workstationProvider);
+      expect(ws.pages.length, 3);
+
+      // Page 0 preserved previewBytes and updated bboxes
+      expect(ws.pages[0].previewBytes, preview0);
+      expect(
+          ws.pages[0].bboxes.map((b) => b.text).toList(), ['Page 0 content']);
+
+      // Page 1 preserved previewBytes and kept empty bboxes
+      expect(ws.pages[1].previewBytes, preview1);
+      expect(ws.pages[1].bboxes, isEmpty);
+
+      // Page 2 preserved previewBytes and updated bboxes
+      expect(ws.pages[2].previewBytes, preview2);
+      expect(ws.pages[2].bboxes.map((b) => b.text).toList(), [
+        'Page 2 line 1',
+        'Page 2 line 2',
+      ]);
+    });
   });
 }

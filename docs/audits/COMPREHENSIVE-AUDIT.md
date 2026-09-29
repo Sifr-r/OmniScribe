@@ -1,17 +1,17 @@
-# OmniScribe Master Comprehensive Codebase Audit & Unified Ledger
+# OmniScribe Comprehensive Audit — Historical Snapshot
 
 **Document Version:** 1.0.0 (Master Unified Audit)  
 **Date:** 2026-09-16  
 **Auditor / Lead Orchestrator:** OmniScribe Lead Architect  
-**Status:** Canonical Living Ledger (Replaces and Consolidates all Prior Audits)  
-**Historical Predecessors Consolidated:**
-1. docs/audits/2026-09-04-five-lens-audit.md (Initial 5-Lens Assessment: Dev, Security, QA, PM, End-User)
-2. docs/audits/2026-09-13-code-complexity-report.md (AST & Lexical Complexity Profiling)
-3. docs/audits/2026-09-13-remediation-roadmap.md (Structural Refactoring & Workstation Decomposition Roadmap)
-4. docs/audits/code-duplication.md (Cross-Module Redundancy & DRY Audit)
-5. docs/audits/2026-09-15-edge-case-remediation.md (Container, Distributed Queuing & Error Lifecycles)
-6. docs/audits/2026-09-15-functional-diagnosis.md (10 Diagnosed Boundary & Integration Defects)
-7. docs/audits/2026-09-16-functional-repair.md (10 Repaired & Verified Defect Pathways)
+**Status:** Historical snapshot through 2026-09-16; not a current roadmap
+
+> This report consolidated seven predecessor audits that have now been removed
+> from the working tree. Their exact contents remain available in Git history.
+> Use [`../ARCHITECTURE.md`](../ARCHITECTURE.md) for the current system shape,
+> [`../outstanding-work.md`](../outstanding-work.md) for open work, and
+> [`../CHANGELOG.md`](../CHANGELOG.md) for release history. Source paths, line
+> numbers, metrics, and status claims below describe the repository at the
+> audit date and may no longer match the current tree.
 
 ---
 
@@ -83,13 +83,13 @@
 ### 1.1 High-Level System Verdict
 OmniScribe has transitioned from an internally inconsistent, documentation-drifted beta (assessed on 2026-09-04) into a robust, defensively hardened, and functionally integrated self-hosted document processing platform (as of 2026-09-16). 
 
-The initial five-lens audit (`docs/audits/2026-09-04-five-lens-audit.md`) established that while core engine algorithms (Surya layout detection, dynamic programming alignment, grounded VLM parsing) were mature, significant operational and architectural liabilities existed:
+The initial five-lens audit (2026-09-04, preserved in Git history) established that while core engine algorithms (Surya layout detection, dynamic programming alignment, grounded VLM parsing) were mature, significant operational and architectural liabilities existed:
 1. **Documentation Drift:** Security and deployment documentation framed critical defense mechanisms—specifically the ASGI middleware triad—as deferred "scaffolding" despite being live in code.
 2. **State Volatility:** The default state backend was volatile in-memory storage (`MemoryStateBackend`), leading to silent data loss on process restart.
 3. **Hardcoded Credentials:** Public development credentials in configuration templates (`REDIS_PASSWORD=omniscribe-secure-dev-password`).
 4. **Integration Seams:** Critical mismatches between the Flutter client and FastAPI backend across URL reconfiguration, async job completion tracking, credential transmission, and artifact delivery.
 
-Through the two-stage remediation executed on 2026-09-15 and 2026-09-16 (`docs/audits/2026-09-15-functional-diagnosis.md` and `docs/audits/2026-09-16-functional-repair.md`), all ten diagnosed cross-boundary integration defects and six distributed edge cases have been completely resolved. The backend plugin harness is fully wired with 14 active plugins, all 10 non-mocked checks in `scripts/verify_live_functionality.py` pass cleanly, and the client and server maintain rigorous boundary isolation.
+Through the two-stage remediation executed on 2026-09-15 and 2026-09-16 (diagnoses and repair logs preserved in Git history), all ten diagnosed cross-boundary integration defects and six distributed edge cases have been completely resolved. The backend plugin harness is fully wired with 14 active plugins, all 10 non-mocked checks in `scripts/verify_live_functionality.py` pass cleanly, and the client and server maintain rigorous boundary isolation.
 
 OmniScribe v0.3.0 represents a **production-ready, self-hosted system** suitable for local single-user, LAN-distributed, and reverse-proxied deployments when operated under documented security profiles.
 
@@ -219,7 +219,7 @@ The `StateBackend` protocol (`src/omniscribe/plugins/state_backend_types.py:100-
 
 ### 2.4 Martin Packaging Metrics for Core Modules
 
-Module stability and coupling were evaluated using Robert C. Martin’s software packaging metrics (`docs/audits/2026-09-13-code-complexity-report.md:251-324`):
+Module stability and coupling were evaluated using Robert C. Martin’s software packaging metrics (historical code complexity report, preserved in Git history):
 - **Afferent Coupling ($C_a$):** Number of internal modules depending on this module (incoming dependencies). High $C_a$ indicates high responsibility.
 - **Efferent Coupling ($C_e$):** Number of external modules this module depends upon (outgoing dependencies). High $C_e$ indicates vulnerability to changes.
 - **Instability Index ($I$):**
@@ -848,7 +848,7 @@ A comprehensive code duplication sweep across 214+ Python files identified 15 di
 ## 6. Functional Integration, Edge Cases & Defect Resolution
 
 ### 6.1 Synthesis of the 2026-09-15 Edge-Case Remediation Blueprint
-The 2026-09-15 remediation blueprint (`docs/audits/2026-09-15-edge-case-remediation.md`) targeted six systemic operational edge cases:
+The 2026-09-15 remediation blueprint (historical edge-case remediation, preserved in Git history) targeted six systemic operational edge cases:
 
 1. **Container Reachability:** The container must bind `0.0.0.0` internally to allow Docker bridge forwarding, while Compose restricts host publishing to `127.0.0.1:8000:8000`. Reconciled by providing explicit `OMNISCRIBE_AUTH_TOKEN` in `compose.yaml:79` to satisfy the server's non-loopback startup guard.
 2. **Distributed Job Concurrency:** Distributed multi-worker processing over Redis must avoid duplicate execution and handle node failure. Resolved via `RedisJobQueue` (`src/omniscribe/plugins/jobs_redis.py:65-112`) using atomic Lua script claiming (`_CLAIM_JOB_LUA`), active claim timeouts in a sorted set, worker heartbeats, and pub/sub cancellation channels (`omniscribe:jobs:control`).
@@ -861,7 +861,7 @@ The 2026-09-15 remediation blueprint (`docs/audits/2026-09-15-edge-case-remediat
 
 ### 6.2 Comprehensive Audit of the 10 Diagnosed Defects & Verification of Repairs
 
-The table below provides a comprehensive trace of the ten integration defects diagnosed on 2026-09-15 (`docs/audits/2026-09-15-functional-diagnosis.md`) and verified as repaired on 2026-09-16 (`docs/audits/2026-09-16-functional-repair.md`):
+The table below provides a comprehensive trace of the ten integration defects diagnosed on 2026-09-15 and verified as repaired on 2026-09-16 (diagnoses and repair logs preserved in Git history):
 
 ```text
 Defect 1: Client URL Change Crash       ──> Repaired: Dynamic repo getters in Notifiers
@@ -1336,7 +1336,7 @@ Tracked in `pyproject.toml:370-376`, fifteen specific modules account for the re
 
 ### 8.3 Hypothesis Property-Based Testing Status (Q4 / C3 Resolution)
 
-In historical audit `2026-09-04-five-lens-audit.md` (Finding Q4), property-based testing was classified as "token: 5 `@given` in 1 file". Through Action C3 and follow-on remediation waves, OmniScribe expanded its property-based testing posture into **8 dedicated test suites** containing **41 `@given` invariants**:
+In the historical five-lens audit (Finding Q4, preserved in Git history), property-based testing was classified as "token: 5 `@given` in 1 file". Through Action C3 and follow-on remediation waves, OmniScribe expanded its property-based testing posture into **8 dedicated test suites** containing **41 `@given` invariants**:
 
 | Test File | `@given` Tests | Subsystem Targeted | Invariant Verified |
 |---|---|---|---|

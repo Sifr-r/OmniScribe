@@ -148,7 +148,8 @@ class WorkstationState {
       identical(this, other) ||
       other is WorkstationState &&
           runtimeType == other.runtimeType &&
-          listEquals(loadedBytes, other.loadedBytes) &&
+          (identical(loadedBytes, other.loadedBytes) ||
+              (loadedBytes?.length == other.loadedBytes?.length)) &&
           filename == other.filename &&
           filePath == other.filePath &&
           pageCount == other.pageCount &&
@@ -163,7 +164,7 @@ class WorkstationState {
 
   @override
   int get hashCode => Object.hashAll([
-        loadedBytes != null ? Object.hashAll(loadedBytes!) : null,
+        loadedBytes?.length,
         filename,
         filePath,
         pageCount,

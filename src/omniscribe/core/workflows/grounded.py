@@ -331,9 +331,15 @@ class GroundedEngine(EngineBase):
             # BBox tuple. Unpack + repack here so the rest of the pipeline sees
             # the immutable shape (matches the public DocumentBlock contract).
             x0, y0, x1, y1 = block.bbox
-            bbox: BBox = (float(x0), float(y0), float(x1), float(y1))
+            cx0 = max(0.0, min(1.0, float(x0)))
+            cy0 = max(0.0, min(1.0, float(y0)))
+            cx1 = max(cx0, min(1.0, float(x1)))
+            cy1 = max(cy0, min(1.0, float(y1)))
+            bbox: BBox = (cx0, cy0, cx1, cy1)
             pages_data.setdefault(block.page_index, []).append((bbox, block.text))
         return pages_data
+
+    _group_blocks_by_page = _accumulate_pages
 
     async def _repair_blocks(
         self,

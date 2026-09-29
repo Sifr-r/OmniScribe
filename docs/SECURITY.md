@@ -43,9 +43,11 @@ strictness:
    responses.
 2. **LAN / trusted-network** — the workstation runs on a private LAN
    behind a firewall. The threat is a curious housemate. Guards:
-   bearer auth on every route (except `/health`, `/healthz`, `/ready`,
-   `/readyz`), rate limiting, audit-friendly logs. The bearer/rate-limit/upload middlewares ship live in
-   `src/omniscribe/server.py:240-256`; see the [Security Features](#security-features)
+   bearer auth on protected routes, optional rate limiting, and audit-friendly
+   logs. Public routes are `/`, static assets, `/api/sample-pdf/*`,
+   `/api/health`, `/api/healthz`, `/ready`, and `/readyz`; CORS `OPTIONS`
+   requests are also exempt. The bearer/rate-limit/upload middlewares ship live
+   in `src/omniscribe/server.py`; see the [Security Features](#security-features)
    table for the exact env-var contract and the [Deployment Guide](DEPLOYMENT.md)
    for the three-profile walkthrough.
 3. **Public-internet** — the workstation runs behind a reverse proxy on
@@ -59,27 +61,29 @@ explicitly opt into profile (2) or (3) by setting the relevant env vars.
 
 ## Security Features
 
-The bearer auth, rate limit, and upload-size middlewares are wired
-unconditionally in `src/omniscribe/server.py:240-256` (closed in
-Waves 11/13/14). A non-loopback bind without a real
+The bearer-auth and upload-size middlewares are wired in
+`src/omniscribe/server.py`; rate limiting is added when
+`OMNISCRIBE_RATE_LIMIT_PER_MIN` is set. A non-loopback bind without a real
 `OMNISCRIBE_AUTH_TOKEN` exits at startup with a clear `SystemExit`
-in `_validate_runtime_settings` (`server.py:485+`); placeholder tokens
-(e.g. `change-me-in-prod`, defined in `_PLACEHOLDER_AUTH_TOKENS` at `server.py:68-75`)
-are rejected on LAN binds (`server.py:485+`). The
-[Deployment Guide](DEPLOYMENT.md) walks through the three profiles
+in `_validate_runtime_settings`; placeholder tokens such as
+`change-me-in-prod` are rejected on LAN binds unless the operator explicitly
+uses the audited development override. The
+[Deployment Guide](DEPLOYMENT.md) walks through the deployment profiles
 with the exact env-var values per profile.
 
 | Layer                  | Guard                              | Default             | Override                                |
 | ---------------------- | ---------------------------------- | ------------------- | --------------------------------------- |
-| HTTP auth              | `OMNISCRIBE_AUTH_TOKEN`            | Unset (loopback bind: enforcement is a no-op; non-loopback bind: server refuses to start) | Set to a 32+ char random secret before any non-loopback bind |
+| HTTP & WebSocket auth  | `OMNISCRIBE_AUTH_TOKEN` (`BearerAuthMiddleware` in `src/omniscribe/middleware/auth.py`) | Unset (loopback bind: enforcement is a no-op; non-loopback bind: server refuses to start) | 32+ char random token recommended (`secrets.token_urlsafe(32)`). Checked presence on non-loopback binds and startup rejection of known placeholders (`change-me-in-prod`). Gates both `http` and `websocket` ASGI scopes; HTTP bearer validated via `Authorization: Bearer` (or `?token=` on SSE `/events`); WebSocket bearer validated via `Authorization: Bearer` or `?auth_token=` / `?token=` query parameters, closing unauthenticated handshakes with code 4401. |
+| Export capability tokens | `extract_token` header enforcement (`src/omniscribe/plugins/documents/routes.py`) | Required on document export endpoints | Enforced on `GET /api/export/markdown` and `GET /api/export/chunks`: requires tokens via HTTP headers (`X-Artifact-Token`, `Authorization: Bearer <token>`, and `X-Metadata-Artifact-Token`). URL query-string tokens are rejected, eliminating sensitive capability tokens from URL query strings and access logs. |
 | Transcription config token | `OMNISCRIBE_TRANSCRIPTION_AUTH_TOKEN` | Unset | Not an auth credential — only the mask source for the `/api/config/transcription` preview. The enforced HTTP auth layer is `OMNISCRIBE_AUTH_TOKEN` |
 | Upload size            | `OMNISCRIBE_MAX_UPLOAD_MB`         | 1 GB (1024 MB) | Raise for batch hosts (enforced at upload parse + by `MaxUploadSizeMiddleware`); was 10 GB until 2026-09-05 |
-| Rate limit             | `OMNISCRIBE_RATE_LIMIT_PER_MIN`    | 60 req/min/IP       | Lower for public deployments (enforced by `RateLimitMiddleware`) |
-| SSRF (URL fetcher)     | `ALLOW_SSRF_LOCAL`                 | `false` (code default) | Shipped `.env.example` mirrors the code default (`false`); set to `true` only when pointing at a local VLM endpoint on loopback (e.g. LM Studio at `127.0.0.1:1234`) |
-| CORS                   | `OMNISCRIBE_CORS_ORIGINS`          | localhost-only      | Comma-separated allow-list for cross-origin browser clients |
+| Rate limit             | `OMNISCRIBE_RATE_LIMIT_PER_MIN`    | Disabled (`None`)   | Set explicitly for LAN/public deployments; Compose sets 60 req/min/IP |
+| SSRF & IP pinning      | `ALLOW_SSRF_LOCAL` + `create_pinned_client` (`src/omniscribe/utils/security.py`) | `false` (code default) | Shipped `.env.example` mirrors the code default (`false`); set to `true` only when pointing at a local VLM endpoint on loopback (e.g. LM Studio at `127.0.0.1:1234`). Outbound HTTP client transport connections bind directly to pre-resolved, SSRF-validated IPs (`_PinnedIPTransport` and `_PinnedNetworkBackend`), eliminating DNS rebinding TOCTOU vulnerabilities for both HTTP and HTTPS endpoints. |
+| CORS                   | `OMNISCRIBE_CORS_ORIGINS`          | No cross-origin browser origins (same-origin only) | Comma-separated allowlist for cross-origin browser clients. `allow_headers` explicitly includes `Authorization`, `Content-Type`, `X-Requested-With`, `X-Provider-Api-Key`, `X-Artifact-Token`, `X-Metadata-Artifact-Token`, `X-Job-Token`, and `X-Session-Token`. Explicit origins support credentials; `*` forces `allow_credentials=False`. |
+| Redis spool containment| `src/omniscribe/plugins/jobs_redis.py` | Enforced on multi-worker Redis jobs | Restricts deserialized `input_path` to trusted spool roots (`OMNISCRIBE_SPOOL_DIR`, `OMNISCRIBE_ARTIFACT_DIR`), validates against the authoritative `input_path` in persisted `JobRecord`, and cleans up staged files on cancel or completion. |
 | VLM resilience         | `OMNISCRIBE_LLM_MAX_RETRIES`, `OMNISCRIBE_LLM_RETRY_BASE_DELAY`, `OMNISCRIBE_CB_FAILURE_THRESHOLD`, `OMNISCRIBE_CB_COOLDOWN` | retries=2, base=1.0s, failures=5, cooldown=30s | Higher to ride out a flaky provider; lower to fail fast |
-| Auth placeholder reject| startup `SystemExit`               | n/a                 | Always on                               |
-| Token strength         | `min_length=32` Pydantic constraint | Always on          | n/a                                      |
+| Auth placeholder reject| startup `SystemExit`               | On for non-loopback binds | Development-only override: `--allow-placeholder-token` or `OMNISCRIBE_ALLOW_PLACEHOLDER_TOKEN=true` |
+| Token strength         | Operator-generated secret          | 32+ characters recommended | Generate a 32+ character random secret |
 
 See [AGENTS.md](AGENTS.md) for the full env-var catalogue.
 
@@ -108,23 +112,56 @@ entries appear with the next release tag.
 | ---------- | ------------------- | ----------- | ----------------------------------------------- |
 | _none yet_ |                     |             |                                                 |
 
-## Cryptography
+## Cryptography & Communication Security
 
 - **Token storage:** none. Auth tokens live in process env only; they
   are not persisted to disk, logged, or written to the job history.
-- **Token comparison:** `secrets.compare_digest` (constant-time) on every
-  bearer auth path. WebSocket handshake compares channel tokens the
-  same way.
-- **Token generation:** `secrets.token_urlsafe` (24–32 bytes of
-  entropy) for progress channel IDs and session tokens.
+- **Token comparison:** `secrets.compare_digest` / `hmac.compare_digest` (constant-time) on every
+  bearer auth and session token validation path.
+- **Token generation:** progress channel IDs use UUID4; session and artifact
+  tokens use `secrets.token_urlsafe(32)`.
+- **WebSocket Bearer Authentication (`src/omniscribe/middleware/auth.py`):**
+  The `BearerAuthMiddleware` gates both `http` and `websocket` ASGI scopes. For WebSocket
+  connections (e.g. `/api/progress/ws/{channel_id}`), the middleware extracts the bearer
+  token from either the `Authorization: Bearer <token>` header or the `?auth_token=` / `?token=`
+  query parameters. If unauthenticated or if the token fails constant-time comparison against
+  `OMNISCRIBE_AUTH_TOKEN`, the middleware closes the handshake immediately with WebSocket close
+  code `4401` (`unauthorized`).
+- **Export Capability Token Enforcement (`src/omniscribe/plugins/documents/routes.py`):**
+  Document export GET endpoints (`GET /api/export/markdown`, `GET /api/export/chunks`)
+  strictly require capability tokens via HTTP request headers:
+  `X-Artifact-Token`, `Authorization: Bearer <token>`, and `X-Metadata-Artifact-Token`.
+  URL query-string capability tokens are explicitly prohibited and rejected on these export
+  endpoints, eliminating sensitive capability tokens from URL query strings, server access logs,
+  browser histories, and `Referer` headers.
+- **Socket-Level IP Pinning & SSRF/TOCTOU Defense (`src/omniscribe/utils/security.py`):**
+  To prevent DNS rebinding and Time-of-Check to Time-of-Use (TOCTOU) vulnerabilities during
+  outbound calls, extraction and translation services instantiate outbound HTTP clients using
+  `create_pinned_client(url, resolved_ip)`. This helper validates the destination host against
+  SSRF network rules (`ALLOW_SSRF_LOCAL`), resolves the target IP once, and configures an
+  `httpx.AsyncClient` backed by `_PinnedIPTransport` and `_PinnedNetworkBackend`. Outbound TCP
+  connections connect directly to the pre-resolved, validated IP while preserving the original
+  target hostname in the HTTP `Host` header and TLS Server Name Indication (SNI). This eliminates
+  DNS rebinding TOCTOU vulnerabilities for both plain HTTP and TLS/HTTPS endpoints without
+  relying on hazardous global socket mutations.
+- **Redis Job Queue Spool Containment Invariants (`src/omniscribe/plugins/jobs_redis.py`):**
+  In multi-worker distributed deployments, worker processes claiming tasks from Redis enforce
+  strict spool containment:
+  - Deserialized `input_path` locations are verified with `_is_strictly_inside_spool()`,
+    restricting file operations exclusively beneath trusted spool roots (`OMNISCRIBE_SPOOL_DIR`
+    or `OMNISCRIBE_ARTIFACT_DIR`). Arbitrary filesystem paths or root traverses are rejected.
+  - The worker validates the payload's `input_path` against the authoritative `input_path`
+    stored in the persisted `JobRecord` via `_validate_ocr_input_path()`.
+  - When a job is cancelled (via `omniscribe:jobs:control` Pub/Sub or API request), staged input
+    files located beneath trusted spool directories are safely and idempotently cleaned up via
+    `_cleanup_authoritative_input_path()`.
 - **Cancel mechanism:** `POST /api/progress/cancel/{channel_id}` and
-  inbound `{"type":"cancel"}` WebSocket frames set an in-process
-  `asyncio.Event` per `channel_id`. The OCR / translate worker checks
-  this flag between blocks; a process kill mid-run silently aborts
-  any unsent cancellation (no on-disk durability). No HMAC or shared
-  secret is involved — the auth boundary is the bearer token on the
-  HTTP route and the channel session token on the WebSocket
-  handshake.
+  inbound `{"type":"cancel"}` WebSocket frames mark the channel in an
+  in-process cancellation set (or publish to Redis Pub/Sub in multi-worker mode).
+  The OCR / translate worker checks this flag between blocks; a process kill mid-run
+  silently aborts any unsent cancellation. No HMAC or shared secret is involved —
+  the auth boundary is the bearer token on the HTTP route and the channel session
+  token on the WebSocket handshake.
 - **TLS:** not terminated by OmniScribe itself. Operators MUST front
   the service with a reverse proxy (Caddy / nginx / Traefik) for
   HTTPS in any non-local deployment.
@@ -133,14 +170,15 @@ entries appear with the next release tag.
 
 ## Privacy
 
-OmniScribe is local-first. The OCR pipeline sends **only** the page
-images you upload to the configured VLM endpoint. By default that is
-LM Studio on `http://localhost:1234/v1` — no data leaves the
-machine.
+OmniScribe is local-first. By default, OCR uses LM Studio on
+`http://localhost:1234/v1`, so OCR payloads stay on the machine.
 
-If you configure a third-party endpoint (e.g. OpenAI, Anthropic,
-Groq), your images and extracted text will be sent to that endpoint.
-We surface this in the Settings tab; the choice is yours.
+If you configure a third-party endpoint (e.g. OpenAI, Anthropic, or
+Groq), task payloads can leave the machine: OCR sends page images,
+translation and extraction send text, and API transcription sends audio.
+Explicit glossary URL/Git imports also contact the source you provide, and
+first-time local model setup may download model files. Review each endpoint's
+data-retention policy before processing sensitive material.
 
 We do not collect telemetry. We do not embed analytics. We do not
 phone home.
@@ -209,4 +247,4 @@ Before exposing OmniScribe beyond `localhost`:
 - [DEPLOYMENT.md](DEPLOYMENT.md) — local / LAN / public-internet deployment profiles
 - [AGENTS.md](AGENTS.md) — contributor guide and full env-var reference
 
-_Last updated: 2026-09-05_
+_Last updated: 2026-09-27_

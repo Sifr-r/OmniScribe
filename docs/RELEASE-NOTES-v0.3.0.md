@@ -368,15 +368,15 @@ Diff stats (commits on top of `612f017`):
 
 ## 7. The audit + plan + RFCs
 
-The full spec for v0.2.0 was the two docs under
-`docs/audits/`. The v0.3.0 spec extends that with:
+The full spec for v0.2.0 was the audit and remediation plan
+(both preserved in Git history). The v0.3.0 spec extends that with:
 
-- **[`2026-09-04-five-lens-audit.md`](audits/2026-09-04-five-lens-audit.md)**
+- **2026-09-04 Five-Lens Audit** (preserved in Git history)
   (51 KB) — the 5-lens audit that drove the v0.2.0 work.
-- **`2026-09-04-remediation-plan.md`**
+- **2026-09-04 Remediation Plan** (preserved in Git history)
   — the 6-phase plan; v0.3.0 closes Phase 4 (the
   single-binary distribution).
-- **`rfcs/2026-09-v0.3.0-scope.md`**
+- **RFC 002: v0.3.0 Scope** (preserved in Git history)
   (RFC 002, 9.2 KB) — the v0.3.0 plan, including the bundle
   decision (Option (a) — wait for upstream PyInstaller
   fix; superseded by Sprint 1's local-bug finding), the

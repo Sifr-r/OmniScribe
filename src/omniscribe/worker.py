@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import contextlib
+import json
 import logging
 import signal
 import sys
@@ -29,10 +30,10 @@ from omniscribe.plugins.jobs import (
     JobCancelled,
     JobCompleted,
     JobFailed,
-    JobPayload,
     JobQueue,
     JobRunner,
     JobStarted,
+    _resolve_job_runner,
 )
 from omniscribe.plugins.jobs_redis import RedisJobQueue
 from omniscribe.plugins.state_backend import (
@@ -44,19 +45,8 @@ _LOGGER = logging.getLogger("omniscribe.worker")
 
 
 def _resolve_runner(payload: Any, ctx: Context) -> JobRunner:
-    """Resolve the appropriate runner for a claimed job payload via DI.
-
-    Checks ``payload.runner_protocol`` (or class attribute) first;
-    falls back to the default OCR ``JobRunner``.
-    """
-    marker = (
-        payload.runner_protocol
-        if isinstance(payload, JobPayload)
-        else getattr(type(payload), "runner_protocol", None)
-    )
-    if marker is not None and ctx.has(marker):
-        return cast("JobRunner", ctx.inject(marker))
-    return cast("JobRunner", ctx.inject(JobRunner))
+    """Resolve the runner for a claimed job payload via the queue rule."""
+    return _resolve_job_runner(payload, ctx)
 
 
 async def boot_worker_context(
@@ -112,6 +102,55 @@ async def boot_worker_context(
     return ctx
 
 
+async def _broadcast_terminal_frame(
+    ctx: Context,
+    queue: Any,
+    backend: StateBackend,
+    job_id: str,
+    frame: dict[str, Any],
+    *,
+    progress_channel: str | None = None,
+) -> None:
+    """Broadcast a terminal progress frame over Redis / ProgressService."""
+    if not progress_channel:
+        with contextlib.suppress(Exception):
+            rec = await backend.get_job(job_id)
+            if rec and rec.request_meta:
+                progress_channel = rec.request_meta.get("progress_channel")
+
+    channels = [job_id]
+    if progress_channel and progress_channel != job_id:
+        channels.append(progress_channel)
+
+    from omniscribe.plugins.progress import ProgressService
+
+    progress_svc = ctx.inject(ProgressService) if ctx.has(ProgressService) else None
+    if progress_svc is not None and hasattr(progress_svc, "_local_terminal_jobs"):
+        progress_svc._local_terminal_jobs.add(job_id)
+
+    sender_id = getattr(progress_svc, "_service_id", None) or uuid.uuid4().hex
+    frame_with_sender = {**frame, "_sender_id": sender_id}
+    redis_client = getattr(queue, "_redis", None) or getattr(backend, "_redis", None)
+
+    for ch in channels:
+        published_to_redis = False
+        if progress_svc is not None:
+            with contextlib.suppress(Exception):
+                await progress_svc.broadcast(ch, frame_with_sender)
+                if (
+                    getattr(progress_svc, "_redis_mode", False)
+                    and getattr(progress_svc, "_redis", None) is not None
+                ):
+                    published_to_redis = True
+
+        if not published_to_redis and redis_client is not None:
+            with contextlib.suppress(Exception):
+                await redis_client.publish(
+                    f"omniscribe:progress:{ch}",
+                    json.dumps(frame_with_sender),
+                )
+
+
 async def _handle_job_failure(
     job_id: str,
     exc: BaseException,
@@ -130,6 +169,16 @@ async def _handle_job_failure(
     is_cancelled = (
         queue.is_cancelled(job_id) or "cancelled" in exc.__class__.__name__.lower()
     )
+    current = await backend.get_job(job_id)
+    if current and current.status not in TERMINAL_JOB_STATUSES:
+        if is_cancelled:
+            await backend.upsert_job(
+                replace(current, status="cancelled", updated_at=time.time())
+            )
+        else:
+            await backend.upsert_job(
+                replace(current, status="error", error=err_msg, updated_at=time.time())
+            )
     if not await queue.fail(
         job_id,
         error="Cancelled" if is_cancelled else err_msg,
@@ -137,17 +186,31 @@ async def _handle_job_failure(
     ):
         _LOGGER.info("Job %s lost its lease before failure", job_id)
         return
-    current = await backend.get_job(job_id)
-    if current and current.status not in TERMINAL_JOB_STATUSES:
-        if is_cancelled:
-            await backend.upsert_job(
-                replace(current, status="cancelled", updated_at=time.time())
-            )
-            await ctx.emit(JobCancelled(job_id=job_id))
-            return
-        await backend.upsert_job(
-            replace(current, status="error", error=err_msg, updated_at=time.time())
-        )
+    terminal_frame = (
+        {
+            "type": "cancelled",
+            "status": "cancelled",
+            "job_id": job_id,
+            "error": "Cancelled",
+        }
+        if is_cancelled
+        else {
+            "type": "failed",
+            "status": "error",
+            "job_id": job_id,
+            "error": err_msg,
+        }
+    )
+    await _broadcast_terminal_frame(
+        ctx,
+        queue,
+        backend,
+        job_id,
+        terminal_frame,
+        progress_channel=current.request_meta.get("progress_channel")
+        if current and current.request_meta
+        else None,
+    )
     await ctx.emit(
         JobCancelled(job_id=job_id)
         if is_cancelled
@@ -211,14 +274,29 @@ async def _execute_job(
         return
 
     if queue.is_cancelled(job_id):
-        if not await queue.fail(job_id, error="Cancelled", lease_owner=lease_owner):
-            _LOGGER.info("Job %s lost its lease before cancellation", job_id)
-            return
         current = await backend.get_job(job_id)
         if current and current.status not in TERMINAL_JOB_STATUSES:
             await backend.upsert_job(
                 replace(current, status="cancelled", updated_at=time.time())
             )
+        if not await queue.fail(job_id, error="Cancelled", lease_owner=lease_owner):
+            _LOGGER.info("Job %s lost its lease before cancellation", job_id)
+            return
+        await _broadcast_terminal_frame(
+            ctx,
+            queue,
+            backend,
+            job_id,
+            {
+                "type": "cancelled",
+                "status": "cancelled",
+                "job_id": job_id,
+                "error": "Cancelled",
+            },
+            progress_channel=current.request_meta.get("progress_channel")
+            if current and current.request_meta
+            else None,
+        )
         await ctx.emit(JobCancelled(job_id=job_id))
         return
 
@@ -235,11 +313,8 @@ async def _execute_job(
         )
         return
 
-    if not await queue.complete(job_id, lease_owner=lease_owner):
-        _LOGGER.info("Job %s lost its lease before completion", job_id)
-        return
     current = await backend.get_job(job_id)
-    if current is not None:
+    if current is not None and current.status not in TERMINAL_JOB_STATUSES:
         await backend.upsert_job(
             replace(
                 current,
@@ -250,6 +325,25 @@ async def _execute_job(
                 updated_at=time.time(),
             )
         )
+    if not await queue.complete(job_id, lease_owner=lease_owner):
+        _LOGGER.info("Job %s lost its lease before completion", job_id)
+        return
+    await _broadcast_terminal_frame(
+        ctx,
+        queue,
+        backend,
+        job_id,
+        {
+            "type": "complete",
+            "status": "complete",
+            "job_id": job_id,
+            "artifact_id": handle.id,
+            "artifact_token": handle.token,
+        },
+        progress_channel=current.request_meta.get("progress_channel")
+        if current and current.request_meta
+        else None,
+    )
     await ctx.emit(
         JobCompleted(
             job_id=job_id,
@@ -466,7 +560,7 @@ async def run_worker(
             for job_id, (_task, lease_owner) in list(active_jobs.items()):
                 with contextlib.suppress(Exception):
                     if await queue.owns_lease(job_id, lease_owner):
-                        await queue.requeue(job_id)
+                        await queue.requeue(job_id, lease_owner=lease_owner)
 
     # Cancel worker loop tasks and heartbeat
     heartbeat_task.cancel()

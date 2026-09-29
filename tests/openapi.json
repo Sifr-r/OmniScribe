@@ -550,7 +550,9 @@
           "tmx",
           "git_glossary",
           "sql_table",
-          "json_pairs"
+          "json_pairs",
+          "lanes_sqlite",
+          "lanes_xml"
         ],
         "title": "GlossaryFormat",
         "type": "string"
@@ -1619,15 +1621,6 @@
           },
           {
             "in": "query",
-            "name": "text_artifact_token",
-            "required": true,
-            "schema": {
-              "title": "Text Artifact Token",
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
             "name": "metadata_artifact_id",
             "required": false,
             "schema": {
@@ -1640,22 +1633,6 @@
                 }
               ],
               "title": "Metadata Artifact Id"
-            }
-          },
-          {
-            "in": "query",
-            "name": "metadata_artifact_token",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Metadata Artifact Token"
             }
           },
           {
@@ -1686,6 +1663,56 @@
               "default": 200,
               "title": "Min Chars",
               "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-artifact-token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Artifact-Token"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Metadata-Artifact-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 256,
+                  "minLength": 32,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Metadata-Artifact-Token"
             }
           }
         ],
@@ -1923,15 +1950,6 @@
           },
           {
             "in": "query",
-            "name": "text_artifact_token",
-            "required": true,
-            "schema": {
-              "title": "Text Artifact Token",
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
             "name": "metadata_artifact_id",
             "required": false,
             "schema": {
@@ -1947,8 +1965,8 @@
             }
           },
           {
-            "in": "query",
-            "name": "metadata_artifact_token",
+            "in": "header",
+            "name": "x-artifact-token",
             "required": false,
             "schema": {
               "anyOf": [
@@ -1959,7 +1977,41 @@
                   "type": "null"
                 }
               ],
-              "title": "Metadata Artifact Token"
+              "title": "X-Artifact-Token"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Metadata-Artifact-Token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 256,
+                  "minLength": 32,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Metadata-Artifact-Token"
             }
           }
         ],

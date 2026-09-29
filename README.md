@@ -5,7 +5,7 @@
 [![License](https://img.shields.io/badge/License-MIT-purple?style=for-the-badge)](LICENSE)
 [![AGPL--3.0 (PyMuPDF)](https://img.shields.io/badge/AGPL--3.0-PyMuPDF-orange?style=for-the-badge)](https://artifex.com/licensing/)
 
-OmniScribe turns scanned PDFs and photos into searchable, selectable PDFs. Everything runs on your machine — no cloud OCR, no signup, no API keys. The local vision model is yours to choose (LM Studio, Ollama, or any OpenAI-compatible server).
+OmniScribe turns scanned PDFs and photos into searchable, selectable PDFs. It runs locally by default with no signup or service-owned API key; you can also connect an OpenAI-compatible hosted provider. The vision model is yours to choose.
 
 ## Screenshots
 
@@ -21,8 +21,8 @@ More captures (provider browser, empty-state upload, provider configuration) liv
 
 OmniScribe is local-first. By design:
 
-- **No telemetry, no analytics, no phone-home.** The server makes no outbound calls except to the VLM endpoint you configure in `LLM_API_BASE`.
-- **No cloud OCR.** OCR runs against a local VLM (LM Studio, Ollama, or any OpenAI-compatible server) you bring. If you point `OMNISCRIBE_LLM_API_BASE` at a hosted provider, your documents and extracted text leave your machine — see [DEPLOYMENT.md](docs/DEPLOYMENT.md) §"Third-party VLM" for the privacy warning.
+- **No telemetry, analytics, or service-owned cloud.** Outbound requests occur only for endpoints and imports you configure: VLM/OCR, translation, extraction, API transcription, glossary URL/Git sources, and first-time model downloads.
+- **Local by default.** OCR uses the VLM you bring. If you choose a hosted provider, task payloads can leave your machine — see [DEPLOYMENT.md](docs/DEPLOYMENT.md) §"Third-party VLM" for the privacy warning.
 - **No upload, no signup, no API keys from us.** Bearer tokens for the LAN / public-internet profiles are tokens you generate yourself with `python -c 'import secrets; print(secrets.token_urlsafe(32))'`; the server ships with no default.
 - **Open-source under MIT** (this project) + **AGPL-3.0** (the bundled PyMuPDF). See [SECURITY.md](docs/SECURITY.md) for the full threat model and the [Third-Party Software Notices](#third-party-software-notices) below for the PyMuPDF license details.
 
@@ -49,10 +49,10 @@ Measured local-stage timings on the bundled fixtures (reference machine: i7-1270
 
 | Local stage | Per page | Notes |
 | --- | --- | --- |
-| Conversion (PDF → page images) | 0.03–0.06 s | CPU-bound, parallelized |
+| Conversion (PDF → page images) | 0.03–0.06 s | CPU-bound; serial page rasterization per document for PyMuPDF thread safety |
 | Sandwich embedding (searchable PDF) | 0.2–0.5 s | Re-rasterizes at embed DPI + invisible-text overlay |
 
-Layout detection (Surya, hybrid path) adds a one-time model download and a per-page cost that depends on CPU/GPU; it was not measurable in the environment this table was produced in.
+PDF page conversion is CPU-bound; PyMuPDF enforces serial page rasterization per document instance for thread safety to prevent native MuPDF memory corruption and race conditions across concurrent worker threads. Layout detection (Surya, hybrid path) adds a one-time model download and a per-page cost that depends on CPU/GPU; it was not measurable in the environment this table was produced in.
 
 The VLM call is the order-of-magnitude variable. Rough expectations tied to the model table above: a 7B-class Q4 vision model on an 8 GB GPU processes a typical page in seconds-to-tens-of-seconds on GPU and dramatically slower on CPU-only; a 72B-class model trades several times that latency for accuracy. The **Grounded** engine issues one VLM call per page (latency-optimal); the **Hybrid** engine makes multiple VLM round-trips per page (sparse/dense/refine) and is proportionally slower but measurably more accurate — see [docs/benchmarks.md](docs/benchmarks.md). On large documents, bound the cost up front with the `pages` range option instead of OCR-ing everything to find out.
 
@@ -65,9 +65,11 @@ A reproducible end-to-end pages/min table per hardware tier needs one live VLM b
 - **Hybrid OCR**: Surya layout detection, VLM OCR, DP alignment, optional refine, and searchable PDF embedding.
 - **Grounded OCR**: Bbox-native VLM path for models that return positioned text directly.
 - **Local Document Intelligence**: Optional web/API processors for preprocessing (including page cleanup and handwriting preprocessing), reading order, quality analysis, structure, sections, layout enrichment, table extraction, quality routing, metadata reports, and structured exports.
+- **RAG-Ready Exports**: Token-bound document export artifacts including GFM Markdown with math/table support and section-aware chunks, JSON, plain text, DOCX, Docling-compatible, and MinerU-compatible formats.
+- **Lexicon & Terminology**: LanceDB-backed translation lexicon store with Lane's Arabic-English Lexicon import support (SQLite and TEI XML formats) and multi-source glossary integration (CSV, TSV, XLSX, XLIFF, TBX, TMX, SQL pair tables, Git repositories).
 - **Provider Management**: Multi-format provider configuration (OpenAI, Anthropic, Ollama compatible), automatic env-var discovery, and runtime switching.
 - **Voice Transcription**: Local and API-based speech-to-text audio transcription via `/api/transcribe`.
-- **Flutter Client**: Cross-platform desktop / mobile client built with Flutter + Riverpod (light/dark themes, Material 3, animated transitions), page selection, WebSocket progress, preview, translation, extraction, transcription, glossary browsing, and export to the OmniScribe FastAPI server.
+- **Flutter Client**: Windows desktop and web client built with Flutter + Riverpod (light/dark themes, Material 3, animated transitions), page selection, WebSocket progress, preview, translation, extraction, transcription, glossary browsing, and export to the OmniScribe FastAPI server.
 
 ## Benchmarks
 
@@ -128,8 +130,8 @@ Real OCR requires an OpenAI-compatible VLM endpoint. The local-development defau
 | Platform | Backend (Python) | Frontend (Flutter) | Binary install |
 | --- | --- | --- | --- |
 | Windows 10/11 | ✅ | ✅ Windows desktop | ✅ Windows server bundle (v0.3.0+) (see [docs/deployment/windows-bundle.md](docs/deployment/windows-bundle.md)) |
-| macOS 13+ | ✅ | ✅ macOS desktop | ❌ *deferred to v0.3+* |
-| Ubuntu 22.04+ / Debian 12+ | ✅ | ✅ Linux desktop | ❌ *deferred to v0.3+* |
+| macOS 13+ | ✅ | Flutter web | ❌ Not shipped |
+| Ubuntu 22.04+ / Debian 12+ | ✅ | Flutter web | ❌ Not shipped |
 
 The **source install** above is supported on all platforms, and a Windows onefile PyInstaller binary (`omniscribe-server.exe`) is supported as of v0.3.0 (with macOS and Linux using source install). The 12-step source install is documented in
 [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) and is the path
@@ -171,8 +173,9 @@ Phase 1 + Phase 2 + Phase 3 as an additive layer over both engines and
 the `/api/process` route. Every sub-module (watermark, script detection,
 hallucination guard, confidence calibration) is **off** by default and
 fails open, so existing callers see no behavioural change. Each
-`DocumentBlock` carries optional `trust_score` and `trust_flags` fields
-(always `None` until the layer is enabled). The runtime orchestrator is
+`DocumentBlock` carries optional `trust_score` and `trust_flags` fields.
+OCR blocks leave them unset until the layer is enabled; native digital readers
+mark trusted source blocks directly. The runtime orchestrator is
 plumbed through `OCRPipeline(trust_orchestrator=...)`; engines apply
 it per page (HybridEngine decodes the page image from base64,
 GroundedEngine passes `None`). The `/api/process` route accepts a
@@ -197,8 +200,9 @@ OCR responses include token-bound text artifact headers. When processor metadata
 
 ## Async Translation
 
-`POST /api/translate/async` dispatches tree-aware translation on the
-server's in-process harness JobQueue (single worker); poll
+`POST /api/translate/async` dispatches tree-aware translation through the
+configured JobQueue. The shipped Compose profile uses the in-process worker;
+Redis mode can use standalone `omniscribe-worker` processes. Poll
 `GET /api/translate/status/{job_id}` for the client status vocabulary.
 Translated output is stored as a token-bound text artifact and fetched
 via `GET /api/text/{artifact_id}` — no Celery worker is needed; the
@@ -245,7 +249,12 @@ PDF-handling surface that pypdfium2 covers with feature parity.
 ## For developers
 
 - The supported user workflow is the **Flutter client** + **FastAPI server**. The previous in-browser workstation is deprecated.
-- The `OCRPipeline` class is importable from `omniscribe.core.pipeline` for in-process programmatic use. No `omniscribe` CLI script is shipped — programmatic use is the supported path.
+- The `OCRPipeline` class is importable from `omniscribe.pipeline` for in-process programmatic use. No generic interactive `omniscribe` CLI script is shipped — programmatic use is the supported path.
+- Four CLI console scripts are registered in `pyproject.toml` for runtime execution and data maintenance:
+  - `omniscribe-server`: Starts the OmniScribe FastAPI application server (HTTP/WebSocket API surface).
+  - `omniscribe-worker`: Runs the standalone async background task worker process for Redis job queues.
+  - `omniscribe-migrate-lexicon`: Migrates legacy glossary libraries and ChromaDB stores to the LanceDB lexicon backend.
+  - `omniscribe-import-lanes-lexicon`: Ingests Lane's Arabic-English Lexicon from SQLite and TEI XML formats into LanceDB.
 - See [ARCHITECTURE.md](ARCHITECTURE.md) for the component map and full API surface.
 
 ## See Also
@@ -256,6 +265,6 @@ PDF-handling surface that pypdfium2 covers with feature parity.
 - [SECURITY.md](docs/SECURITY.md) — threat model, hardening checklist, vulnerability disclosure
 - [AGENTS.md](docs/AGENTS.md) — contributor guide and full env-var reference
 - [TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) — first-run error guide
-- [rfcs/2026-09-end-user-install.md](docs/rfcs/2026-09-end-user-install.md) — proposed path to a single-binary distribution (Phase 4)
+- [Windows bundle guide](docs/deployment/windows-bundle.md) — build, smoke-test, and distribution notes for the shipped server binary
 
-_Last updated: 2026-09-05_
+_Last updated: 2026-09-27_

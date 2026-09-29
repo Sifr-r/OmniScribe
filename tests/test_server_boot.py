@@ -7,8 +7,10 @@ import types
 from pathlib import Path
 
 import pytest
+from fastapi import WebSocket
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
+from starlette.websockets import WebSocketDisconnect
 
 from omniscribe.harness.errors import PluginLoadError
 from omniscribe.harness.loader import register_plugin
@@ -199,7 +201,8 @@ def test_cors_allows_scoped_credentials_and_exposes_text_artifacts(
                 "Origin": "http://app.example.com",
                 "Access-Control-Request-Method": "GET",
                 "Access-Control-Request-Headers": (
-                    "authorization,x-provider-api-key,x-artifact-token,x-session-token"
+                    "authorization,x-provider-api-key,x-artifact-token,"
+                    "x-metadata-artifact-token,x-session-token"
                 ),
             },
         )
@@ -264,3 +267,45 @@ def test_http_exception_envelope_status_codes(boot_env: None) -> None:
     assert _error_code_for_status(503) == "service_unavailable"
     # Unknown codes fall back to ``http_<status>``.
     assert _error_code_for_status(599) == "http_599"
+
+
+def test_websocket_bearer_auth_rejection(
+    boot_env: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Verify WebSocket handshake rejection with close code 4401 on missing or invalid bearer."""
+    monkeypatch.setenv("OMNISCRIBE_AUTH_TOKEN", "test-secret-token")
+    app = create_app()
+
+    @app.websocket("/api/ws/test")  # type: ignore[attr-defined]
+    async def _ws_endpoint(websocket: WebSocket) -> None:
+        await websocket.accept()
+        await websocket.send_text("hello")
+        await websocket.close()
+
+    with TestClient(app) as client:
+        # 1. Missing token -> rejected with 4401
+        with pytest.raises(WebSocketDisconnect) as excinfo:
+            with client.websocket_connect("/api/ws/test"):
+                pass
+        assert excinfo.value.code == 4401
+
+        # 2. Invalid token -> rejected with 4401
+        with pytest.raises(WebSocketDisconnect) as excinfo:
+            with client.websocket_connect("/api/ws/test?token=wrong-token"):
+                pass
+        assert excinfo.value.code == 4401
+
+        # 3. Valid ?token= -> allowed
+        with client.websocket_connect("/api/ws/test?token=test-secret-token") as ws:
+            assert ws.receive_text() == "hello"
+
+        # 4. Valid ?auth_token= -> allowed
+        with client.websocket_connect("/api/ws/test?auth_token=test-secret-token") as ws:
+            assert ws.receive_text() == "hello"
+
+        # 5. Valid Authorization: Bearer header -> allowed
+        with client.websocket_connect(
+            "/api/ws/test", headers={"Authorization": "Bearer test-secret-token"}
+        ) as ws:
+            assert ws.receive_text() == "hello"
+

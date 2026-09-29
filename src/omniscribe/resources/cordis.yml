@@ -84,5 +84,5 @@ plugins:
     # fixtures are public-domain test assets and the Profile 1
     # loopback Flutter client has no token to send. See
     # ``src/omniscribe/plugins/sample_pdfs.py`` for the allowlist and
-    # ``docs/rfcs/2026-09-v0.3.0-scope.md`` §4 for the product call.
+    # product call preserved in Git history (see also docs/TROUBLESHOOTING.md).
     use: omniscribe.plugins.sample_pdfs:plugin

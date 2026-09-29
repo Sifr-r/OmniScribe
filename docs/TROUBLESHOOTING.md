@@ -17,31 +17,37 @@ ones `make doctor` flags.
 
 ---
 
-## OCR returns nothing
+## OCR returns nothing (VLM preflight failure)
 
 The server is up, you drop a PDF, and the result PDF has no selectable
-text. Or the OCR runs but every page comes back blank.
+text. Or the OCR runs but every page comes back blank, or you get an immediate failure.
 
-**Cause.** The VLM endpoint isn't reachable. OmniScribe returns nothing
-rather than failing loud when the configured `LLM_API_BASE` doesn't
-respond.
+**Cause.** The pipeline runs a strict VLM preflight check before processing document pages.
+It queries the VLM endpoint (`GET /v1/models` at `LLM_API_BASE`) to ensure the server is
+reachable, the configured `LLM_MODEL` is loaded and advertised, and the model supports vision.
+If the endpoint is unreachable or the model is not found, the preflight check fails immediately,
+returning a typed error or failing the async job before any rendering begins.
 
 **Fix.**
 
 1. Run `make doctor` — the "Model server" line should say `OK` and
    show how many models are loaded.
-2. If `make doctor` says the model server is `WARN`:
+2. If `make doctor` says the model server is `WARN` or preflight fails:
    - **LM Studio:** open the **Developer** tab and click **Start
      Server** (default port 1234). Make sure a vision-capable model is
      loaded in the **Search** tab — not all LM Studio models support
-     images.
+     images (e.g. use `allenai/olmocr-2-7b` or `qwen2.5-vl-7b`).
    - **Ollama:** run `ollama serve` in another terminal; pull a vision
-     model (`ollama pull llava`).
-3. If the model server is OK but OCR still returns nothing, check the
-   model name. The default in `.env.example` is whatever LM Studio
-   reports; the `LLM_MODEL` env var (and the Settings tab in the
-   Flutter client) override it.
-4. See [`docs/AGENTS.md`](AGENTS.md) for the full env-var catalogue.
+     model (`ollama pull llava` or `ollama pull qwen2.5-vl`).
+3. If the model server is OK but OCR still fails, check the model name.
+   `.env.example` currently seeds `allenai/olmocr-2-7b`; `LLM_MODEL`
+   (and the Settings tab in the Flutter client) can override it. The value
+   must match an ID returned by the endpoint's `/v1/models` response.
+4. If connecting to a remote or cloud VLM endpoint (OpenAI, Anthropic, Groq),
+   ensure `OMNISCRIBE_LLM_API_BASE`, `OMNISCRIBE_LLM_API_KEY`, and
+   `OMNISCRIBE_LLM_MODEL` are set correctly, and that network/firewall allows
+   outbound connections (with `ALLOW_SSRF_LOCAL=false` blocking private IPs).
+5. See [`docs/AGENTS.md`](AGENTS.md) for the full env-var catalogue.
 
 ---
 
@@ -70,22 +76,24 @@ guard is in `_validate_runtime_settings` at `server.py:485+`.
   uv run omniscribe-server --host 0.0.0.0 --port 8000
   ```
 
-  The token must be **at least 32 characters**. Placeholder values
+  Use a **32+ character random token**. That length is the security
+  recommendation; the current runtime checks presence and known placeholder
+  values rather than enforcing a minimum length. Placeholder values
   like `changeme`, `change-me-in-prod`, or empty strings are
   rejected — see the next entry.
 
 If you genuinely need a placeholder token (e.g. for a one-off dev
-container), pass `--allow-placeholder-token` to opt out. The flag is
-audited; the server prints a `WARN` log line on every request.
+container), pass `--allow-placeholder-token` to opt out. Do not use this
+override on a shared or public network.
 
 ---
 
 ## Placeholder auth token rejected on LAN bind
 
 ```
-RuntimeError: Refusing to start: --host 192.168.1.42 is non-loopback
-and OMNISCRIBE_AUTH_TOKEN=change-me-in-prod is in the placeholder denylist.
-Set a real 32+ char secret or bind to 127.0.0.1 / ::1 / localhost.
+SystemExit: Refusing to start: OMNISCRIBE_AUTH_TOKEN is a known
+placeholder value. Replace it with a random secret or pass
+--allow-placeholder-token if you understand the risk.
 ```
 
 **Cause.** The token you set is in the boot-time placeholder denylist
@@ -101,7 +109,28 @@ openssl rand -hex 32
 tr -dc 'A-Za-z0-9' </dev/urandom | head -c 32
 ```
 
-The token only needs to be ≥ 32 characters; the alphabet is irrelevant.
+Use at least 32 random characters; this is a recommendation, not a current
+runtime length check.
+
+---
+
+## WebSocket connection rejected with close code 4401
+
+```
+WebSocket closed: code 4401 (unauthorized)
+```
+
+**Cause.** When `OMNISCRIBE_AUTH_TOKEN` is set, `BearerAuthMiddleware` gates both
+HTTP endpoints and WebSocket connections (such as `/api/progress/ws/{channel_id}`).
+If a client connects to the WebSocket endpoint without providing a valid bearer token,
+the handshake is rejected immediately with WebSocket close code `4401`.
+
+**Fix.** Ensure the client passes the bearer token during the WebSocket handshake via:
+1. An HTTP `Authorization: Bearer <token>` header (for desktop/native clients).
+2. A URL query parameter: `?auth_token=<token>` or `?token=<token>` (for browser
+   WebSocket clients that cannot set custom handshake headers).
+
+In the Flutter client, enter your bearer token under **Settings** → **Backend Bearer Token**.
 
 ---
 
@@ -116,9 +145,9 @@ The token only needs to be ≥ 32 characters; the alphabet is irrelevant.
 3. **A patch file references a plugin that doesn't exist** — the
    harness rolls back partial registrations and exits with a clear
    `PluginLoadError` (see `src/omniscribe/harness/context.py:204-221`).
-4. **The state backend is misconfigured** — e.g. you set
-   `OMNISCRIBE_STATE_BACKEND=redis` (deferred; the harness will
-   refuse). Set it to `memory` or `sqlite`.
+4. **The state backend is misconfigured** — supported values are `memory`,
+   `sqlite`, and `redis`. Redis also requires a reachable, correctly
+   authenticated `REDIS_URL`.
 
 **Fix.** Re-run with `--log-level debug` for a stack trace:
 
@@ -202,6 +231,46 @@ historical probe, not a regression.
 The `WARN` will turn into `OK` once Redis is reachable. The probe
 is `WARN` not `ERROR` precisely so this case doesn't fail the doctor
 gate.
+
+---
+
+## Redis multi-worker: `omniscribe-worker` cannot claim jobs or encounters spool errors
+
+```
+ValueError: Invalid or unsafe input_path in OCR payload
+# or
+ValueError: OCR payload input_path does not match claimed job
+# or
+Worker heartbeats timing out / jobs requeued repeatedly
+```
+
+**Cause.** Multi-worker execution uses Redis for centralized state
+(`OMNISCRIBE_STATE_BACKEND=redis`) and job dispatch (`OMNISCRIBE_JOBS_MODE=redis`),
+running standalone worker processes via `omniscribe-worker --concurrency 4`.
+Common failures:
+1. **Spool containment violation:** `src/omniscribe/plugins/jobs_redis.py` enforces
+   strict spool containment. The job payload's `input_path` must reside strictly beneath
+   a trusted spool directory (`OMNISCRIBE_SPOOL_DIR` or `OMNISCRIBE_ARTIFACT_DIR`) and
+   must match the authoritative path recorded in `JobRecord.input_path`. If worker nodes
+   run on separate hosts without a shared spool mount, or if the spool path differs between
+   server and worker, input validation fails closed with `ValueError`.
+2. **Backend mode mismatch:** The API server or worker is missing
+   `OMNISCRIBE_STATE_BACKEND=redis` or `OMNISCRIBE_JOBS_MODE=redis`. Both the server
+   and every worker process must point to the identical `REDIS_URL` and have both
+   backend settings configured.
+3. **Lease visibility timeout expiration:** If processing a complex or high-page-count PDF
+   takes longer than `--visibility-timeout` (default: 300s) and worker heartbeats stall,
+   another worker loop will assume the job was abandoned and claim it.
+
+**Fix.**
+1. Ensure API server and workers share the same spool mount or identical
+   `OMNISCRIBE_SPOOL_DIR` / `OMNISCRIBE_ARTIFACT_DIR` path.
+2. Confirm both server and worker environments have `OMNISCRIBE_STATE_BACKEND=redis` and
+   `OMNISCRIBE_JOBS_MODE=redis` exported.
+3. Increase the visibility timeout when processing large documents:
+   `uv run omniscribe-worker --concurrency 4 --visibility-timeout 600`.
+4. Run workers with `--log-level debug` to inspect claim, lease renewal, and heartbeat
+   traces in detail.
 
 ---
 
@@ -392,7 +461,7 @@ uv run omniscribe-server --port 8000
 # Terminal B — Flutter client
 cd client
 flutter pub get
-flutter run -d windows    # or: macos / linux / chrome / web
+flutter run -d windows    # committed desktop target; use -d chrome for web
 ```
 
 Full install + connect instructions are in
@@ -409,32 +478,50 @@ stuck job, reclaim disk, or reproduce a bug from a clean slate.
 
 **For the SQLite state backend (the default):**
 
-```bash
-# Find the data directory (defaults to $OMNISCRIBE_ARTIFACT_DIR, then
-# the platform user-data dir, then ./omniscribe-data in the repo root)
-uv run python -c "from omniscribe.config import load_settings; print(load_settings().artifact_base_dir)"
+First resolve and inspect the exact data directory:
 
-# Delete the SQLite database and blob directory
-rm -rf "<artifact_base_dir>/omniscribe-state.db"*
-rm -rf "<artifact_base_dir>/blobs"
+```bash
+uv run python -c "from omniscribe.config import load_settings; s=load_settings(); print(s.artifact_base_dir); print(s.artifact_base_dir / 'omniscribe-state.db')"
 ```
 
-The server must be **stopped** while you do this — the SQLite WAL
-will be re-created on next boot.
+When `OMNISCRIBE_ARTIFACT_DIR` is unset, `artifact_base_dir` is the operating
+system temporary directory. Stop the server and back up that directory before
+changing it.
+1. Delete the SQLite database files: `omniscribe-state.db`, `omniscribe-state.db-wal`,
+   and `omniscribe-state.db-shm`.
+2. Delete artifact blobs: these are individual `<artifact_id>.bin` files directly in
+   the same directory, not in a `blobs/` subdirectory. Verify each exact file belongs
+   to OmniScribe before removing it. Do not recursively delete the entire directory if
+   it points to the shared system temp folder.
+3. Clean up scratch files: per-run `omniscribe-ocr-*` work directories are removed
+   automatically upon run completion, preview cache is cleaned during cache eviction or
+   process shutdown, and token-bound result artifacts use the configured artifact TTL.
+   If a previous process was killed abruptly with `kill -9` or Task Manager, search for
+   and remove orphaned `omniscribe-ocr-*` folders in your temporary directory.
+
+**For the Redis state backend (multi-worker / distributed):**
+
+1. Stop the API server and all standalone `omniscribe-worker` processes.
+2. Flush OmniScribe keys in Redis:
+   ```bash
+   redis-cli --scan --pattern "omniscribe:*" | xargs redis-cli del
+   # or on a dedicated Redis database:
+   redis-cli FLUSHDB
+   ```
+3. Purge staged files in the trusted spool directory (`OMNISCRIBE_SPOOL_DIR` or
+   `OMNISCRIBE_ARTIFACT_DIR`).
 
 **For the in-memory state backend:**
 
 Restart the server. There's nothing to delete because nothing is
-persisted.
+persisted across process lifetimes.
 
-**To start over with the dev defaults** (no `.env`, loopback bind,
-SQLite):
-
-```bash
-unset OMNISCRIBE_STATE_BACKEND
-unset OMNISCRIBE_AUTH_TOKEN
-uv run omniscribe-server --host 127.0.0.1 --port 8000
-```
+**To start over with the dev defaults** (no `.env`, loopback bind, SQLite):
+Rename the project `.env` to a recoverable backup and clear any shell-level
+OmniScribe overrides before starting
+`uv run omniscribe-server --host 127.0.0.1 --port 8000`. Merely unsetting two
+shell variables is insufficient because `RuntimeSettings` automatically loads
+the project's `.env` file.
 
 ---
 
@@ -442,15 +529,15 @@ uv run omniscribe-server --host 127.0.0.1 --port 8000
 
 - [`make doctor`](../Makefile) — runs the four-check health probe from
   the repo root. Now points you back here on failure.
-- [`docs/SECURITY.md`](SECURITY.md) — full env-var reference and
-  threat-model walkthrough.
-- [`docs/DEPLOYMENT.md`](DEPLOYMENT.md) — the three deployment
-  profiles (loopback, LAN, public internet).
+- [`docs/SECURITY.md`](SECURITY.md) — full env-var reference, threat-model
+  walkthrough, and security middleware contracts.
+- [`docs/DEPLOYMENT.md`](DEPLOYMENT.md) — the four deployment
+  profiles (loopback, LAN, public internet, and multi-worker Redis cluster).
 - [`docs/AGENTS.md`](AGENTS.md) — contributor guide; everything in
   this file is repeated there in more detail.
 - [`README.md`](../README.md) §Before you start — if you haven't
   installed yet, that's where to begin.
-- [`audits/2026-09-04-five-lens-audit.md`](audits/2026-09-04-five-lens-audit.md) —
-  the audit that drove the security and reliability improvements.
+- [`audits/COMPREHENSIVE-AUDIT.md`](audits/COMPREHENSIVE-AUDIT.md) —
+  historical audit snapshot; predecessor reports remain in Git history.
 
-_Last updated: 2026-09-07_
+_Last updated: 2026-09-27_

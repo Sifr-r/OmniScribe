@@ -115,6 +115,28 @@ def _extract_query_token(query_string: bytes) -> str | None:
     return values[0].strip() or None
 
 
+def _extract_ws_query_token(query_string: bytes | str) -> str | None:
+    """Return the ?auth_token= or ?token= value for WebSocket handshakes, or None."""
+    if not query_string:
+        return None
+    try:
+        from urllib.parse import parse_qs
+
+        qs = (
+            query_string.decode("latin-1")
+            if isinstance(query_string, bytes)
+            else str(query_string)
+        )
+        parsed = parse_qs(qs, keep_blank_values=False)
+    except (UnicodeDecodeError, ValueError):
+        return None
+    for key in ("auth_token", "token"):
+        values = parsed.get(key)
+        if values and values[0].strip():
+            return values[0].strip()
+    return None
+
+
 def _matches_query_token_path(path: str) -> bool:
     """Return True iff ``path`` is an SSE endpoint that accepts ``?token=``.
 
@@ -167,9 +189,9 @@ class BearerAuthMiddleware:
     When ``expected_token`` is falsy the middleware is a no-op (local
     dev / CI). When set, every request to a non-exempt path must carry
     a matching ``Authorization: Bearer`` header (or, on SSE-style
-    routes, a ``?token=`` query param). Failures return ``401`` with a
-    stable ``WWW-Authenticate: Bearer`` challenge header so clients can
-    react.
+    routes, a ``?token=`` query param, or on WebSockets, ``?auth_token=`` /
+    ``?token=``). Failures return ``401`` for HTTP or close code 4401 for
+    WebSockets.
     """
 
     def __init__(self, app: Callable, expected_token: str | None) -> None:
@@ -184,11 +206,34 @@ class BearerAuthMiddleware:
             )
 
     async def __call__(self, scope: dict, receive: ASGIRecv, send: ASGISend) -> None:
-        if scope.get("type") != "http" or not self._expected:
+        if scope.get("type") not in ("http", "websocket") or not self._expected:
             await self._app(scope, receive, send)
             return
 
         path = scope.get("path", "")
+
+        if scope.get("type") == "websocket":
+            if _is_exempt(path, "GET"):
+                await self._app(scope, receive, send)
+                return
+
+            token = _extract_bearer(scope.get("headers") or [])
+            if not token:
+                token = _extract_ws_query_token(scope.get("query_string", b""))
+
+            if not token or not _token_matches(self._expected, token):
+                logger.warning(
+                    "auth.middleware: rejected websocket %s (no / invalid bearer)",
+                    path,
+                )
+                await send(
+                    {"type": "websocket.close", "code": 4401, "reason": "unauthorized"}
+                )
+                return
+
+            await self._app(scope, receive, send)
+            return
+
         method = scope.get("method", "GET")
         if _is_exempt(path, method):
             await self._app(scope, receive, send)
@@ -237,6 +282,7 @@ __all__ = [
     "BearerAuthMiddleware",
     "_extract_bearer",
     "_extract_query_token",
+    "_extract_ws_query_token",
     "_is_exempt",
     "_matches_query_token_path",
     "_token_matches",

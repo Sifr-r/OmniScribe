@@ -17,7 +17,7 @@ do things that have no plausible downside for legitimate inputs. We
 **never** try to detect "malicious" content by content pattern (that
 is a model-side problem); we only normalize shape.
 
-See refactor §2.6 in ``deep_refactor_report.md``.
+See refactor §2.6 (preserved in Git history).
 """
 
 from __future__ import annotations

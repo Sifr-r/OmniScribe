@@ -9,6 +9,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from omniscribe.core.pdf.embedder_helpers import (
+    _ensure_font_registered,
+    _pick_embed_font,
+)
+
 if TYPE_CHECKING:
     import pymupdf as fitz
 
@@ -22,6 +27,7 @@ def _find_fitting_chunk(
     text: str,
     fontsize: float,
     fontname: str,
+    font: fitz.Font | None = None,
 ) -> tuple[str, str]:
     """Find the largest prefix of `text` that fits in `rect` using line/word/char binary search."""
     import pymupdf as fitz
@@ -32,6 +38,8 @@ def _find_fitting_chunk(
             width=max(rect.x1 + 50.0, 200.0),
             height=max(rect.y1 + 50.0, 200.0),
         )
+        if font is not None and fontname != "helv":
+            _ensure_font_registered(tpage, fontname, font)
 
         def _fits(cand: str) -> bool:
             return (
@@ -132,6 +140,11 @@ def render_pdf_from_document_result(document_result: DocumentResult) -> bytes:
                     fontsize = 10.0
                     spacing = 4.0
 
+                # Check if text requires a Unicode font
+                alias, font = _pick_embed_font(text)
+                if alias != "helv":
+                    fontname = alias
+
                 # Check if block has non-default custom bbox
                 bx0, by0, bx1, by1 = block.bbox
                 is_full_page = (
@@ -148,6 +161,8 @@ def render_pdf_from_document_result(document_result: DocumentResult) -> bytes:
                         bx1 * page_w,
                         by1 * page_h,
                     )
+                    if alias != "helv":
+                        _ensure_font_registered(pdf_page, alias, font)
                     rc = pdf_page.insert_textbox(
                         rect,
                         text,
@@ -172,6 +187,8 @@ def render_pdf_from_document_result(document_result: DocumentResult) -> bytes:
                         margin_x + content_w,
                         page_h - 35.0,
                     )
+                    if alias != "helv":
+                        _ensure_font_registered(pdf_page, alias, font)
                     rc = pdf_page.insert_textbox(
                         rect,
                         remaining_text,
@@ -198,7 +215,10 @@ def render_pdf_from_document_result(document_result: DocumentResult) -> bytes:
                         remaining_text,
                         fontsize=fontsize,
                         fontname=fontname,
+                        font=font if alias != "helv" else None,
                     )
+                    if alias != "helv":
+                        _ensure_font_registered(pdf_page, alias, font)
                     pdf_page.insert_textbox(
                         rect,
                         chunk,

@@ -382,6 +382,28 @@ class OcrRepositoryImpl implements OcrRepository {
     }
   }
 
+  PagePreviewResult _parsePagePreview(
+    ApiResponse<Uint8List> response, {
+    String? fallbackDocId,
+  }) =>
+      PagePreviewResult(
+        bytes: response.data,
+        totalPages: int.tryParse(
+              response.getHeader(ApiConstants.headerTotalPages) ?? '',
+            ) ??
+            1,
+        width: double.tryParse(
+          response.getHeader(ApiConstants.headerPageWidth) ?? '',
+        ),
+        height: double.tryParse(
+          response.getHeader(ApiConstants.headerPageHeight) ?? '',
+        ),
+        docId: response.getHeader(ApiConstants.headerDocumentId) ??
+            response.getHeader('x-document-id') ??
+            response.getHeader('X-Document-Id') ??
+            fallbackDocId,
+      );
+
   @override
   Future<PagePreviewResult?> renderDocumentPagePreview({
     Uint8List? fileBytes,
@@ -410,24 +432,7 @@ class OcrRepositoryImpl implements OcrRepository {
           receiveTimeout: const Duration(seconds: 30),
         );
 
-        final totalPages =
-            int.tryParse(response.getHeader(ApiConstants.headerTotalPages) ?? '') ?? 1;
-        final width =
-            double.tryParse(response.getHeader(ApiConstants.headerPageWidth) ?? '');
-        final height =
-            double.tryParse(response.getHeader(ApiConstants.headerPageHeight) ?? '');
-        final responseDocId = response.getHeader(ApiConstants.headerDocumentId) ??
-            response.getHeader('x-document-id') ??
-            response.getHeader('X-Document-Id') ??
-            docId;
-
-        return PagePreviewResult(
-          bytes: response.data,
-          totalPages: totalPages,
-          width: width,
-          height: height,
-          docId: responseDocId,
-        );
+        return _parsePagePreview(response, fallbackDocId: docId);
       } catch (_) {
         // Stale docId or server restarted — fall through to upload fileBytes if available
         if (fileBytes == null) {
@@ -452,23 +457,7 @@ class OcrRepositoryImpl implements OcrRepository {
           receiveTimeout: const Duration(seconds: 30),
         );
 
-        final totalPages =
-            int.tryParse(response.getHeader(ApiConstants.headerTotalPages) ?? '') ?? 1;
-        final width =
-            double.tryParse(response.getHeader(ApiConstants.headerPageWidth) ?? '');
-        final height =
-            double.tryParse(response.getHeader(ApiConstants.headerPageHeight) ?? '');
-        final responseDocId = response.getHeader(ApiConstants.headerDocumentId) ??
-            response.getHeader('x-document-id') ??
-            response.getHeader('X-Document-Id');
-
-        return PagePreviewResult(
-          bytes: response.data,
-          totalPages: totalPages,
-          width: width,
-          height: height,
-          docId: responseDocId,
-        );
+        return _parsePagePreview(response);
       } catch (_) {
         return null;
       }

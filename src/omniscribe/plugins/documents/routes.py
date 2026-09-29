@@ -293,7 +293,7 @@ async def handle_export_markdown_post(
 
 async def handle_export_markdown_get(
     text_artifact_id: str,
-    text_artifact_token: str,
+    text_artifact_token: str | None,
     metadata_artifact_id: str | None,
     metadata_artifact_token: str | None,
     store: ArtifactStore,
@@ -305,11 +305,19 @@ async def handle_export_markdown_get(
     curl) can fetch markdown directly from an artifact id+token without
     building a request body.
     """
-    tree = await _load_tree_or_none(store, text_artifact_id, text_artifact_token)
+    if not text_artifact_token or not text_artifact_token.strip():
+        return envelope(401, "unauthorized", "text artifact token required")
+    tree = await _load_tree_or_none(
+        store, text_artifact_id, text_artifact_token.strip()
+    )
     if tree is None:
         return envelope(404, "not_found", "text artifact not found")
-    if metadata_artifact_id and metadata_artifact_token:
-        meta_blob = await store.get(metadata_artifact_id, metadata_artifact_token)
+    if metadata_artifact_id:
+        if not metadata_artifact_token or not metadata_artifact_token.strip():
+            return envelope(401, "unauthorized", "metadata artifact token required")
+        meta_blob = await store.get(
+            metadata_artifact_id, metadata_artifact_token.strip()
+        )
         metadata = None if meta_blob is None else _parse_json_object(meta_blob.blob)
         if metadata is None:
             return envelope(404, "not_found", "metadata artifact not found")
@@ -360,7 +368,7 @@ async def handle_export_chunks_post(
 
 async def handle_export_chunks_get(
     text_artifact_id: str,
-    text_artifact_token: str,
+    text_artifact_token: str | None,
     metadata_artifact_id: str | None,
     metadata_artifact_token: str | None,
     max_chars: int,
@@ -374,11 +382,19 @@ async def handle_export_chunks_get(
     parameters as query-string ints. Defaults (1200/120/200) match the
     POST defaults so the two paths are interchangeable.
     """
-    tree = await _load_tree_or_none(store, text_artifact_id, text_artifact_token)
+    if not text_artifact_token or not text_artifact_token.strip():
+        return envelope(401, "unauthorized", "text artifact token required")
+    tree = await _load_tree_or_none(
+        store, text_artifact_id, text_artifact_token.strip()
+    )
     if tree is None:
         return envelope(404, "not_found", "text artifact not found")
-    if metadata_artifact_id and metadata_artifact_token:
-        meta_blob = await store.get(metadata_artifact_id, metadata_artifact_token)
+    if metadata_artifact_id:
+        if not metadata_artifact_token or not metadata_artifact_token.strip():
+            return envelope(401, "unauthorized", "metadata artifact token required")
+        meta_blob = await store.get(
+            metadata_artifact_id, metadata_artifact_token.strip()
+        )
         metadata = None if meta_blob is None else _parse_json_object(meta_blob.blob)
         if metadata is None:
             return envelope(404, "not_found", "metadata artifact not found")
@@ -515,15 +531,25 @@ def build_documents_router(ctx: Context) -> APIRouter:
     @router.get("/api/export/markdown", response_model=None)
     async def export_markdown_get(
         text_artifact_id: str,
-        text_artifact_token: str,
         metadata_artifact_id: str | None = None,
-        metadata_artifact_token: str | None = None,
+        x_artifact_token: str | None = Header(default=None),
+        authorization: str | None = Header(default=None),
+        x_metadata_artifact_token: str | None = Header(
+            default=None,
+            alias="X-Metadata-Artifact-Token",
+            min_length=32,
+            max_length=256,
+        ),
     ) -> Response | JSONResponse:
+        token = extract_token(
+            x_artifact_token=x_artifact_token,
+            authorization=authorization,
+        )
         return await handle_export_markdown_get(
             text_artifact_id,
-            text_artifact_token,
+            token,
             metadata_artifact_id,
-            metadata_artifact_token,
+            x_metadata_artifact_token,
             store,
         )
 
@@ -536,18 +562,28 @@ def build_documents_router(ctx: Context) -> APIRouter:
     @router.get("/api/export/chunks", response_model=None)
     async def export_chunks_get(
         text_artifact_id: str,
-        text_artifact_token: str,
         metadata_artifact_id: str | None = None,
-        metadata_artifact_token: str | None = None,
         max_chars: int = 1200,
         overlap_chars: int = 120,
         min_chars: int = 200,
+        x_artifact_token: str | None = Header(default=None),
+        authorization: str | None = Header(default=None),
+        x_metadata_artifact_token: str | None = Header(
+            default=None,
+            alias="X-Metadata-Artifact-Token",
+            min_length=32,
+            max_length=256,
+        ),
     ) -> JSONResponse:
+        token = extract_token(
+            x_artifact_token=x_artifact_token,
+            authorization=authorization,
+        )
         return await handle_export_chunks_get(
             text_artifact_id,
-            text_artifact_token,
+            token,
             metadata_artifact_id,
-            metadata_artifact_token,
+            x_metadata_artifact_token,
             max_chars,
             overlap_chars,
             min_chars,

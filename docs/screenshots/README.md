@@ -1,8 +1,7 @@
 # OmniScribe — Screenshots & demo media
 
-The audit's end-user lens (U6) called out the absence of any
-screenshots, GIFs, or recordings. This directory is the convention
-for those assets.
+This directory contains the screenshots embedded in the root README and
+the remaining demo-media capture target.
 
 ## What goes here
 
@@ -16,14 +15,14 @@ for those assets.
 | `glossary-screen.png` | The Terminology Glossary screen (Libraries / Entries / Merged Lexicon). | `client/lib/presentation/features/glossary_screen.dart` |
 | `export-modal.png` | The Export Document modal with the searchable-PDF format selector. | `client/lib/presentation/workstation/modals/export_modal.dart` |
 | `terminal-server-up.png` | `uv run omniscribe-server` startup banner: the `state backend sqlite` line, the 14-plugin harness mount, and `Uvicorn running`. | Rendered from the real server startup log (not a screen photo); provenance note below. |
-| `drop-to-result.png` | The end-to-end flow: drop a PDF, watch OCR progress, preview the searchable result. | A 10-second screen recording; static screenshot optional. |
+| `drop-to-result.gif` | The end-to-end flow: drop a PDF, watch OCR progress, preview the searchable result. | A 10-second screen recording. |
 
 All filenames are lowercased, hyphen-separated, no spaces. The
 root `README.md` embeds `workstation.png`, `ai-setup-wizard-modal.png`,
 `glossary-screen.png`, and `export-modal.png` in a Screenshots strip
 near the top.
 
-## Status (2026-09-13)
+## Status (2026-09-27)
 
 Eight of the nine assets above now exist. The seven UI captures were
 taken headlessly: real API server (`uv run omniscribe-server`) +
@@ -36,46 +35,22 @@ states. `terminal-server-up.png` is rendered programmatically from
 the server's genuine startup log (Pillow over `consola.ttf`), so the
 banner lines are verbatim real output, not a screen photo. Still
 missing (needs a live VLM run + screen recording):
-`drop-to-result.png`, the 10-second OCR-pass recording.
+`drop-to-result.gif`, the 10-second OCR-pass recording.
 
-## How to capture (manual, single-machine)
+## Capture the remaining demo
 
-1. **Workstation:** start the Flutter client (`flutter run -d
-   windows`). Drag a sample PDF from `examples/` onto the
-   workstation. Take a screenshot when the OCR is in progress (the
-   progress bar) and another when the result is ready. Save as
-   `workstation.png` (resolution: at least 1280×720).
-
-2. **Settings:** in the Flutter client, click the **Settings** tab.
-   Take a screenshot showing the VLM endpoint and the Advanced
-   Configuration panel. Save as `settings.png`.
-
-3. **Drop-to-result recording:** use Windows Game Bar (Win + G) or
+1. Start the Flutter client (`flutter run -d windows`) and a live VLM,
+   then load a sample PDF from `examples/`.
+2. Use Windows Game Bar (Win + G) or
    OBS to record 10 seconds of "drop PDF → progress bar → result".
    Convert to GIF with `ffmpeg -i recording.mp4 -vf
    "fps=15,scale=800:-1" drop-to-result.gif`. Aim for <2 MB.
 
-4. **Terminal-server-up:** start the server with the SQLite default
-   (Phase 2.3). Take a screenshot of the terminal showing the
-   `omniscribe state_backend=sqlite` log line and the `Uvicorn
-   running on ...` line. Save as `terminal-server-up.png`.
-
-## Why a convention, not captures
-
-The captures depend on a running VLM endpoint and a built Flutter
-client. Either of those takes 30+ minutes to set up on a fresh
-machine (see [`../TROUBLESHOOTING.md`](../TROUBLESHOOTING.md)). The
-audit persona can't run the captures themselves; the project
-maintainer has to. So this directory is a landing pad: the next
-maintainer who has a working install runs the four steps above
-and the README's screenshots are no longer 404s.
-
 ## Out of scope for this directory
 
 - Architecture diagrams (those go in `../ARCHITECTURE.md`).
-- Tutorial videos (would need a hosting plan; out of scope until
-  the binary distribution lands).
+- Tutorial videos beyond the short in-repository demo GIF.
 - A demo dataset for the screenshots — `examples/` already ships
   CC0 PDFs that work for the capture.
 
-_Last updated: 2026-09-13_
+_Last updated: 2026-09-27_

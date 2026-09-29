@@ -20,6 +20,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import shutil
 import time
 import uuid
 from dataclasses import asdict, is_dataclass, replace
@@ -36,6 +37,7 @@ from omniscribe.plugins.jobs import (
     JobFailed,
     JobHandle,
     JobQueued,
+    _is_strictly_inside_spool,
 )
 from omniscribe.plugins.state_backend import (
     JobRecord,
@@ -147,6 +149,27 @@ redis.call('ZREM', active_key, ARGV[2])
 redis.call('DEL', lease_key)
 redis.call('DEL', payload_key)
 redis.call('DEL', attempts_key)
+return 1
+"""
+
+#: Requeues an active job only for its owner, preventing a late worker from
+#: requeuing a job whose lease was already lost or acquired by another worker.
+_REQUEUE_JOB_LUA = """
+local active_key = KEYS[1]
+local queue_key = KEYS[2]
+local lease_key = KEYS[3]
+local owner = ARGV[1]
+local job_id = ARGV[2]
+local now = tonumber(ARGV[3])
+
+if owner and owner ~= '' then
+    if redis.call('GET', lease_key) ~= owner then
+        return 0
+    end
+end
+redis.call('ZREM', active_key, job_id)
+redis.call('ZADD', queue_key, now, job_id)
+redis.call('DEL', lease_key)
 return 1
 """
 
@@ -262,7 +285,67 @@ def serialize_payload(payload: Any, *, job_id: str = "") -> str:
     return json.dumps({"__type__": "raw", "data": payload})
 
 
-def deserialize_payload(raw_json: str) -> Any:
+def _cleanup_authoritative_input_path(
+    raw_input_path: str | Path, *, job_id: str
+) -> None:
+    """Idempotently remove only a persisted job input beneath a trusted spool."""
+    try:
+        target_path = Path(raw_input_path).resolve()
+        if not _is_strictly_inside_spool(target_path):
+            return
+        parent = target_path.parent
+        if parent.name.startswith("omniscribe-ocr-") and _is_strictly_inside_spool(
+            parent
+        ):
+            shutil.rmtree(parent, ignore_errors=True)
+        elif target_path.is_file():
+            target_path.unlink(missing_ok=True)
+    except Exception as exc:
+        _LOGGER.warning(
+            "Failed to clean up authoritative input path for job %s: %s", job_id, exc
+        )
+
+
+def _validate_ocr_input_path(
+    raw_input: Any,
+    *,
+    payload_job_id: Any,
+    expected_job_id: str | None = None,
+    expected_input_path: str | Path | None = None,
+) -> Path:
+    """Validate an OCR path against the authoritative claimed job record.
+
+    Raises ValueError if missing, empty, outside trusted spool directory, or
+    not exactly bound to the claimed job ID and its persisted input path.
+    """
+    if not raw_input or not isinstance(raw_input, (str, Path)):
+        raise ValueError("Invalid or unsafe input_path in OCR payload")
+    raw_str = str(raw_input).strip()
+    if not raw_str:
+        raise ValueError("Invalid or unsafe input_path in OCR payload")
+    resolved = Path(raw_str).resolve()
+    if not _is_strictly_inside_spool(resolved):
+        raise ValueError("Invalid or unsafe input_path in OCR payload")
+
+    claimed_job_id = str(expected_job_id or "").strip()
+    if not claimed_job_id or not expected_input_path:
+        raise ValueError("OCR payload requires an authoritative claimed job binding")
+    if str(payload_job_id or "").strip() != claimed_job_id:
+        raise ValueError("OCR payload job_id does not match claimed job")
+    authoritative_path = Path(expected_input_path).resolve()
+    if not _is_strictly_inside_spool(authoritative_path):
+        raise ValueError("Claimed OCR job has an unsafe authoritative input_path")
+    if resolved != authoritative_path:
+        raise ValueError("OCR payload input_path does not match claimed job")
+    return resolved
+
+
+def deserialize_payload(
+    raw_json: str,
+    *,
+    expected_job_id: str | None = None,
+    expected_input_path: str | Path | None = None,
+) -> Any:
     """Deserialize a JSON envelope back into its domain payload instance."""
     if not raw_json:
         return None
@@ -280,9 +363,16 @@ def deserialize_payload(raw_json: str) -> Any:
         from omniscribe.plugins.ocr.schemas import OCRRequest
         from omniscribe.plugins.ocr.service import _OcrPayload
 
+        validated_input_path = _validate_ocr_input_path(
+            envelope.get("input_path"),
+            payload_job_id=envelope.get("job_id"),
+            expected_job_id=expected_job_id,
+            expected_input_path=expected_input_path,
+        )
+
         return _OcrPayload(
             submission_id=envelope.get("submission_id", ""),
-            input_path=Path(envelope.get("input_path", "")),
+            input_path=validated_input_path,
             filename=envelope.get("filename", ""),
             request=OCRRequest(**envelope.get("request", {})),
             job_id=envelope.get("job_id", ""),
@@ -496,6 +586,9 @@ class RedisJobQueue:
 
         # If queued, transition to cancelled immediately
         if record.status == "queued":
+            if record.input_path:
+                _cleanup_authoritative_input_path(record.input_path, job_id=job_id)
+
             await self._backend.upsert_job(
                 replace(record, status="cancelled", updated_at=time.time())
             )
@@ -547,6 +640,47 @@ class RedisJobQueue:
     cancel_job = cancel
 
     # -- Distributed Claim & Recovery Operations ------------------------------
+
+    async def _deserialize_claimed_payload(
+        self, job_id: str, payload_raw: str, *, lease_owner: str
+    ) -> tuple[bool, Any]:
+        """Deserialize one claim against its authoritative persisted job record."""
+        record = await self._backend.get_job(job_id)
+        try:
+            return (
+                True,
+                deserialize_payload(
+                    payload_raw,
+                    expected_job_id=job_id,
+                    expected_input_path=(
+                        record.input_path if record is not None else None
+                    ),
+                ),
+            )
+        except ValueError as exc:
+            message = f"Invalid queued payload for job {job_id}: {exc}"
+            _LOGGER.warning("%s", message)
+            if record is not None and record.status not in _TERMINAL_STATUSES:
+                await self._backend.upsert_job(
+                    replace(
+                        record,
+                        status="error",
+                        error=message,
+                        updated_at=time.time(),
+                    )
+                )
+            finished = await self.fail(
+                job_id, error=message, lease_owner=lease_owner or None
+            )
+            if not finished:
+                _LOGGER.info(
+                    "Job %s lost its lease before invalid payload cleanup", job_id
+                )
+                return False, None
+            if record is not None and record.input_path:
+                _cleanup_authoritative_input_path(record.input_path, job_id=job_id)
+            await self._ctx.emit(JobFailed(job_id=job_id, error=message))
+            return False, None
 
     async def claim(
         self,
@@ -632,7 +766,11 @@ class RedisJobQueue:
             )
             return None
 
-        payload = deserialize_payload(payload_raw)
+        valid, payload = await self._deserialize_claimed_payload(
+            job_id, payload_raw, lease_owner=worker_id
+        )
+        if not valid:
+            return None
         return job_id, payload
 
     async def _claim_watch(
@@ -694,11 +832,16 @@ class RedisJobQueue:
                         pipe.delete(lease_key)
                     await pipe.execute()
 
-                    payload = (
-                        deserialize_payload(_decode_str(payload_raw))
-                        if payload_raw
-                        else None
-                    )
+                    if payload_raw:
+                        valid, payload = await self._deserialize_claimed_payload(
+                            job_id,
+                            _decode_str(payload_raw),
+                            lease_owner=worker_id,
+                        )
+                        if not valid:
+                            return None
+                    else:
+                        payload = None
                     return job_id, payload
             except Exception as exc:
                 if "WatchError" in exc.__class__.__name__:
@@ -824,21 +967,74 @@ class RedisJobQueue:
             return False
         return await self._finish(job_id, lease_owner)
 
-    async def requeue(self, job_id: str) -> None:
+    async def requeue(self, job_id: str, *, lease_owner: str | None = None) -> bool:
         """Requeue an active job back into the pending queue (e.g. on worker drain)."""
         if self._redis is None:
-            return
+            return False
         now = time.time()
-        async with self._client.pipeline(transaction=True) as pipe:
-            pipe.zrem(KEY_ACTIVE, job_id)
-            pipe.zadd(KEY_QUEUE, {job_id: now})
-            await pipe.execute()
+        lease_key = f"{KEY_LEASE_PREFIX}{job_id}"
+
+        if not lease_owner:
+            async with self._client.pipeline(transaction=True) as pipe:
+                pipe.zrem(KEY_ACTIVE, job_id)
+                pipe.zadd(KEY_QUEUE, {job_id: now})
+                pipe.delete(lease_key)
+                await pipe.execute()
+            requeued = True
+        else:
+            try:
+                result = await self._client.eval(
+                    _REQUEUE_JOB_LUA,
+                    3,
+                    KEY_ACTIVE,
+                    KEY_QUEUE,
+                    lease_key,
+                    lease_owner,
+                    job_id,
+                    now,
+                )
+                requeued = bool(int(result))
+            except Exception as exc:
+                _LOGGER.debug("Lease requeue Lua unavailable (%s); using WATCH", exc)
+                requeued = False
+                while not self._closed:
+                    try:
+                        async with self._client.pipeline() as pipe:
+                            await pipe.watch(KEY_ACTIVE, lease_key)
+                            if (
+                                _decode_str(await self._client.get(lease_key) or "")
+                                != lease_owner
+                            ):
+                                await pipe.unwatch()
+                                requeued = False
+                                break
+                            pipe.multi()
+                            pipe.zrem(KEY_ACTIVE, job_id)
+                            pipe.zadd(KEY_QUEUE, {job_id: now})
+                            pipe.delete(lease_key)
+                            await pipe.execute()
+                            requeued = True
+                            break
+                    except Exception as exc_watch:
+                        if "WatchError" in exc_watch.__class__.__name__:
+                            continue
+                        _LOGGER.warning(
+                            "Lease requeue fallback failed for %s: %s",
+                            job_id,
+                            exc_watch,
+                        )
+                        requeued = False
+                        break
+
+        if not requeued:
+            return False
 
         record = await self._backend.get_job(job_id)
         if record is not None and record.status not in _TERMINAL_STATUSES:
             await self._backend.upsert_job(
                 replace(record, status="queued", updated_at=now)
             )
+        return True
 
     async def heartbeat(self, worker_id: str, ttl_seconds: int = 30) -> None:
         """Publish worker liveness heartbeat to Redis with TTL."""

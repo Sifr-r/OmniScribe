@@ -221,25 +221,25 @@ def crop_for_ocr_from_image(
     )
 
 
-def _get_executor(max_workers: int) -> ThreadPoolExecutor:
+def _get_executor(max_workers: int | None = None) -> ThreadPoolExecutor:
     """Lazily construct (and cache) the module-level executor.
 
     ThreadPoolExecutor's ``__init__`` allocates a ``ThreadPool`` and
     spawns the worker threads (~50 us + thread spawn cost). We keep
     one alive for the process lifetime so a page batch never pays the
-    spawn cost. The lock is for the rare case where two threads enter
+    spawn cost. Sized to max(4, os.cpu_count() or 4).
+    The lock is for the rare case where two threads enter
     this function concurrently on the first call.
     """
     global _EXECUTOR
-    if _EXECUTOR is not None and _EXECUTOR._max_workers == max_workers:
+    if _EXECUTOR is not None:
         return _EXECUTOR
     with _EXECUTOR_LOCK:
-        if _EXECUTOR is not None and _EXECUTOR._max_workers == max_workers:
-            return _EXECUTOR
         if _EXECUTOR is not None:
-            _EXECUTOR.shutdown(wait=False)
+            return _EXECUTOR
+        pool_size = max(4, os.cpu_count() or 4)
         _EXECUTOR = ThreadPoolExecutor(
-            max_workers=max_workers,
+            max_workers=pool_size,
             thread_name_prefix="crop-many",
         )
     return _EXECUTOR

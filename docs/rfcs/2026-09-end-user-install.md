@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| **Author** | Mavis (synthesized from the 2026-09-04 [Five-Lens Audit](../audits/2026-09-04-five-lens-audit.md)) |
+| **Author** | Mavis (synthesized from the 2026-09-04 Five-Lens Audit, preserved in Git history) |
 | **Status** | **Accepted — source install as v0.2.0; PyInstaller bundle shipped in v0.3.0** |
 | **Target** | v0.2.0 source install (live); v0.3.0 PyInstaller bundle (shipped; see `docs/deployment/windows-bundle.md`) |
 | **Audit refs** | U2, U3, U4, U6, C2 |
@@ -203,8 +203,8 @@ The previously-offered alternatives are now historical:
 
 ## Cross-references
 
-- [Five-Lens Audit §4.5 — End-User lens](../audits/2026-09-04-five-lens-audit.md#4-lens-findings-1)
+- Historical Five-Lens Audit §4.5 — End-User lens (preserved in Git history)
 - [`docs/DEPLOYMENT.md`](../DEPLOYMENT.md) — the three deployment profiles; Option A only changes Profile 1.
 - [`docs/TROUBLESHOOTING.md`](../TROUBLESHOOTING.md) — install-step troubleshooting; needs a "the bundled server won't start" entry once A is in the wild.
 
-_Last updated: 2026-09-07_
+_Last updated: 2026-09-27_

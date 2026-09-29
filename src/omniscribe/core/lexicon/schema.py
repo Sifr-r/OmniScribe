@@ -113,19 +113,19 @@ class LexiconSchemaManager:
                 table = db.open_table(self.TABLE_NAME)
             except Exception as exc:
                 logger.warning(
-                    "Failed to open existing table '%s' (%s); recreating",
+                    "Failed to open existing table '%s' (%s); failing closed",
                     self.TABLE_NAME,
                     exc,
                 )
-                table = db.create_table(
-                    self.TABLE_NAME, schema=self._schema, mode="overwrite"
-                )
+                raise
         else:
             table = db.create_table(self.TABLE_NAME, schema=self._schema, mode="create")
         self.ensure_meta_and_compat(db, existing, embedding_model, clock)
         self.ensure_columns(table)
         self.ensure_index(table)
         return table
+
+    open_terms_table = ensure_table
 
     def ensure_meta_and_compat(
         self,
@@ -167,18 +167,17 @@ class LexiconSchemaManager:
                     return
                 meta.add([meta_row])
                 return
-            except EmbeddingModelMismatchError:
-                raise
             except Exception as exc:
                 logger.warning(
-                    "Failed to open existing meta table '%s' (%s); recreating",
+                    "Failed to open or read existing meta table '%s' (%s); failing closed",
                     self.META_TABLE,
                     exc,
                 )
+                raise
         db.create_table(
             self.META_TABLE,
             pa.Table.from_pylist([meta_row], schema=meta_schema),
-            mode="overwrite" if self.META_TABLE in existing_tables else "create",
+            mode="create",
         )
 
     def ensure_columns(self, table: Any) -> None:

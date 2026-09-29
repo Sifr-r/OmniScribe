@@ -404,44 +404,41 @@ class OCRProcessor:
         if self.trocr_engine is None:
             return vlm_result
 
-        try:
-            from omniscribe.core.ocr.trocr import _heuristic_confidence
+        from omniscribe.core.ocr.trocr import _heuristic_confidence
 
+        try:
             image_bytes = decode_b64_bytes(image_b64)
             trocr_res = await self.trocr_engine.recognize(image_bytes)
-            if trocr_res.confidence > vlm_confidence:
-                correction_prompt = fill_dual_engine_crop(trocr_res.text)
-                vlm_corrected = await self._chat(
-                    correction_prompt,
-                    image_b64,
-                    timeout=self.crop_timeout_s,
-                    max_tokens=self.crop_max_tokens,
-                    system_prompt=self._resolve_crop_system(
-                        handwriting_mode=getattr(self, "handwriting_mode", False),
-                        dual_engine=True,
-                    ),
-                )
-                vlm_corrected_body = _strip_yaml_front_matter(vlm_corrected)
-                vlm_corrected_res = " ".join(
-                    line.strip()
-                    for line in vlm_corrected_body.split("\n")
-                    if line.strip()
-                )
-                if _is_fallback_response(vlm_corrected_res):
-                    vlm_corrected_res = ""
-
-                vlm_corr_conf = _heuristic_confidence(vlm_corrected_res)
-                if trocr_res.confidence > vlm_corr_conf:
-                    return trocr_res.text
-                else:
-                    return vlm_corrected_res
-            else:
-                return vlm_result
         except Exception as e:
-            # TrOCR is optional; a failure here must not poison the
-            # surrounding OCR result. Log and return the VLM's best effort.
-            logger.warning("TrOCR arbitration failed: %s", e)
+            # TrOCR is optional; keep the original VLM reading on failure.
+            logger.warning("TrOCR recognition failed: %s", e)
             return vlm_result
+
+        if trocr_res.confidence <= vlm_confidence:
+            return vlm_result
+
+        correction_prompt = fill_dual_engine_crop(trocr_res.text)
+        vlm_corrected = await self._chat(
+            correction_prompt,
+            image_b64,
+            timeout=self.crop_timeout_s,
+            max_tokens=self.crop_max_tokens,
+            system_prompt=self._resolve_crop_system(
+                handwriting_mode=getattr(self, "handwriting_mode", False),
+                dual_engine=True,
+            ),
+        )
+        vlm_corrected_body = _strip_yaml_front_matter(vlm_corrected)
+        vlm_corrected_res = " ".join(
+            line.strip() for line in vlm_corrected_body.split("\n") if line.strip()
+        )
+        if _is_fallback_response(vlm_corrected_res):
+            vlm_corrected_res = ""
+
+        vlm_corr_conf = _heuristic_confidence(vlm_corrected_res)
+        if trocr_res.confidence > vlm_corr_conf:
+            return trocr_res.text
+        return vlm_corrected_res
 
     async def perform_ocr_on_crop(
         self,

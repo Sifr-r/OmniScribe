@@ -132,3 +132,84 @@ def test_embedder_helpers_docstring_trimmed() -> None:
     doc = embedder_helpers.__doc__ or ""
     assert "470 LOC" not in doc
     assert "Sprint 6 long-file split" not in doc
+
+
+def test_embed_structured_text_zero_page_pdf_inserts_blank_page(
+    sample_pdf: Path, tmp_path: Path
+) -> None:
+    """If filtered page_nums results in zero pages, a default blank page is inserted to prevent crash."""
+    output_pdf = tmp_path / "zero_page.pdf"
+    embed_structured_text(
+        sample_pdf,
+        output_pdf,
+        {},
+        page_nums=[999, -5],
+    )
+    assert output_pdf.exists()
+    doc = fitz.open(str(output_pdf))
+    try:
+        assert len(doc) == 1
+        page = doc[0]
+        assert page.rect.width == 595.0
+        assert page.rect.height == 842.0
+    finally:
+        doc.close()
+
+
+def test_embed_from_image_input_zero_page_nums_inserts_blank_page(
+    tmp_path: Path,
+) -> None:
+    """Image-input sandwich PDF inserts a default blank page when page_nums filters out all frames."""
+    from PIL import Image
+
+    image_path = tmp_path / "single_frame.png"
+    Image.new("RGB", (100, 100), color=(255, 255, 255)).save(image_path)
+    output_pdf = tmp_path / "zero_page_image.pdf"
+
+    embedder_helpers._build_image_sandwich_pdf(
+        image_path,
+        output_pdf,
+        {},
+        page_nums=[999],
+    )
+    assert output_pdf.exists()
+    doc = fitz.open(str(output_pdf))
+    try:
+        assert len(doc) == 1
+        page = doc[0]
+        assert page.rect.width == 595.0
+        assert page.rect.height == 842.0
+    finally:
+        doc.close()
+
+
+def test_embed_structured_text_unicode_fast_path(
+    sample_pdf: Path, tmp_path: Path
+) -> None:
+    """Verify Arabic, CJK, and Cyrillic text embedded in sandwich PDF preserves Unicode codepoints."""
+    output_pdf = tmp_path / "unicode_output.pdf"
+    pages_data = {
+        0: [
+            ((0.1, 0.1, 0.9, 0.2), "مرحبا بك"),
+            ((0.1, 0.25, 0.9, 0.35), "你好世界"),
+            ((0.1, 0.4, 0.9, 0.5), "Привет мир"),
+        ]
+    }
+    embed_structured_text(
+        sample_pdf,
+        output_pdf,
+        pages_data,
+        dpi=72,
+        page_nums=[0],
+    )
+    assert output_pdf.exists()
+    doc = fitz.open(str(output_pdf))
+    try:
+        page_text = doc[0].get_text()
+        # Verify characters are present and not converted to question marks
+        assert "???" not in page_text
+        assert "你好世界" in page_text
+        assert "Привет мир" in page_text
+    finally:
+        doc.close()
+

@@ -151,6 +151,34 @@ def _build_sql_table_kwargs(source: GlossaryImportSource) -> dict[str, Any]:
     }
 
 
+def _build_lanes_sqlite_kwargs(source: GlossaryImportSource) -> dict[str, Any]:
+    """Build parser kwargs for the Lane's Lexicon SQLite snapshot."""
+    if not source.lanes_sqlite_path:
+        raise GlossaryError(
+            422,
+            "validation_failed",
+            "lanes_sqlite_path is required for lanes_sqlite imports.",
+        )
+    return {
+        "db_path": source.lanes_sqlite_path,
+        "domain": source.lanes_domain,
+    }
+
+
+def _build_lanes_xml_kwargs(source: GlossaryImportSource) -> dict[str, Any]:
+    """Build parser kwargs for Lane's Lexicon TEI XML files."""
+    if not source.lanes_xml_path:
+        raise GlossaryError(
+            422,
+            "validation_failed",
+            "lanes_xml_path is required for lanes_xml imports.",
+        )
+    return {
+        "xml_path": source.lanes_xml_path,
+        "domain": source.lanes_domain,
+    }
+
+
 async def build_parser_kwargs(
     source: GlossaryImportSource,
 ) -> tuple[dict[str, Any], str]:
@@ -169,6 +197,10 @@ async def build_parser_kwargs(
         kwargs = _build_csv_kwargs(source)
     elif fmt == GlossaryFormat.SQL_TABLE:
         kwargs = _build_sql_table_kwargs(source)
+    elif fmt == GlossaryFormat.LANES_SQLITE:
+        kwargs = _build_lanes_sqlite_kwargs(source)
+    elif fmt == GlossaryFormat.LANES_XML:
+        kwargs = _build_lanes_xml_kwargs(source)
     else:
         raise GlossaryError(422, "validation_failed", f"Unknown format: {fmt}")
     kwargs["max_entries"] = source.max_entries
@@ -187,6 +219,10 @@ def entry_count_estimate(kwargs: dict[str, Any]) -> int:
         return SYNC_THRESHOLD + 1  # assume large; favor async for SQL.
     if kwargs.get("url"):
         return SYNC_THRESHOLD + 1  # git/remote fetch always async.
+    if kwargs.get("db_path") or kwargs.get("xml_path"):
+        # Lane's Lexicon has tens of thousands of entries — always queue
+        # so the FastAPI lane doesn't run the embedding model inline.
+        return SYNC_THRESHOLD + 1
     return SYNC_THRESHOLD + 1
 
 
@@ -200,6 +236,10 @@ def default_name(format_name: str, kwargs: dict[str, Any]) -> str:
     if kwargs.get("dsn") and kwargs.get("source_table"):
         target = kwargs.get("target_table") or kwargs["source_table"]
         return f"SQL {kwargs['source_table']} \u2192 {target}"
+    if format_name == "lanes_sqlite" and kwargs.get("db_path"):
+        return f"Lane's Lexicon (SQLite) \u2014 {kwargs['db_path']}"
+    if format_name == "lanes_xml" and kwargs.get("xml_path"):
+        return f"Lane's Lexicon (XML) \u2014 {kwargs['xml_path']}"
     return f"{format_name.upper()} import"
 
 

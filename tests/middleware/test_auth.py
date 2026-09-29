@@ -13,6 +13,7 @@ from omniscribe.middleware.auth import (
     BearerAuthMiddleware,
     _extract_bearer,
     _extract_query_token,
+    _extract_ws_query_token,
     _is_exempt,
     _token_matches,
 )
@@ -77,6 +78,14 @@ def test_extract_query_token_returns_none_when_missing() -> None:
 
 def test_extract_query_token_returns_none_for_empty() -> None:
     assert _extract_query_token(b"") is None
+
+
+def test_extract_ws_query_token_supports_auth_token_and_token() -> None:
+    assert _extract_ws_query_token(b"auth_token=abc123") == "abc123"
+    assert _extract_ws_query_token(b"token=xyz456") == "xyz456"
+    assert _extract_ws_query_token(b"auth_token=first&token=second") == "first"
+    assert _extract_ws_query_token(b"other=123") is None
+    assert _extract_ws_query_token(b"") is None
 
 
 def test_is_exempt_lists_exact_paths() -> None:
@@ -351,3 +360,60 @@ async def _noop_recv() -> dict:
 
 async def _noop_send(message: dict) -> None:
     return None
+
+
+async def test_middleware_rejects_websocket_without_token() -> None:
+    sent: list[dict] = []
+
+    async def send(msg: dict) -> None:
+        sent.append(msg)
+
+    recorder = _CallRecorder()
+    middleware = BearerAuthMiddleware(recorder.downstream, "secret-123")
+    ws_scope = {
+        "type": "websocket",
+        "path": "/api/ws/test",
+        "headers": [],
+        "query_string": b"",
+    }
+    await middleware(ws_scope, _noop_recv, send)
+    assert recorder.upstream_called is False
+    assert sent == [{"type": "websocket.close", "code": 4401, "reason": "unauthorized"}]
+
+
+async def test_middleware_accepts_websocket_with_auth_token_query() -> None:
+    sent: list[dict] = []
+
+    async def send(msg: dict) -> None:
+        sent.append(msg)
+
+    recorder = _CallRecorder()
+    middleware = BearerAuthMiddleware(recorder.downstream, "secret-123")
+    ws_scope = {
+        "type": "websocket",
+        "path": "/api/ws/test",
+        "headers": [],
+        "query_string": b"auth_token=secret-123",
+    }
+    await middleware(ws_scope, _noop_recv, send)
+    assert recorder.upstream_called is True
+    assert sent == []
+
+
+async def test_middleware_accepts_websocket_on_exempt_path() -> None:
+    sent: list[dict] = []
+
+    async def send(msg: dict) -> None:
+        sent.append(msg)
+
+    recorder = _CallRecorder()
+    middleware = BearerAuthMiddleware(recorder.downstream, "secret-123")
+    ws_scope = {
+        "type": "websocket",
+        "path": "/api/health",
+        "headers": [],
+        "query_string": b"",
+    }
+    await middleware(ws_scope, _noop_recv, send)
+    assert recorder.upstream_called is True
+    assert sent == []

@@ -30,6 +30,8 @@ class GlossaryFormat(StrEnum):
     GIT_GLOSSARY = "git_glossary"
     SQL_TABLE = "sql_table"
     JSON_PAIRS = "json_pairs"
+    LANES_SQLITE = "lanes_sqlite"
+    LANES_XML = "lanes_xml"
 
 
 class GlossaryImportSource(BaseModel):
@@ -49,11 +51,27 @@ class GlossaryImportSource(BaseModel):
     sql_source_col: str | None = "source"
     sql_target_col: str | None = "target"
     sql_where: str | None = None
+    # Lane's Lexicon (Perseus/alpheios TEI XML and the SQLite snapshot of
+    # the same corpus). Both ``lanes_*`` paths are local filesystem
+    # paths only — the parser layer rejects URLs, env-vars, and remote
+    # schemes (see ``omniscribe.core.glossary_sources.lanes_lexicon``).
+    lanes_sqlite_path: str | None = Field(default=None, max_length=4096)
+    lanes_xml_path: str | None = Field(default=None, max_length=4096)
+    lanes_domain: str | None = Field(default=None, max_length=200)
     encoding: str | None = None
     max_entries: int | None = Field(default=None, ge=1, le=1_000_000)
     name: str | None = Field(default=None, max_length=200)
 
-    @field_validator("name", "encoding", "git_ref", "git_path", mode="before")
+    @field_validator(
+        "name",
+        "encoding",
+        "git_ref",
+        "git_path",
+        "lanes_sqlite_path",
+        "lanes_xml_path",
+        "lanes_domain",
+        mode="before",
+    )
     @classmethod
     def _strip_optional(cls, value: Any) -> Any:
         return _validate_optional_string(value)

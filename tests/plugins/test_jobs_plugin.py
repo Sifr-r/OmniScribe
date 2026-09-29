@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import shutil
+import tempfile
 import time
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -442,3 +445,99 @@ async def test_job_payload_protocol_and_runner_dispatch() -> None:
         assert len(custom_calls) == 1
     finally:
         await ctx.dispose()
+
+
+async def test_tagged_runner_missing_is_explicit_in_both_queues() -> None:
+    from omniscribe.worker import _resolve_runner as resolve_worker_runner
+
+    class MissingRunner:
+        pass
+
+    class TaggedPayload:
+        runner_protocol = MissingRunner
+
+    async def default_runner(request: Any) -> JobOutcome:
+        return JobOutcome(blob=b"default", content_type="text/plain")
+
+    ctx = await _boot(default_runner)
+    try:
+        queue = ctx.inject(JobQueue)
+        for resolve in (
+            queue._resolve_runner,
+            lambda payload: resolve_worker_runner(payload, ctx),
+        ):
+            with pytest.raises(
+                ServiceNotFoundError, match=r"MissingRunner.*TaggedPayload"
+            ):
+                resolve(TaggedPayload())
+            assert resolve({"ocr": True}) is default_runner
+
+        override = jobs.InMemoryJobQueue(
+            ctx,
+            ctx.inject(sb.StateBackend),
+            ctx.inject(ArtifactStore),
+            runner=default_runner,
+        )
+        assert override._resolve_runner(TaggedPayload()) is default_runner
+    finally:
+        await ctx.dispose()
+
+
+async def test_inmemory_cancel_queued_cleans_up_staged_input() -> None:
+    gate = asyncio.Event()
+
+    async def runner(request: Any) -> JobOutcome:
+        await gate.wait()
+        return JobOutcome(blob=b"out", content_type="text/plain")
+
+    ctx = await _boot(runner)
+    queue = ctx.inject(JobQueue)
+
+    work_dir = Path(tempfile.mkdtemp(prefix="omniscribe-ocr-"))
+    test_file = work_dir / "input.pdf"
+    test_file.write_bytes(b"%PDF-test")
+
+    try:
+        # First job keeps worker busy
+        _ = await queue.submit({"busy": True})
+        # Second job remains queued
+        second = await queue.submit({"file": True}, input_path=str(test_file))
+        assert work_dir.exists()
+
+        assert await queue.cancel(second.job_id) is True
+        # Staged upload should be cleaned up immediately on cancel
+        assert not work_dir.exists()
+    finally:
+        gate.set()
+        await ctx.dispose()
+        shutil.rmtree(work_dir, ignore_errors=True)
+
+
+async def test_inmemory_shutdown_cleans_up_queued_staged_input() -> None:
+    gate = asyncio.Event()
+
+    async def runner(request: Any) -> JobOutcome:
+        await gate.wait()
+        return JobOutcome(blob=b"out", content_type="text/plain")
+
+    ctx = await _boot(runner)
+    queue = ctx.inject(JobQueue)
+
+    work_dir = Path(tempfile.mkdtemp(prefix="omniscribe-ocr-"))
+    test_file = work_dir / "input.pdf"
+    test_file.write_bytes(b"%PDF-test")
+
+    try:
+        # First job keeps worker busy
+        await queue.submit({"busy": True})
+        # Second job remains queued
+        _ = await queue.submit({"file": True}, input_path=str(test_file))
+        assert work_dir.exists()
+
+        await queue.shutdown()
+        # Staged upload should be cleaned up during shutdown pagination
+        assert not work_dir.exists()
+    finally:
+        gate.set()
+        await ctx.dispose()
+        shutil.rmtree(work_dir, ignore_errors=True)

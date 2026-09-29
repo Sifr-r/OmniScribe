@@ -4,8 +4,7 @@
 **F5-18 audit fix — this module is a deliberate STUB.**
 
 The actual download URLs are gated behind the license review described in
-``docs/superpowers/specs/2026-08-10-ocr-quality-trust-layer-design.md``
-§9 (Dataset license check). Until the license review completes:
+``docs/benchmarks.md`` §5 (Dataset Ingestion & License Review Status). Until the license review completes:
 
 - ``tests/fixtures/datasets/ocr_quality_mini.json`` (10 records) is
   shipped in-tree and covers the smoke test for ``slow_dataset``.
@@ -77,7 +76,7 @@ def _ocr_quality_records() -> list[dict[str, object]]:
     # confidences out of the VLM ourselves.
     raise NotImplementedError(
         "OCR-Quality fetch is gated behind the license review in "
-        "docs/superpowers/specs/2026-08-10-ocr-quality-trust-layer-design.md §9. "
+        "docs/benchmarks.md §5. "
         "Until that review completes, the mini fixture "
         "(tests/fixtures/datasets/ocr_quality_mini.json) is the only "
         "OCR-Quality-format data we ship."
@@ -138,7 +137,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     print(
         "WARNING: scripts/fetch_datasets.py is a license-gated STUB. "
         "Real fetching is blocked pending the review in "
-        "docs/superpowers/specs/2026-08-10-ocr-quality-trust-layer-design.md §9.",
+        "docs/benchmarks.md §5.",
         file=sys.stderr,
     )
     args = parse_args(argv)

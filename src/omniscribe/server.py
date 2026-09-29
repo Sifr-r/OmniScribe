@@ -201,6 +201,8 @@ def create_app() -> ASGIApplication:
             "X-Requested-With",
             "X-Provider-Api-Key",
             "X-Artifact-Token",
+            "X-Metadata-Artifact-Token",
+            "X-Job-Token",
             "X-Session-Token",
         ],
         expose_headers=[

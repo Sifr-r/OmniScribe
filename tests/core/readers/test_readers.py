@@ -383,3 +383,78 @@ def test_docx_reader_inline_page_break_splits_paragraph() -> None:
     assert res.pages[0].blocks[0].text == "Text before break."
     assert len(res.pages[1].blocks) == 1
     assert res.pages[1].blocks[0].text == "Text after break."
+
+
+def test_render_synthetic_pdf_unicode_scripts() -> None:
+    from omniscribe.core.document import DocumentBlock, DocumentPage, DocumentResult
+    from omniscribe.core.readers.pdf_renderer import render_pdf_from_document_result
+
+    blocks = [
+        DocumentBlock(bbox=(0.1, 0.1, 0.9, 0.2), text="مرحبا بك في العالم", kind="heading"),
+        DocumentBlock(bbox=(0.1, 0.25, 0.9, 0.35), text="你好世界", kind="paragraph"),
+        DocumentBlock(bbox=(0.1, 0.4, 0.9, 0.5), text="שלום עולם", kind="paragraph"),
+        DocumentBlock(bbox=(0.1, 0.55, 0.9, 0.65), text="Привет мир", kind="code"),
+    ]
+    page = DocumentPage(page_index=0, blocks=blocks, width=595, height=842)
+    doc_result = DocumentResult(pages=[page])
+
+    pdf_bytes = render_pdf_from_document_result(doc_result)
+    assert len(pdf_bytes) > 0
+
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    try:
+        assert doc.page_count == 1
+        page_text = doc[0].get_text()
+        assert "???" not in page_text
+        assert "你好世界" in page_text
+        assert "Привет мир" in page_text
+        # Arabic and Hebrew codepoints should be present (not '?')
+        assert "?" not in page_text
+    finally:
+        doc.close()
+
+
+def test_render_synthetic_pdf_empty_document_result() -> None:
+    from omniscribe.core.document import DocumentResult
+    from omniscribe.core.readers.pdf_renderer import render_pdf_from_document_result
+
+    doc_result = DocumentResult(pages=[])
+    pdf_bytes = render_pdf_from_document_result(doc_result)
+    assert len(pdf_bytes) > 0
+
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    try:
+        assert doc.page_count == 1
+        assert doc[0].rect.width == 595.0
+        assert doc[0].rect.height == 842.0
+    finally:
+        doc.close()
+
+
+def test_markdown_reader_with_unicode_renders_to_pdf() -> None:
+    md = """# مرحبا بك
+
+هذا نص عربي في ملف ماركداون.
+
+## 中文章节
+
+这是中文段落内容。
+
+## Русский раздел
+
+Это русский текст параграфа.
+"""
+    reader = MarkdownReader()
+    doc_result = reader.read(md.encode("utf-8"), filename="multilingual.md")
+    pdf_bytes = render_synthetic_pdf(doc_result)
+    assert len(pdf_bytes) > 0
+
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    try:
+        text = "\n".join(p.get_text() for p in doc)  # type: ignore[attr-defined]
+        assert "?" not in text
+        assert "中文章节" in text
+        assert "Русский раздел" in text
+    finally:
+        doc.close()
+

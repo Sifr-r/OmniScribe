@@ -25,6 +25,8 @@ def test_format_enum_vocabulary() -> None:
         "git_glossary",
         "sql_table",
         "json_pairs",
+        "lanes_sqlite",
+        "lanes_xml",
     }
 
 

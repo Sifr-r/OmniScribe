@@ -158,3 +158,26 @@ class TestUnifiedCropParameters:
         """
         assert DEFAULT_CROP_PADDING == 0.005
         assert DEFAULT_CROP_QUALITY == 85
+
+
+def test_get_executor_cached_and_not_shutdown() -> None:
+    """[P1-9] _get_executor keeps a single fixed-size cached ThreadPoolExecutor and does not shut down."""
+    import os
+
+    from omniscribe.utils.image import _get_executor, crop_many_for_ocr_from_image
+
+    e1 = _get_executor(2)
+    e2 = _get_executor(8)
+    assert e1 is e2
+    assert e1._max_workers == max(4, os.cpu_count() or 4)
+    # Ensure executor is alive and can execute tasks
+    future = e1.submit(lambda: 42)
+    assert future.result() == 42
+
+    # Multiple crop_many calls with varying workers do not kill the executor
+    img = Image.new("RGB", (200, 200), (255, 0, 0))
+    bboxes = [[0.1, 0.1, 0.4, 0.4], [0.5, 0.5, 0.8, 0.8]]
+    res1 = crop_many_for_ocr_from_image(img, bboxes, max_workers=2)
+    res2 = crop_many_for_ocr_from_image(img, bboxes, max_workers=8)
+    assert len(res1) == 2 and len(res2) == 2
+    assert not e1._shutdown

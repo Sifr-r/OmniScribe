@@ -347,25 +347,25 @@ def is_same_origin(url_a: str | None, url_b: str | None) -> bool:
     try:
         pa = urlsplit(url_a.strip())
         pb = urlsplit(url_b.strip())
+
+        scheme_a = (pa.scheme or "").lower()
+        scheme_b = (pb.scheme or "").lower()
+        host_a = (pa.hostname or "").lower()
+        host_b = (pb.hostname or "").lower()
+
+        if not scheme_a or not scheme_b or not host_a or not host_b:
+            return False
+
+        port_a = pa.port or (
+            80 if scheme_a == "http" else (443 if scheme_a == "https" else None)
+        )
+        port_b = pb.port or (
+            80 if scheme_b == "http" else (443 if scheme_b == "https" else None)
+        )
+
+        return (scheme_a, host_a, port_a) == (scheme_b, host_b, port_b)
     except Exception:
         return False
-
-    scheme_a = (pa.scheme or "").lower()
-    scheme_b = (pb.scheme or "").lower()
-    host_a = (pa.hostname or "").lower()
-    host_b = (pb.hostname or "").lower()
-
-    if not scheme_a or not scheme_b or not host_a or not host_b:
-        return False
-
-    port_a = pa.port or (
-        80 if scheme_a == "http" else (443 if scheme_a == "https" else None)
-    )
-    port_b = pb.port or (
-        80 if scheme_b == "http" else (443 if scheme_b == "https" else None)
-    )
-
-    return (scheme_a, host_a, port_a) == (scheme_b, host_b, port_b)
 
 
 class _PinnedNetworkBackend(httpcore.AsyncNetworkBackend):
@@ -422,6 +422,18 @@ class _PinnedIPTransport(httpx.AsyncHTTPTransport):
             retries=retries if retries is not None else 0,
             network_backend=backend,
         )
+
+
+def create_pinned_client(
+    url: str, resolved_ip: str, timeout: float = 60.0
+) -> httpx.AsyncClient:
+    """Initialize an httpx.AsyncClient pinned to resolved_ip to prevent DNS rebinding TOCTOU."""
+    parts = urlsplit(url)
+    target_host = (parts.hostname or "").strip().lower()
+    return httpx.AsyncClient(
+        transport=_PinnedIPTransport(target_host, resolved_ip),
+        timeout=timeout,
+    )
 
 
 def _rewrite_url_with_resolved_ip(url: str, resolved_ip: str) -> str:

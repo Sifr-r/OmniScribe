@@ -5,7 +5,7 @@
 | **Author** | OmniScribe gap analysis session (2026-09-07), benchmarked vs Unstructured.io / Docling / MinerU / Marker |
 | **Status** | **Implemented** (2026-09-07) — closeout pending (see §10) |
 | **Target** | v0.3.1+ strategic roadmap |
-| **Refs** | RFC 003 (Redis state backend), `docs/audits/2026-09-04-five-lens-audit.md` (audit remediation — distinct from this doc) |
+| **Refs** | RFC 003 (Redis state backend), historical Five-Lens Audit (preserved in Git history; distinct from this doc) |
 
 ## 1. Background
 
@@ -47,7 +47,7 @@ The entry ticket. Unstructured's entire value prop is LLM-ready chunks; OmniScri
 - **`core/writers/markdown.py`** — `MarkdownWriter` implementing `DocumentExportProtocol` (`exporter_base.py`). Sections → `#`/`##` via section metadata; tree tables → GFM tables; figures → `![alt](artifact-ref)`; equations → `$$…$$` when LaTeX/MathML is available.
 - **`core/chunking/chunker.py`** — `SectionAwareChunker` over the block tree. Output chunk: `{chunk_id, element_type, text, section_path, page_span, bbox[], block_ids[], trust_score(min)}` — provenance-preserving chunks, which Unstructured does not offer. Knobs: `max_chars=1200`, `overlap_chars=120`, `min_chars=200`; split preference: section boundary > paragraph > block; tables stay atomic unless oversized.
 - **Taxonomy mapping** — `element_type` ∈ `title | narrative | table | figure | formula | list_item`, mapped from `DocumentBlock.kind` + section/structure processor metadata.
-- **Routes** (documents plugin, artifact-backed like the existing exports): `GET /api/export/markdown`, `GET /api/export/chunks?max_chars=&overlap=`.
+- **Routes** (documents plugin, artifact-backed like the existing exports): `GET /api/export/markdown`, `GET /api/export/chunks?max_chars=&overlap=`. Capability tokens are enforced via request headers (`X-Artifact-Token`, `Authorization: Bearer`, or `X-Metadata-Artifact-Token`) rather than query parameters to prevent token leakage in access logs.
 - **Tests:** chunker property tests (no chunk > `max_chars` unless a single block exceeds it; overlap only within a section; boundaries at block edges), writer tests, router contract tests, OpenAPI snapshot update.
 - **Effort:** human ~3 days / CC ~1 day.
 
@@ -93,7 +93,7 @@ R5 (tables)      (after R1+R2 ideally)
 
 ## 6. Definition of done
 
-1. `GET /api/export/markdown` + `GET /api/export/chunks` return valid payloads for every `examples/` fixture (route contract tests).
+1. `GET /api/export/markdown` + `GET /api/export/chunks` return valid payloads for every `examples/` fixture (route contract tests, enforcing header capability tokens: `X-Artifact-Token`, `Authorization: Bearer`, or `X-Metadata-Artifact-Token`).
 2. Chunker properties hold under hypothesis testing (bounds, overlap, boundaries).
 3. DOCX/HTML/MD upload processes end-to-end with zero Surya/VLM calls (asserted via monkeypatched engine).
 4. `OMNISCRIBE_JOBS_MODE=redis`: 2 workers × 10 concurrent jobs, zero loss (fakeredis + real-Redis smoke).
@@ -114,7 +114,7 @@ Doc-only RFC. Each workstream is additive and opt-in (new routes/readers join th
 ## 9. Related
 
 - RFC 003 — Redis state backend (R3 builds on its key layout and `consume_channel` Lua pattern)
-- `docs/audits/2026-09-04-five-lens-audit.md` — audit remediation (code-quality track, distinct from this competitive track)
+- Historical Five-Lens Audit (preserved in Git history) — audit remediation, distinct from this competitive track
 
 ## 10. Closeout status (2026-09-07 audit)
 

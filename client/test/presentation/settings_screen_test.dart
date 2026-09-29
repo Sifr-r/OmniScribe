@@ -7,6 +7,7 @@ import 'package:omniscribe_client/data/models/process_settings.dart';
 import 'package:omniscribe_client/data/providers/repository_providers.dart';
 import 'package:omniscribe_client/data/providers/settings_notifier.dart';
 import 'package:omniscribe_client/data/repositories/config_repository.dart';
+import 'package:omniscribe_client/presentation/common/app_input.dart';
 import 'package:omniscribe_client/presentation/settings/settings_screen.dart';
 
 class _MockConfigRepository extends Mock implements ConfigRepository {}
@@ -226,5 +227,25 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(container.read(authTokenProvider), 'server-secret');
+  });
+
+  testWidgets('invalid backend URL shows error snackbar and does not throw',
+      (tester) async {
+    await pumpSettings(tester);
+
+    final backendUrlField = find.descendant(
+      of: find.ancestor(
+        of: find.text('Backend Base URL'),
+        matching: find.byType(AppInput),
+      ),
+      matching: find.byType(EditableText),
+    );
+
+    await tester.enterText(backendUrlField, 'invalid-url');
+    await tester.tap(find.text('Test connection'));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(SnackBar), findsOneWidget);
+    expect(find.textContaining('api_base must be http(s)'), findsOneWidget);
   });
 }

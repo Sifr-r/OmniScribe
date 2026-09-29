@@ -212,6 +212,14 @@ def _font_covers(font: fitz.Font, text: str) -> bool:
     return all(font.has_glyph(ord(c)) for c in text if not c.isspace())
 
 
+def _is_latin(text: str) -> bool:
+    try:
+        text.encode("latin-1")
+        return True
+    except UnicodeEncodeError:
+        return False
+
+
 def _pick_embed_font(text: str) -> tuple[str, fitz.Font]:
     """Choose the font alias + metrics font for one text run.
 
@@ -221,7 +229,7 @@ def _pick_embed_font(text: str) -> tuple[str, fitz.Font]:
     per-font alias before drawing.
     """
     helv = _get_embed_font()
-    if _font_covers(helv, text):
+    if _is_latin(text) and _font_covers(helv, text):
         return "helv", helv
     for font in _get_unicode_chain():
         if _font_covers(font, text):
@@ -496,9 +504,14 @@ def _embed_from_image_input(
 
                 for rect_coords, text in pages_data.get(page_num, []):
                     _draw_invisible_text(new_page, rect_coords, text, width, height)
+        if len(new_doc) == 0:
+            new_doc.new_page(width=595.0, height=842.0)
         new_doc.save(output_pdf_path, garbage=3, deflate=True)
     finally:
         new_doc.close()
+
+
+_build_image_sandwich_pdf = _embed_from_image_input
 
 
 def _rasterize_embed_page(page: fitz.Page, dpi: int) -> tuple[float, float, bytes]:

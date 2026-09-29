@@ -1,10 +1,10 @@
 # Deployment Guide
 
-This document walks through deploying OmniScribe in three common
+This document walks through deploying OmniScribe in four common
 profiles. **Start at the top, stop at the profile that matches your
 use case.** The local-desktop default is correct for almost every
-user; only step up to LAN / public-internet when you actually need
-to.
+user; only step up to LAN, public-internet, or multi-worker clusters
+when you actually need to.
 
 > **Install path (updated 2026-09-07):** the supported end-user install
 > is the **source install** (Profile 1 below). The single-binary
@@ -32,7 +32,7 @@ uv run omniscribe-server --port 8000
 # Frontend (in another terminal)
 cd client
 flutter pub get
-flutter run -d windows   # or: macos / linux
+flutter run -d windows   # committed desktop target; use -d chrome for web
 ```
 
 That's it for now. No auth, no reverse proxy, no Docker. The
@@ -41,11 +41,14 @@ Settings tab in the Flutter client points at `http://localhost:1234/v1`
 
 **What you get:**
 
-- All guards on (rate limit, upload cap, SSRF, placeholder-token
-  rejection) but **no** bearer-token auth. Any process that can
-  reach `localhost:8000` is trusted.
-- Documents stay on disk until cleaned up by the startup sweep
-  (`M6`).
+- Upload, SSRF, and placeholder-token guards are available, but bearer auth
+  is disabled on the loopback default and rate limiting is disabled unless
+  `OMNISCRIBE_RATE_LIMIT_PER_MIN` is set. Any process that can reach
+  `localhost:8000` is trusted.
+- Per-run `omniscribe-ocr-*` work directories are removed upon run completion.
+  Preview cache files are cleaned during cache eviction or process shutdown, and
+  token-bound result artifacts use the configured artifact TTL and the runtime's
+  periodic cleanup loop.
 - The VLM endpoint defaults to LM Studio on `localhost:1234`; if
   you point it at a third-party provider, see "Third-party VLM"
   below.
@@ -69,7 +72,17 @@ requires re-entering it.
 
 **What changed from profile 1:**
 
-- `OMNISCRIBE_AUTH_TOKEN` gates every HTTP route except the liveness probes (`/api/health`, `/health`, `/healthz`, `/ready`, `/readyz`). The middleware is wired unconditionally in `src/omniscribe/server.py:240-256`; placeholder tokens are rejected on non-loopback binds with a clear `SystemExit` (`server.py:485+`). The WebSocket handshake uses per-channel session tokens on top of the same bearer.
+- `OMNISCRIBE_AUTH_TOKEN` gates protected routes. A 32+ character random secret
+  is strongly recommended (`python -c "import secrets; print(secrets.token_urlsafe(32))"`).
+  The runtime checks presence on non-loopback binds and rejects known placeholders
+  (`change-me-in-prod`, `placeholder`, `example-token-replace-me`,
+  `replace-this-with-a-real-secret`) at startup with a clear `SystemExit` (override with
+  `--allow-placeholder-token` or `OMNISCRIBE_ALLOW_PLACEHOLDER_TOKEN=true` for local dev).
+  Public exceptions are `/`, static assets, `/api/sample-pdf/*`, `/api/health`,
+  `/api/healthz`, `/ready`, `/readyz`, and CORS `OPTIONS` requests.
+  `BearerAuthMiddleware` gates both HTTP and WebSocket handshakes, validating bearer
+  tokens via `Authorization: Bearer` or `?auth_token=` / `?token=` query parameters,
+  and closing unauthenticated WebSocket handshakes with close code 4401.
 - `ALLOW_SSRF_LOCAL=false` blocks the URL fetcher from reaching
   `localhost` / private IPs. Only public URLs work.
 - The upload cap drops to 2 GB and the rate limit to 30/min — adjust
@@ -99,7 +112,8 @@ omniscribe.example.com {
 ```yaml
 services:
   api:
-    image: ghcr.io/sifr-r/omniscribe:latest
+    build: .
+    image: omniscribe:app
     restart: unless-stopped
     ports:
       - "127.0.0.1:8000:8000"   # M9: localhost only
@@ -110,7 +124,7 @@ services:
       OMNISCRIBE_RATE_LIMIT_PER_MIN: "30"
       LLM_API_BASE: "${OMNISCRIBE_LLM_API_BASE:-http://host.docker.internal:1234/v1}"
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://localhost:8000/api/health"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health')"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -126,14 +140,22 @@ export OMNISCRIBE_AUTH_TOKEN=$(python -c 'import secrets; print(secrets.token_ur
 echo "$OMNISCRIBE_AUTH_TOKEN" >> ~/.config/omniscribe/token
 ```
 
-The placeholder-check (M10) refuses to start if the value is the
-example `change-me-in-prod` or any other known placeholder.
+A 32+ character random secret is strongly recommended (`secrets.token_urlsafe(32)`).
+The startup placeholder check refuses to start on any non-loopback bind if
+`OMNISCRIBE_AUTH_TOKEN` is unset or matches known placeholders such as
+`change-me-in-prod`, `placeholder`, `example-token-replace-me`, or
+`replace-this-with-a-real-secret`.
 
 ### Token scope (what is actually enforced)
 
 There is a **single enforced bearer token**: `OMNISCRIBE_AUTH_TOKEN`.
 The `BearerAuthMiddleware` wired in `server.py` checks it (constant-time
-compare) on every route it guards; per-route token scoping does not
+compare via `hmac.compare_digest`) on every route it guards across both `http`
+and `websocket` ASGI scopes. For HTTP routes, bearer tokens are accepted via
+`Authorization: Bearer <token>` (or `?token=` on SSE `/events` endpoints).
+For WebSocket endpoints, tokens are accepted via `Authorization: Bearer <token>`
+or `?auth_token=` / `?token=` query parameters; unauthenticated handshakes are
+closed with WebSocket close code 4401. Per-route token scoping does not
 exist — earlier versions of this section described
 `OMNISCRIBE_OCR_AUTH_TOKEN` / `OMNISCRIBE_TRANSLATION_AUTH_TOKEN`
 variables that were never implemented.
@@ -149,6 +171,81 @@ being revealed. Setting it grants no access and exempts nothing.
 > middleware contract — placeholder-token rejection on non-loopback,
 > constant-time comparison — is documented in
 > [SECURITY.md](SECURITY.md) §"Security Features".
+
+## Profile 4: Multi-Worker LAN / Cluster (Redis + Distributed Workers)
+
+You want to scale OCR and async translation across multiple background worker
+processes or distributed compute nodes on a private network, using Redis as
+the shared broker, state store, and event coordinator.
+
+In this profile:
+- Redis acts as the centralized state backend (`OMNISCRIBE_STATE_BACKEND=redis`)
+  and distributed job broker (`OMNISCRIBE_JOBS_MODE=redis`).
+- The API server handles document ingestion, uploads, client queries, and
+  WebSocket / SSE subscriptions.
+- Standalone `omniscribe-worker` processes run concurrently to execute OCR and
+  translation workloads.
+
+### 1. Provision Redis
+
+Ensure Redis is running with authentication configured:
+
+```bash
+docker run -d --name omniscribe-redis -p 6379:6379 \
+  redis:7-alpine redis-server --requirepass "$REDIS_PASSWORD"
+```
+
+### 2. Run the API Server
+
+On your web / API host:
+
+```bash
+export REDIS_URL="redis://:${REDIS_PASSWORD}@${REDIS_HOST}:6379/0"
+export OMNISCRIBE_STATE_BACKEND=redis
+export OMNISCRIBE_JOBS_MODE=redis
+export OMNISCRIBE_AUTH_TOKEN="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
+export ALLOW_SSRF_LOCAL=false
+uv run omniscribe-server --host 0.0.0.0 --port 8000
+```
+
+### 3. Run Standalone Workers
+
+On one or more worker nodes (or in separate background processes):
+
+```bash
+export REDIS_URL="redis://:${REDIS_PASSWORD}@${REDIS_HOST}:6379/0"
+export OMNISCRIBE_STATE_BACKEND=redis
+export OMNISCRIBE_JOBS_MODE=redis
+export LLM_API_BASE="http://127.0.0.1:1234/v1"
+
+# Launch worker with 4 concurrent execution loops
+uv run omniscribe-worker --concurrency 4
+```
+
+#### CLI Options for `omniscribe-worker`:
+- `--concurrency` / `-c`: Number of concurrent worker loops (default: 2).
+- `--redis-url`: Redis connection URL (default: read from `REDIS_URL` env).
+- `--visibility-timeout`: Visibility lease timeout in seconds for claimed jobs (default: 300.0).
+- `--poll-interval`: Polling interval in seconds when the queue is empty (default: 0.2).
+- `--log-level`: Logging verbosity (`DEBUG`, `INFO`, `WARNING`, `ERROR`; default: `INFO`).
+
+#### Distributed Worker Operational Guarantees:
+- **Atomic Job Claims & Leases:** Workers claim queued jobs atomically from
+  `omniscribe:jobs:queue` using Lua scripts, acquiring a claim in
+  `omniscribe:jobs:active` and setting `omniscribe:jobs:lease:{job_id}`. A background
+  heartbeat loop refreshes worker liveness (`omniscribe:jobs:heartbeat:{worker_id}`);
+  orphaned leases from crashed workers automatically expire and requeue.
+- **Spool Containment Invariants:** `src/omniscribe/plugins/jobs_redis.py` enforces
+  strict spool containment. Deserialized `input_path` locations must reside strictly
+  beneath trusted spool roots (`OMNISCRIBE_SPOOL_DIR` or `OMNISCRIBE_ARTIFACT_DIR`)
+  and are validated against the authoritative `input_path` in the persisted
+  `JobRecord`. Staged input files are cleaned up upon cancellation or completion.
+- **Cancellation & Pub/Sub:** Real-time cancellation signals broadcast across
+  `omniscribe:jobs:control` Pub/Sub channels. Active tasks cancel in-flight work and
+  reclaim resources immediately.
+- **Graceful Shutdown:** On SIGINT or SIGTERM, workers stop accepting new jobs,
+  drain active jobs up to a drain timeout, and cleanly requeue uncompleted jobs
+  back to Redis before exiting.
 
 ## Third-party VLM (OpenAI / Anthropic / Groq)
 
@@ -178,7 +275,7 @@ poll `GET /api/translate/status/{job_id}` for the client status
 vocabulary. There is no Celery worker service and no `--profile async` —
 the compose stack is `api` + `redis` only. Redis serves double duty:
 as the optional `REDIS_URL` state backend (`OMNISCRIBE_STATE_BACKEND=redis`)
-and as a potential future multi-worker dispatch transport.
+and as the multi-worker dispatch transport (see Profile 4 above).
 
 ```bash
 uv sync --extra web --extra preprocessing --extra async-translation
@@ -236,8 +333,10 @@ for the full story.
 3. Visit `http://localhost:8000/api/health` (or `/api/healthz`) to confirm the new version
 4. Review the [CHANGELOG](CHANGELOG.md) for breaking changes
 
-The settings tab persists user preferences via `localStorage`, not
-server-side state. A version upgrade does not lose user settings.
+The Flutter client's backend URL, bearer token, theme, and similar UI choices
+are process-local and must be re-entered after a client restart. VLM endpoint,
+key, model, and numeric OCR settings changed through `/api/config` are written
+server-side to `.env`.
 
 ### Upgrading from a pre-LanceDB Glossary
 
@@ -262,6 +361,35 @@ A `--verify-only` of a valid empty store is a successful verification
 into the old "empty store = exit 2" behavior for scripted pre-deploy
 checks.
 
+### Importing Lane's Lexicon into LanceDB
+
+To import Edward William Lane's *Arabic-English Lexicon* into the LanceDB
+glossary store, use the `omniscribe-import-lanes-lexicon` console script.
+The utility parses either the official SQLite snapshot or the TEI.2 XML dump
+through the standard glossary ingestion pipeline:
+
+```bash
+# Preview import with dry run (safe for interactive terminals)
+uv run omniscribe-import-lanes-lexicon --sqlite D:/Lanes/lexicon.sqlite --dry-run
+
+# Import from SQLite database snapshot (~264 MB, 47,919 entries)
+uv run omniscribe-import-lanes-lexicon --sqlite D:/Lanes/lexicon.sqlite
+
+# Import from TEI.2 XML directory with entry limit
+uv run omniscribe-import-lanes-lexicon --xml D:/Lanes/lexicon_xml --limit 1000
+
+# Specify custom artifact directory (default: $OMNISCRIBE_ARTIFACT_DIR or ./omniscribe_artifacts)
+uv run omniscribe-import-lanes-lexicon --sqlite D:/Lanes/lexicon.sqlite --artifact-dir /data/artifacts
+```
+
+Flag options:
+- `--sqlite <path>`: Path to Lane's Lexicon SQLite database snapshot (mutually exclusive with `--xml`).
+- `--xml <path-or-dir>`: Path to TEI.2 XML file or directory containing Lane's Lexicon XMLs.
+- `--dry-run`: Parse and validate entries without writing to the LanceDB store.
+- `--limit <N>`: Maximum number of entries to parse and ingest (useful for sanity checking).
+- `--artifact-dir <path>`: Target glossary storage root (defaults to `OMNISCRIBE_ARTIFACT_DIR` or `./omniscribe_artifacts`).
+- `--domain <domain>`: Glossary domain classification (defaults to `general`).
+
 ## Uninstall
 
 ```bash
@@ -272,8 +400,10 @@ uv pip uninstall omniscribe
 docker compose down --rmi all --volumes
 ```
 
-Job artifacts in `/tmp/ocr_*` are removed by the startup sweep
-(M6); manual cleanup is rarely needed.
+Per-run `omniscribe-ocr-*` work directories are removed upon run completion.
+Preview cache files are cleaned during cache eviction or process shutdown, and
+token-bound result artifacts use the configured artifact TTL and the runtime's
+periodic cleanup loop.
 
 ## See Also
 
@@ -286,4 +416,4 @@ Job artifacts in `/tmp/ocr_*` are removed by the startup sweep
 - [AGENTS.md](AGENTS.md) — contributor guide and full env-var
   reference
 
-_Last updated: 2026-09-07_
+_Last updated: 2026-09-27_

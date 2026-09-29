@@ -18,10 +18,10 @@
 - [ ] `make check` is green locally (lint + format + mypy + fast tests)
 - [ ] I added tests for the new behaviour (or explained why not in
       the "Why" section)
-- [ ] I read [`docs/AGENTS.md`](docs/AGENTS.md) and followed the
+- [ ] I read [`docs/AGENTS.md`](../docs/AGENTS.md) and followed the
       conventions
 - [ ] For UI changes: I attached a screenshot or recording
-- [ ] For behaviour changes: I added a `docs/CHANGELOG.md` entry
+- [ ] For behaviour changes: I added a [`docs/CHANGELOG.md`](../docs/CHANGELOG.md) entry
 
 ## Risk
 
@@ -49,4 +49,4 @@
      add a comment explaining why. -->
 Closes #
 
-_Last updated: 2026-09-05_
+_Last updated: 2026-09-27_

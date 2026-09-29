@@ -348,9 +348,25 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     variant: AppButtonVariant.secondary,
                     icon: const Icon(Icons.network_check, size: 14),
                     onPressed: () {
-                      ref
-                          .read(settingsStateProvider.notifier)
-                          .setServerBaseUrl(_serverUrlController.text.trim());
+                      try {
+                        ref
+                            .read(settingsStateProvider.notifier)
+                            .setServerBaseUrl(_serverUrlController.text.trim());
+                      } catch (e) {
+                        final message = e is ArgumentError
+                            ? (e.message?.toString() ?? e.toString())
+                            : e.toString();
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text(
+                              message,
+                              style: const TextStyle(color: Colors.white),
+                            ),
+                            backgroundColor: Colors.red.shade800,
+                            behavior: SnackBarBehavior.floating,
+                          ),
+                        );
+                      }
                     },
                   ),
                 ],

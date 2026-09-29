@@ -124,6 +124,15 @@ class TestGroundedAccumulatePages:
         # Both blocks land in pages[0] — filtering is the backend's job.
         assert [t for _, t in pages[0]] == ["real", "ignored"]
 
+    def test_clamps_out_of_bounds_and_inverted_coordinates(self) -> None:
+        blocks = [
+            GroundedBlock(bbox=[-0.2, -0.1, 1.5, 1.2], text="clamped", page_index=0),
+            GroundedBlock(bbox=[0.8, 0.9, 0.3, 0.4], text="inverted", page_index=0),
+        ]
+        pages = GroundedEngine._accumulate_pages(blocks)
+        assert pages[0][0][0] == (0.0, 0.0, 1.0, 1.0)
+        assert pages[0][1][0] == (0.8, 0.9, 0.8, 0.9)
+
 
 # ---------------------------------------------------------------------------
 # execute()

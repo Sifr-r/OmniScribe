@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -692,6 +693,65 @@ void main() {
       expect(_job(container).stage, 'Cancelled');
     });
 
+    test(
+        'stale artifact hydration does not mutate state if document was replaced during getTextArtifact',
+        () async {
+      final container = makeContainer();
+      addTearDown(container.dispose);
+      final notifier = container.read(workstationProvider.notifier);
+
+      final doc1Bytes = Uint8List.fromList([1, 1, 1]);
+      notifier.loadDocument(doc1Bytes, 'doc1.pdf');
+
+      when(() => ocrRepo.openProgressSession(clientId: any(named: 'clientId')))
+          .thenAnswer((_) async => const ProgressSessionHandle(
+                channelId: 'ch-stale',
+                sessionToken: 'tok-stale',
+              ));
+
+      when(() => ocrRepo.processOcrSync(
+            fileBytes: any(named: 'fileBytes'),
+            filename: any(named: 'filename'),
+            settings: any(named: 'settings'),
+            progressChannel: any(named: 'progressChannel'),
+            progressToken: any(named: 'progressToken'),
+            onSendProgress: any(named: 'onSendProgress'),
+            receiveTimeout: any(named: 'receiveTimeout'),
+          )).thenAnswer((_) async => ProcessOcrResult(
+            pdfBytes: doc1Bytes,
+            headers: const {},
+            textArtifactId: 'art-stale',
+            textArtifactToken: 'tok-stale',
+          ));
+
+      final artifactCompleter = Completer<String>();
+      when(() => ocrRepo.getTextArtifact('art-stale', 'tok-stale'))
+          .thenAnswer((_) => artifactCompleter.future);
+
+      final processing = notifier.processOcrSync();
+
+      await untilCalled(
+          () => ocrRepo.getTextArtifact('art-stale', 'tok-stale'));
+
+      // While getTextArtifact is awaiting, user loads a new document!
+      final doc2Bytes = Uint8List.fromList([2, 2, 2]);
+      notifier.loadDocument(doc2Bytes, 'doc2.pdf');
+
+      // Now complete the stale artifact
+      artifactCompleter.complete(jsonEncode({
+        '0': 'Stale text from old document',
+      }));
+      await processing;
+
+      // The new document state must not have been overwritten by the stale hydration!
+      final ws = container.read(workstationProvider);
+      expect(ws.filename, 'doc2.pdf');
+      expect(ws.loadedBytes, doc2Bytes);
+      expect(ws.allBBoxes, isEmpty);
+      expect(_job(container).statusMessage,
+          isNot(contains('recovered text from artifact')));
+    });
+
     test('cancelOcr cancels active progress and job', () async {
       final container = makeContainer();
       addTearDown(container.dispose);
@@ -722,6 +782,38 @@ void main() {
 
       expect(_job(container).isProcessing, isFalse);
       expect(_job(container).stage, 'Cancelled');
+      verify(() => wsClient.cancelChannel()).called(1);
+    });
+
+    test(
+        'cancelOcr proceeds to local cancellation with warning when both server cancellations fail',
+        () async {
+      final container = makeContainer();
+      addTearDown(container.dispose);
+      final notifier = container.read(workstationProvider.notifier);
+
+      notifier.loadDocument(Uint8List.fromList([1, 2]), 'doc.pdf');
+
+      when(() => ocrRepo.cancelProgressChannel('ch-1',
+              sessionToken: any(named: 'sessionToken')))
+          .thenThrow(Exception('Channel cancel network error'));
+      when(() => ocrRepo.cancelJob('job-1'))
+          .thenThrow(Exception('Job cancel server error'));
+
+      container.read(jobOrchestrationProvider.notifier).state =
+          JobOrchestrationState(
+        channelId: 'ch-1',
+        activeJobId: 'job-1',
+        isProcessing: true,
+      );
+
+      await notifier.cancelOcr();
+
+      expect(_job(container).isProcessing, isFalse);
+      expect(_job(container).stage, 'Cancelled');
+      expect(_job(container).statusMessage, 'Cancelled by user');
+      expect(_job(container).warnings,
+          contains('Failed to cancel active OCR job/channel on server'));
       verify(() => wsClient.cancelChannel()).called(1);
     });
 
@@ -1199,6 +1291,111 @@ void main() {
         expect(_job(container).stage, 'Error');
         expect(_job(container).error, 'Out of VRAM');
         expect(_job(container).statusMessage, 'Out of VRAM');
+      });
+
+      test(
+          'transient polling errors retry and do not transition to Error until threshold exceeded',
+          () async {
+        final container = makeContainer();
+        addTearDown(container.dispose);
+        final notifier = container.read(workstationProvider.notifier);
+
+        notifier.loadDocument(Uint8List.fromList([1, 2, 3]), 'doc.pdf');
+
+        when(() => ocrRepo.openProgressSession(clientId: any(named: 'clientId')))
+            .thenAnswer((_) async => const ProgressSessionHandle(
+                  channelId: 'ch-async-retry',
+                  sessionToken: 'tok-async-retry',
+                ));
+        when(() => ocrRepo.processOcrAsync(
+              fileBytes: any(named: 'fileBytes'),
+              filename: any(named: 'filename'),
+              settings: any(named: 'settings'),
+              progressChannel: any(named: 'progressChannel'),
+              progressToken: any(named: 'progressToken'),
+              onSendProgress: any(named: 'onSendProgress'),
+            )).thenAnswer((_) async => const AsyncSubmitResponse(
+              jobId: 'job-retry-1',
+              status: 'queued',
+            ));
+
+        await notifier.processOcrAsync();
+
+        when(() => ocrRepo.getJobStatus('job-retry-1'))
+            .thenThrow(Exception('Transient timeout'));
+
+        // 1st transient failure
+        await notifier.handleWsClosed();
+        expect(_job(container).isProcessing, isTrue);
+        expect(_job(container).stage, 'Queued');
+
+        // 2nd transient failure
+        await notifier.handleWsClosed();
+        expect(_job(container).isProcessing, isTrue);
+
+        // 3rd transient failure (threshold = 3 failures tolerated)
+        await notifier.handleWsClosed();
+        expect(_job(container).isProcessing, isTrue);
+
+        // 4th failure exceeds threshold -> transitions to terminal Error
+        await notifier.handleWsClosed();
+        expect(_job(container).isProcessing, isFalse);
+        expect(_job(container).stage, 'Error');
+        expect(_job(container).statusMessage,
+            contains('Job status check failed'));
+      });
+
+      test('successful status check resets consecutive failure counter',
+          () async {
+        final container = makeContainer();
+        addTearDown(container.dispose);
+        final notifier = container.read(workstationProvider.notifier);
+
+        notifier.loadDocument(Uint8List.fromList([1, 2, 3]), 'doc.pdf');
+
+        when(() => ocrRepo.openProgressSession(clientId: any(named: 'clientId')))
+            .thenAnswer((_) async => const ProgressSessionHandle(
+                  channelId: 'ch-async-reset',
+                  sessionToken: 'tok-async-reset',
+                ));
+        when(() => ocrRepo.processOcrAsync(
+              fileBytes: any(named: 'fileBytes'),
+              filename: any(named: 'filename'),
+              settings: any(named: 'settings'),
+              progressChannel: any(named: 'progressChannel'),
+              progressToken: any(named: 'progressToken'),
+              onSendProgress: any(named: 'onSendProgress'),
+            )).thenAnswer((_) async => const AsyncSubmitResponse(
+              jobId: 'job-reset-1',
+              status: 'queued',
+            ));
+
+        await notifier.processOcrAsync();
+
+        // 2 failures
+        when(() => ocrRepo.getJobStatus('job-reset-1'))
+            .thenThrow(Exception('Timeout'));
+        await notifier.handleWsClosed();
+        await notifier.handleWsClosed();
+        expect(_job(container).isProcessing, isTrue);
+
+        // Intervening success
+        when(() => ocrRepo.getJobStatus('job-reset-1')).thenAnswer(
+          (_) async => const OcrJobStatusResponse(
+            jobId: 'job-reset-1',
+            filename: 'doc.pdf',
+            status: 'processing',
+            createdAt: 1000.0,
+          ),
+        );
+        await notifier.handleWsClosed();
+        expect(_job(container).isProcessing, isTrue);
+
+        // Next failure is only failure #1 of a new sequence, so it does not exceed threshold
+        when(() => ocrRepo.getJobStatus('job-reset-1'))
+            .thenThrow(Exception('Another timeout'));
+        await notifier.handleWsClosed();
+        expect(_job(container).isProcessing, isTrue);
       });
 
       test('does nothing if not actively processing or activeJobId is null', () async {

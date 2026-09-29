@@ -18,7 +18,8 @@ import secrets
 from collections import OrderedDict
 from dataclasses import dataclass, replace
 from typing import Any, ClassVar, Protocol
-from urllib.parse import urlsplit
+
+import httpx
 
 from omniscribe.config import RuntimeSettings
 from omniscribe.core.block_tree import BlockNode
@@ -54,8 +55,8 @@ from omniscribe.plugins.translate.schemas import (
 )
 from omniscribe.utils.prompt_safety import sanitize_prompt_input
 from omniscribe.utils.security import (
-    _rewrite_url_with_resolved_ip,
     check_ssrf_target_sync,
+    create_pinned_client,
     is_same_origin,
 )
 
@@ -86,14 +87,17 @@ def _parse_json_object(blob: bytes) -> dict[str, Any] | None:
     return parsed if isinstance(parsed, dict) else None
 
 
-def _resolve_llm_trio(
+def _resolve_coordinates(
     request_base: str | None,
     request_key: str | None,
     request_model: str | None,
     settings: RuntimeSettings,
-) -> tuple[str, str, str]:
-    """Override → settings trio; SSRF-check the override only
-    (pipeline_bridge trust boundary)."""
+) -> tuple[str, str, str, str | None]:
+    """Override → settings coordinates; SSRF-check the override only
+    (pipeline_bridge trust boundary).
+
+    Returns (api_base, api_key, model, resolved_ip).
+    """
     clean_base = (request_base or "").strip()
     resolved_ip: str | None = None
     if clean_base:
@@ -110,17 +114,24 @@ def _resolve_llm_trio(
         else:
             api_key = (request_key or settings.llm_api_key).strip()
         api_base = clean_base
-        if urlsplit(api_base).scheme.lower() == "http" and resolved_ip:
-            api_base = _rewrite_url_with_resolved_ip(api_base, resolved_ip)
     else:
         api_base = settings.llm_api_base.strip()
         api_key = (request_key or settings.llm_api_key).strip()
 
     model = (request_model or settings.llm_model).strip()
+    return api_base, api_key, model, resolved_ip
+
+
+def _resolve_llm_trio(
+    request_base: str | None,
+    request_key: str | None,
+    request_model: str | None,
+    settings: RuntimeSettings,
+) -> tuple[str, str, str]:
+    api_base, api_key, model, _ip = _resolve_coordinates(
+        request_base, request_key, request_model, settings
+    )
     return api_base, api_key, model
-
-
-_resolve_coordinates = _resolve_llm_trio
 
 
 async def translate_text(
@@ -156,7 +167,7 @@ async def translate_text(
     if not source_text:
         return ""
 
-    api_base, api_key, model = _resolve_coordinates(
+    api_base, api_key, model, resolved_ip = _resolve_coordinates(
         request.api_base, request.api_key, request.model, settings
     )
     # Env-driven loop knobs (evaluate toggle, budgets) with the request's
@@ -173,64 +184,74 @@ async def translate_text(
     if cached is not None:
         return cached
 
-    if not t_settings.evaluate_enabled:
-        result = await _translate_once(
-            source_text,
-            request.target_language,
-            "",
-            api_base,
-            api_key,
-            model,
-            t_settings.max_tokens,
-        )
-        _translation_cache_put(cache_key, result)
-        return result
-
-    best, best_score = "", -1.0
-    retry_suffix = ""
-    current = ""
-    for attempt in range(1, t_settings.max_attempts + 1):
-        try:
-            current = await _translate_once(
+    pinned_client: httpx.AsyncClient | None = (
+        create_pinned_client(api_base, resolved_ip) if resolved_ip else None
+    )
+    try:
+        if not t_settings.evaluate_enabled:
+            result = await _translate_once(
                 source_text,
                 request.target_language,
-                retry_suffix,
+                "",
                 api_base,
                 api_key,
                 model,
                 t_settings.max_tokens,
+                http_client=pinned_client,
             )
-        except TranslateError:
-            if best:
-                return best
-            raise
-        score, feedback = await _judge_once(
-            source_text,
-            current,
-            request.target_language,
-            api_base,
-            api_key,
-            model,
-            t_settings,
-        )
-        if score is not None and score > best_score:
-            best, best_score = current, score
-        if (
-            score is None
-            or score >= t_settings.acceptance_score
-            or attempt >= t_settings.max_attempts
-        ):
-            break
-        retry_suffix = (
-            "\n\nPrevious translation had issues. Feedback: "
-            + sanitize_prompt_input(feedback)
-            + "\nPlease fix these issues.\n"
-        )
+            _translation_cache_put(cache_key, result)
+            return result
 
-    if not best:
-        best = current
-    _translation_cache_put(cache_key, best.strip())
-    return best.strip()
+        best, best_score = "", -1.0
+        retry_suffix = ""
+        current = ""
+        for attempt in range(1, t_settings.max_attempts + 1):
+            try:
+                current = await _translate_once(
+                    source_text,
+                    request.target_language,
+                    retry_suffix,
+                    api_base,
+                    api_key,
+                    model,
+                    t_settings.max_tokens,
+                    http_client=pinned_client,
+                )
+            except TranslateError:
+                if best:
+                    return best
+                raise
+            score, feedback = await _judge_once(
+                source_text,
+                current,
+                request.target_language,
+                api_base,
+                api_key,
+                model,
+                t_settings,
+                http_client=pinned_client,
+            )
+            if score is not None and score > best_score:
+                best, best_score = current, score
+            if (
+                score is None
+                or score >= t_settings.acceptance_score
+                or attempt >= t_settings.max_attempts
+            ):
+                break
+            retry_suffix = (
+                "\n\nPrevious translation had issues. Feedback: "
+                + sanitize_prompt_input(feedback)
+                + "\nPlease fix these issues.\n"
+            )
+
+        if not best:
+            best = current
+        _translation_cache_put(cache_key, best.strip())
+        return best.strip()
+    finally:
+        if pinned_client is not None:
+            await pinned_client.aclose()
 
 
 async def _translate_once(
@@ -241,6 +262,8 @@ async def _translate_once(
     api_key: str,
     model: str,
     max_tokens: int,
+    *,
+    http_client: httpx.AsyncClient | None = None,
 ) -> str:
     prompt = build_translation_prompt(source_text, target_language) + extra_suffix
     try:
@@ -252,6 +275,7 @@ async def _translate_once(
             max_tokens=max_tokens,
             system_prompt=TRANSLATION_SYSTEM_MESSAGE,
             messages=[{"role": "user", "content": prompt}],
+            http_client=http_client,
         )
     except Exception as exc:
         _LOGGER.exception("Translation request failed")
@@ -267,6 +291,8 @@ async def _judge_once(
     api_key: str,
     model: str,
     t_settings: TranslationSettings,
+    *,
+    http_client: httpx.AsyncClient | None = None,
 ) -> tuple[float | None, str]:
     """Score a translation; returns ``(None, "")`` when the judge is unavailable."""
     prompt = build_evaluation_prompt(
@@ -284,6 +310,7 @@ async def _judge_once(
             max_tokens=t_settings.max_tokens,
             system_prompt=EVALUATION_SYSTEM_MESSAGE,
             prompt=prompt,
+            http_client=http_client,
         )
     except Exception as exc:
         _LOGGER.warning("Translation judge unavailable; accepting unverified: %s", exc)
@@ -660,8 +687,11 @@ def _make_translator(
     *,
     max_tokens: int | None = None,
 ) -> TranslatorFn:
-    api_base, api_key, model = _resolve_coordinates(
+    api_base, api_key, model, resolved_ip = _resolve_coordinates(
         request_base, request_key, request_model, settings
+    )
+    pinned_client: httpx.AsyncClient | None = (
+        create_pinned_client(api_base, resolved_ip) if resolved_ip else None
     )
 
     async def translator(prompt: str, target_language: str) -> str:
@@ -673,6 +703,7 @@ def _make_translator(
             max_tokens=max_tokens,
             system_prompt=TRANSLATION_SYSTEM_MESSAGE,
             prompt=prompt,
+            http_client=pinned_client,
         )
 
     return translator
@@ -692,8 +723,11 @@ def _make_evaluator(
     The judge reuses the primary translator's endpoint coordinates and
     receives the request-supplied glossary lines as its reference terms.
     """
-    api_base, api_key, model = _resolve_coordinates(
+    api_base, api_key, model, resolved_ip = _resolve_coordinates(
         request_base, request_key, request_model, settings
+    )
+    pinned_client: httpx.AsyncClient | None = (
+        create_pinned_client(api_base, resolved_ip) if resolved_ip else None
     )
     glossary_lines = [
         line
@@ -716,6 +750,7 @@ def _make_evaluator(
             max_tokens=t_settings.max_tokens,
             system_prompt=EVALUATION_SYSTEM_MESSAGE,
             prompt=prompt,
+            http_client=pinned_client,
         )
         return parse_evaluation_response(content)
 

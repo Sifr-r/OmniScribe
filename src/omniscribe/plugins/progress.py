@@ -37,6 +37,7 @@ from omniscribe.config import RuntimeSettings, load_settings
 from omniscribe.harness.context import Context
 from omniscribe.harness.events import AgentEvent
 from omniscribe.harness.plugin import Plugin
+from omniscribe.plugins.jobs import JobCancelled, JobCompleted, JobFailed
 from omniscribe.plugins.state_backend_types import ChannelRecord, StateBackend
 
 _LOGGER = logging.getLogger("omniscribe.plugins.progress")
@@ -159,6 +160,9 @@ class ProgressServiceImpl:
         self._owns_redis = redis_client is None
         self._pubsub_task: asyncio.Task[None] | None = None
         self._closed = False
+        self._service_id: str = uuid.uuid4().hex
+        self._local_terminal_jobs: set[str] = set()
+        self._emitted_terminal_jobs: set[str] = set()
 
     # -- channel lifecycle ----------------------------------------------------
 
@@ -283,6 +287,54 @@ class ProgressServiceImpl:
                         frame = json.loads(data_str)
                         if isinstance(frame, dict):
                             await self.broadcast(channel_id, frame, _from_redis=True)
+                            if self._ctx is not None:
+                                job_id = frame.get("job_id") or channel_id
+                                await self._ctx.emit(
+                                    ProgressFrame(
+                                        job_id=job_id,
+                                        channel_id=channel_id,
+                                        frame=frame,
+                                    )
+                                )
+                                is_local = frame.get("_sender_id") == getattr(
+                                    self, "_service_id", None
+                                ) or job_id in getattr(
+                                    self, "_local_terminal_jobs", set()
+                                )
+                                if (
+                                    not is_local
+                                    and job_id not in self._emitted_terminal_jobs
+                                ):
+                                    f_type = frame.get("type")
+                                    f_status = frame.get("status")
+                                    if f_type == "complete" or f_status == "complete":
+                                        self._emitted_terminal_jobs.add(job_id)
+                                        await self._ctx.emit(
+                                            JobCompleted(
+                                                job_id=job_id,
+                                                artifact_id=frame.get(
+                                                    "artifact_id", ""
+                                                ),
+                                                artifact_token=frame.get(
+                                                    "artifact_token", ""
+                                                ),
+                                            )
+                                        )
+                                    elif f_type == "failed" or f_status == "error":
+                                        self._emitted_terminal_jobs.add(job_id)
+                                        await self._ctx.emit(
+                                            JobFailed(
+                                                job_id=job_id,
+                                                error=frame.get("error", ""),
+                                            )
+                                        )
+                                    elif (
+                                        f_type == "cancelled" or f_status == "cancelled"
+                                    ):
+                                        self._emitted_terminal_jobs.add(job_id)
+                                        await self._ctx.emit(
+                                            JobCancelled(job_id=job_id)
+                                        )
                     except Exception:
                         pass
                 await asyncio.sleep(0.01)

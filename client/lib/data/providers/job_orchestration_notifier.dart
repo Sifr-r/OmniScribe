@@ -225,6 +225,8 @@ class JobOrchestrationNotifier extends Notifier<JobOrchestrationState> {
   int? _statusCheckRunId;
   Timer? _statusPollTimer;
   String? _resultToken;
+  static const int _maxConsecutiveStatusFailures = 3;
+  int _consecutiveStatusFailures = 0;
 
   /// Mirrors [JobOrchestrationState.channelId] for teardown — the ref is
   /// already disposed when [ref.onDispose] callbacks fire (Riverpod 3), so
@@ -245,6 +247,7 @@ class JobOrchestrationNotifier extends Notifier<JobOrchestrationState> {
   Future<void> _disposeTeardown() async {
     _runEpoch++;
     _statusPollTimer?.cancel();
+    _consecutiveStatusFailures = 0;
     await _wsSubscription?.cancel();
     _wsSubscription = null;
     await _wsClosedSubscription?.cancel();
@@ -287,6 +290,7 @@ class JobOrchestrationNotifier extends Notifier<JobOrchestrationState> {
   void reset() {
     _runEpoch++;
     _statusPollTimer?.cancel();
+    _consecutiveStatusFailures = 0;
     _resultToken = null;
     final channelId = _lastChannelId;
     final sessionToken = _lastSessionToken;
@@ -301,10 +305,17 @@ class JobOrchestrationNotifier extends Notifier<JobOrchestrationState> {
 
   bool _isCurrentRun(int runId) => ref.mounted && runId == _runEpoch;
 
-  void _scheduleStatusCheck(int runId) {
+  void _scheduleStatusCheck(int runId, [Duration? delay]) {
     _statusPollTimer?.cancel();
-    _statusPollTimer = Timer(const Duration(seconds: 2), () {
-      unawaited(_handleWsClosed(runId));
+    final effectiveDelay = delay ??
+        (_consecutiveStatusFailures > 0
+            ? Duration(
+                seconds:
+                    (2 * (1 << (_consecutiveStatusFailures - 1))).clamp(2, 10),
+              )
+            : const Duration(seconds: 2));
+    _statusPollTimer = Timer(effectiveDelay, () {
+      unawaited(_checkJobStatus(runId));
     });
   }
 
@@ -348,6 +359,47 @@ class JobOrchestrationNotifier extends Notifier<JobOrchestrationState> {
   // ---------------------------------------------------------------------------
   // OCR Pipeline Execution
   // ---------------------------------------------------------------------------
+
+  /// Returns false when the awaited artifact belongs to a superseded run/job.
+  Future<bool> _hydrateMissingTextArtifact(
+    ProcessOcrResult result,
+    int runId, {
+    String? jobId,
+  }) async {
+    final artifactId = result.textArtifactId;
+    final artifactToken = result.textArtifactToken;
+    if (artifactId == null ||
+        artifactToken == null ||
+        ref.read(workstationProvider).allBBoxes.isNotEmpty) {
+      return true;
+    }
+
+    try {
+      final artifactJson = await _ocrRepo.getTextArtifact(
+        artifactId,
+        artifactToken,
+      );
+      if (!_isCurrentRun(runId) ||
+          (jobId != null && state.activeJobId != jobId)) {
+        return false;
+      }
+      final parsed = jsonDecode(artifactJson);
+      if (parsed is Map<String, dynamic>) {
+        final written = ref
+            .read(workstationProvider.notifier)
+            .hydratePagesFromTextArtifact(parsed);
+        if (written > 0) {
+          state = state.copyWith(
+            statusMessage: 'Document OCR complete (live progress not received — '
+                'recovered text from artifact)',
+          );
+        }
+      }
+    } catch (_) {
+      // Text recovery is best effort; the PDF and server-backed exports remain.
+    }
+    return true;
+  }
 
   /// Executes synchronous OCR with real-time WebSocket progress updates.
   Future<void> processOcrSync({
@@ -436,43 +488,8 @@ class JobOrchestrationNotifier extends Notifier<JobOrchestrationState> {
         textArtifactToken: result.textArtifactToken,
       );
 
-      // Fallback hydration: if the WebSocket never delivered any
-      // block_complete frames (e.g. the WS handshake failed silently and
-      // the export modal would otherwise see an empty bbox store),
-      // pull the page-broken text back from the server's text artifact
-      // and synthesise one bbox per non-empty line. This keeps the
-      // local Markdown / Plain Text / HTML / Block Tree JSON /
-      // DOCX-from-markdown exports non-blank even when WS frames were
-      // lost. Real bbox coords (and `confidence` values) only come from
-      // the WS stream, so users still see "Live progress not received"
-      // in the status to flag the degraded path.
-      if (result.textArtifactId != null &&
-          result.textArtifactToken != null &&
-          ref.read(workstationProvider).allBBoxes.isEmpty) {
-        try {
-          final artifactJson = await _ocrRepo.getTextArtifact(
-            result.textArtifactId!,
-            result.textArtifactToken!,
-          );
-          final parsed = jsonDecode(artifactJson);
-          if (parsed is Map<String, dynamic>) {
-            final written = ref
-                .read(workstationProvider.notifier)
-                .hydratePagesFromTextArtifact(parsed);
-            if (written > 0) {
-              state = state.copyWith(
-                statusMessage:
-                    'Document OCR complete (live progress not received — '
-                    'recovered text from artifact)',
-              );
-            }
-          }
-        } catch (e) {
-          // Best-effort: the export modal still has DOCX Tree Layout and
-          // PDF paths that don't need local bboxes. Log but don't fail
-          // the whole OCR run.
-        }
-      }
+      // Recover local text exports if no block_complete frame arrived.
+      if (!await _hydrateMissingTextArtifact(result, runId)) return;
     } catch (e) {
       if (_isCurrentRun(runId)) {
         state = state.copyWith(
@@ -513,6 +530,7 @@ class JobOrchestrationNotifier extends Notifier<JobOrchestrationState> {
 
     final filename = ws.filename ?? 'document.pdf';
     final runId = ++_runEpoch;
+    _consecutiveStatusFailures = 0;
 
     state = JobOrchestrationState(
       isProcessing: true,
@@ -602,9 +620,15 @@ class JobOrchestrationNotifier extends Notifier<JobOrchestrationState> {
     }
   }
 
-  /// Polls terminal state independently of progress socket lifetime.
+  Future<void> handleWsClosed() => _handleWsClosed();
+
   Future<void> _handleWsClosed([int? requestedRunId]) async {
     final runId = requestedRunId ?? _runEpoch;
+    await _checkJobStatus(runId);
+  }
+
+  /// Polls terminal state independently of progress socket lifetime.
+  Future<void> _checkJobStatus(int runId) async {
     if (!_isCurrentRun(runId) || !state.isProcessing) {
       return;
     }
@@ -625,6 +649,7 @@ class JobOrchestrationNotifier extends Notifier<JobOrchestrationState> {
     try {
       final status = await _ocrRepo.getJobStatus(jobId);
       if (!_isCurrentRun(runId) || state.activeJobId != jobId) return;
+      _consecutiveStatusFailures = 0;
       if (status.isComplete) {
         final result =
             await _ocrRepo.downloadProcessedResult(jobId, token: _resultToken);
@@ -642,34 +667,8 @@ class JobOrchestrationNotifier extends Notifier<JobOrchestrationState> {
           trustSummary: result.trustSummary,
         );
 
-        // Same fallback hydration as the sync path: if the WS stream
-        // never delivered block_complete frames, recover the page-broken
-        // text from the artifact so the local export formats stay usable.
-        if (result.textArtifactId != null &&
-            result.textArtifactToken != null &&
-            ref.read(workstationProvider).allBBoxes.isEmpty) {
-          try {
-            final artifactJson = await _ocrRepo.getTextArtifact(
-              result.textArtifactId!,
-              result.textArtifactToken!,
-            );
-            final parsed = jsonDecode(artifactJson);
-            if (parsed is Map<String, dynamic>) {
-              final written = ref
-                  .read(workstationProvider.notifier)
-                  .hydratePagesFromTextArtifact(parsed);
-              if (written > 0) {
-                state = state.copyWith(
-                  statusMessage:
-                      'Document OCR complete (live progress not received — '
-                      'recovered text from artifact)',
-                );
-              }
-            }
-          } catch (_) {
-            // Best-effort: PDF + DOCX Tree Layout still work via the
-            // server artifact; the other formats just stay blank.
-          }
+        if (!await _hydrateMissingTextArtifact(result, runId, jobId: jobId)) {
+          return;
         }
         reachedTerminalState = true;
       } else if (status.isCancelled) {
@@ -692,13 +691,16 @@ class JobOrchestrationNotifier extends Notifier<JobOrchestrationState> {
       }
     } catch (e) {
       if (_isCurrentRun(runId) && state.activeJobId == jobId) {
-        state = state.copyWith(
-          isProcessing: false,
-          stage: 'Error',
-          statusMessage: 'Job status check failed: $e',
-          error: e.toString(),
-        );
-        reachedTerminalState = true;
+        _consecutiveStatusFailures++;
+        if (_consecutiveStatusFailures > _maxConsecutiveStatusFailures) {
+          state = state.copyWith(
+            isProcessing: false,
+            stage: 'Error',
+            statusMessage: 'Job status check failed: $e',
+            error: e.toString(),
+          );
+          reachedTerminalState = true;
+        }
       }
     } finally {
       if (reachedTerminalState &&
@@ -720,8 +722,6 @@ class JobOrchestrationNotifier extends Notifier<JobOrchestrationState> {
       }
     }
   }
-
-  Future<void> handleWsClosed() => _handleWsClosed();
 
   /// Updates trust metrics summary.
   void setTrustSummary(TrustSummary? summary) {
@@ -745,33 +745,60 @@ class JobOrchestrationNotifier extends Notifier<JobOrchestrationState> {
   Future<void> cancelOcr() async {
     if (!state.isProcessing) return;
 
-    _runEpoch++;
-    _statusPollTimer?.cancel();
     final channelId = state.channelId;
     final jobId = state.activeJobId;
 
     _wsClient.cancelChannel();
 
-    if (channelId != null && channelId.isNotEmpty) {
+    final hasChannel = channelId != null && channelId.isNotEmpty;
+    final hasJob = jobId != null && jobId.isNotEmpty;
+
+    bool channelFailed = false;
+    bool jobFailed = false;
+
+    if (hasChannel) {
       try {
         await _ocrRepo.cancelProgressChannel(
           channelId,
           sessionToken: _lastSessionToken ?? '',
         );
-      } catch (_) {}
+      } catch (_) {
+        channelFailed = true;
+      }
     }
 
-    if (jobId != null && jobId.isNotEmpty) {
+    if (hasJob) {
       try {
         await _ocrRepo.cancelJob(jobId);
-      } catch (_) {}
+      } catch (_) {
+        jobFailed = true;
+      }
     }
 
+    final serverCancellationRequested = hasChannel || hasJob;
+    final allRequestedServerCancellationsFailed =
+        serverCancellationRequested &&
+            (!hasChannel || channelFailed) &&
+            (!hasJob || jobFailed);
+
+    final updatedWarnings = <String>[...state.warnings];
+    if (allRequestedServerCancellationsFailed) {
+      updatedWarnings.add('Failed to cancel active OCR job/channel on server');
+    } else if (channelFailed || jobFailed) {
+      updatedWarnings.add('Partial server cancellation failure');
+    }
+
+    _runEpoch++;
+    _statusPollTimer?.cancel();
+    _consecutiveStatusFailures = 0;
+
     await teardownProgressChannel();
+
     state = state.copyWith(
       isProcessing: false,
       stage: 'Cancelled',
       statusMessage: 'Cancelled by user',
+      warnings: updatedWarnings,
     );
   }
 

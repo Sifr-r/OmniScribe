@@ -427,3 +427,105 @@ async def test_service_enhanced_entries() -> None:
     assert page_2["total"] == 4
     assert len(page_2["entries"]) == 2
     assert page_1["entries"] != page_2["entries"]
+
+
+# ---------------------------------------------------------------------------
+# Lane's Lexicon (lanes_sqlite + lanes_xml) kwargs builders + async dispatch
+# ---------------------------------------------------------------------------
+
+
+async def test_lanes_sqlite_build_parser_kwargs(tmp_path) -> None:
+    """``lanes_sqlite`` builder routes ``lanes_sqlite_path`` to ``db_path``."""
+    db_path = tmp_path / "mini.sqlite"
+    db_path.write_bytes(b"")  # existence check happens at parse time.
+    kwargs, fmt = await glossary_service.build_parser_kwargs(
+        GlossaryImportSource(
+            format=GlossaryFormat.LANES_SQLITE,
+            lanes_sqlite_path=str(db_path),
+        )
+    )
+    assert fmt == "lanes_sqlite"
+    assert kwargs["db_path"] == str(db_path)
+    # ``max_entries`` is forwarded as ``limit`` so the SYNC_THRESHOLD
+    # branch doesn't try to inline-embed a 264 MB corpus.
+    assert kwargs["max_entries"] is None
+    assert "limit" not in kwargs
+
+
+async def test_lanes_sqlite_max_entries_forwards_to_limit(tmp_path) -> None:
+    db_path = tmp_path / "mini.sqlite"
+    db_path.write_bytes(b"")
+    kwargs, _fmt = await glossary_service.build_parser_kwargs(
+        GlossaryImportSource(
+            format=GlossaryFormat.LANES_SQLITE,
+            lanes_sqlite_path=str(db_path),
+            max_entries=10,
+        )
+    )
+    # The dispatch in ``parse(format="lanes_sqlite", max_entries=N)``
+    # passes ``limit=N`` to the parser; we just verify that
+    # ``max_entries`` rides along here so the call site can introspect.
+    assert kwargs["max_entries"] == 10
+
+
+async def test_lanes_sqlite_missing_path_422() -> None:
+    impl, _store = _service()
+    with pytest.raises(glossary_service.GlossaryError) as excinfo:
+        await impl.import_glossary(
+            GlossaryImportSource(format=GlossaryFormat.LANES_SQLITE)
+        )
+    assert excinfo.value.status_code == 422
+    assert "lanes_sqlite_path" in excinfo.value.detail
+
+
+async def test_lanes_xml_build_parser_kwargs(tmp_path) -> None:
+    xml_path = tmp_path / "lane.xml"
+    xml_path.write_bytes(b"<TEI/>")
+    kwargs, fmt = await glossary_service.build_parser_kwargs(
+        GlossaryImportSource(
+            format=GlossaryFormat.LANES_XML,
+            lanes_xml_path=str(xml_path),
+            lanes_domain="My Lane's Slice",
+        )
+    )
+    assert fmt == "lanes_xml"
+    assert kwargs["xml_path"] == str(xml_path)
+    assert kwargs["domain"] == "My Lane's Slice"
+
+
+async def test_lanes_xml_missing_path_422() -> None:
+    impl, _store = _service()
+    with pytest.raises(glossary_service.GlossaryError) as excinfo:
+        await impl.import_glossary(
+            GlossaryImportSource(format=GlossaryFormat.LANES_XML)
+        )
+    assert excinfo.value.status_code == 422
+    assert "lanes_xml_path" in excinfo.value.detail
+
+
+def test_default_name_includes_path_for_lanes() -> None:
+    """The library's display name should carry the source path so the
+    UI shows users which Lane snapshot they imported."""
+    name = glossary_service.default_name(
+        "lanes_sqlite", {"db_path": "D:/Lanes/lexicon.sqlite/lexicon.sqlite"}
+    )
+    assert name.startswith("Lane's Lexicon")
+    assert "D:/Lanes/lexicon.sqlite" in name
+
+    name_xml = glossary_service.default_name(
+        "lanes_xml", {"xml_path": "D:/Lanes/lexicon_xml"}
+    )
+    assert name_xml.startswith("Lane's Lexicon")
+    assert "D:/Lanes/lexicon_xml" in name_xml
+
+
+def test_entry_count_estimate_favors_async_for_lanes() -> None:
+    """Lane's Lexicon is always queued (corpus has 47,919 rows)."""
+    assert (
+        glossary_service.entry_count_estimate({"db_path": "any.sqlite"})
+        > glossary_service.SYNC_THRESHOLD
+    )
+    assert (
+        glossary_service.entry_count_estimate({"xml_path": "any.xml"})
+        > glossary_service.SYNC_THRESHOLD
+    )

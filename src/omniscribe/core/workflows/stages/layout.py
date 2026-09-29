@@ -39,7 +39,7 @@ def decode_chunk_bytes(
     """Decode a batch of base64 page images to bytes (synchronous helper).
 
     Runs inside ``asyncio.to_thread`` so the CPU-bound decode does not block the
-    event loop. See refactor §1.3 in ``docs/superpowers/specs/deep_refactor_report.md``.
+    event loop. See refactor §1.3 in deep refactor report (preserved in Git history).
 
     When ``on_decoded`` is provided, it is invoked with each ``(page_num, image)``
     so downstream stages (``_ocr_per_box``, ``_refine_uncertain``) can skip a

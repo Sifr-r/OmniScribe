@@ -104,7 +104,7 @@ class OCRCancelled(BaseException):
     cancel handshake actually short-circuits the VLM spend.
 
     Phase 3 fix for report finding 2.1 (HIGH) — see
-    ``docs/superpowers/specs/deep_refactor_report.md`` §2.1.
+    deep refactor report §2.1 (preserved in Git history).
     """
 
 

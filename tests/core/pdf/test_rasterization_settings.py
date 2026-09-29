@@ -3,7 +3,7 @@
 Covers :mod:`omniscribe.core.pdf.rasterization_settings` plus the
 module-level constants it populates in :mod:`omniscribe.core.pdf.rasterizer`.
 
-See ``deep_refactor_report.md`` §4.7 for the originating audit finding.
+See the deep-refactor audit (§4.7, preserved in Git history) for the originating finding.
 """
 
 from __future__ import annotations

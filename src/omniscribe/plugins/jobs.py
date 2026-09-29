@@ -10,9 +10,13 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import os
+import shutil
+import tempfile
 import time
 import uuid
 from dataclasses import dataclass, field, is_dataclass, replace
+from pathlib import Path
 from typing import Any, NamedTuple, Protocol, cast, runtime_checkable
 
 from pydantic import BaseModel
@@ -20,6 +24,7 @@ from pydantic import BaseModel
 from omniscribe.core.errors import redact_exception
 from omniscribe.core.interfaces import JobQueueProtocol
 from omniscribe.harness.context import Context
+from omniscribe.harness.errors import ServiceNotFoundError
 from omniscribe.harness.events import AgentEvent, SessionEvent
 from omniscribe.harness.plugin import Plugin
 from omniscribe.plugins.artifacts import ArtifactStore
@@ -37,6 +42,51 @@ _LOGGER = logging.getLogger("omniscribe.plugins.jobs")
 # lives in ``state_backend.py`` so a new terminal status (e.g.
 # ``"superseded"``) needs only one edit.
 _TERMINAL_STATUSES = TERMINAL_JOB_STATUSES
+
+
+def _is_strictly_inside_spool(path: Path) -> bool:
+    """Validate that path is strictly located beneath a trusted spool directory."""
+    try:
+        resolved = path.resolve()
+        if resolved == resolved.parent:
+            return False
+        roots: list[Path] = [Path(tempfile.gettempdir()).resolve()]
+        for env_var in ("OMNISCRIBE_SPOOL_DIR", "OMNISCRIBE_ARTIFACT_DIR"):
+            val = os.environ.get(env_var)
+            if val and val.strip():
+                roots.append(Path(val.strip()).resolve())
+        for root in roots:
+            if root == root.parent:
+                continue
+            if resolved.is_relative_to(root) and resolved != root:
+                return True
+        return False
+    except (ValueError, RuntimeError):
+        return False
+
+
+def _cleanup_staged_ocr_input(raw_input_path: Any) -> None:
+    """Remove staged OCR directory if inside a safe spool root and directory name starts with omniscribe-ocr-."""
+    if not raw_input_path:
+        return
+    try:
+        target_path = Path(raw_input_path).resolve()
+        if _is_strictly_inside_spool(target_path):
+            parent = target_path.parent
+            if parent.name.startswith("omniscribe-ocr-") and _is_strictly_inside_spool(
+                parent
+            ):
+                shutil.rmtree(parent, ignore_errors=True)
+            elif target_path.is_dir() and target_path.name.startswith(
+                "omniscribe-ocr-"
+            ):
+                shutil.rmtree(target_path, ignore_errors=True)
+            elif target_path.is_file():
+                target_path.unlink(missing_ok=True)
+    except Exception as exc:
+        _LOGGER.warning(
+            "Failed to clean up spooled input path %s: %s", raw_input_path, exc
+        )
 
 
 # -- events -------------------------------------------------------------------
@@ -136,6 +186,24 @@ class JobPayload(Protocol):
     """
 
     runner_protocol: type
+
+
+def _resolve_job_runner(payload: Any, ctx: Context) -> JobRunner:
+    """Resolve tagged payloads only through their declared runner service."""
+    marker = (
+        payload.runner_protocol
+        if isinstance(payload, JobPayload)
+        else getattr(type(payload), "runner_protocol", None)
+    )
+    if marker is None:
+        return cast("JobRunner", ctx.inject(JobRunner))
+    if not isinstance(marker, type):
+        raise TypeError(f"Invalid runner_protocol for {type(payload).__name__}")
+    if not ctx.has(marker):
+        raise ServiceNotFoundError(
+            f"{marker.__name__} (runner for {type(payload).__name__})"
+        )
+    return cast("JobRunner", ctx.inject(marker))
 
 
 # -- queue ----------------------------------------------------------------------
@@ -256,6 +324,20 @@ class InMemoryJobQueue:
         """Return the current :class:`JobRecord` or ``None`` if unknown."""
         return await self._backend.get_job(job_id)
 
+    def _cleanup_queued_job_input(self, job_id: str, record: JobRecord) -> None:
+        raw_input_path = record.input_path or (record.request_meta or {}).get(
+            "input_path"
+        )
+        if not raw_input_path and job_id in self._payloads:
+            payload = self._payloads[job_id]
+            if isinstance(payload, dict):
+                raw_input_path = payload.get("input_path")
+            else:
+                raw_input_path = getattr(payload, "input_path", None)
+
+        if raw_input_path:
+            _cleanup_staged_ocr_input(raw_input_path)
+
     async def cancel(self, job_id: str) -> bool:
         """Mark ``job_id`` cancelled; ``False`` if missing or already terminal.
 
@@ -269,6 +351,7 @@ class InMemoryJobQueue:
             return False
         self._cancelled.add(job_id)
         if record.status == "queued":
+            self._cleanup_queued_job_input(job_id, record)
             await self._backend.upsert_job(
                 replace(record, status="cancelled", updated_at=time.time())
             )
@@ -344,6 +427,7 @@ class InMemoryJobQueue:
             offset += len(page)
             for record in page:
                 if record.status == "queued":
+                    self._cleanup_queued_job_input(record.job_id, record)
                     await self._backend.upsert_job(
                         replace(record, status="cancelled", updated_at=time.time())
                     )
@@ -392,14 +476,7 @@ class InMemoryJobQueue:
         """
         if self._runner_override is not None:
             return self._runner_override
-        marker = (
-            payload.runner_protocol
-            if isinstance(payload, JobPayload)
-            else getattr(type(payload), "runner_protocol", None)
-        )
-        if marker is not None:
-            return cast("JobRunner", self._ctx.inject(marker))
-        return cast("JobRunner", self._ctx.inject(JobRunner))
+        return _resolve_job_runner(payload, self._ctx)
 
     async def _process_one(self, job_id: str) -> None:
         payload = self._payloads.pop(job_id, None)

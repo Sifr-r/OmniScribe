@@ -412,13 +412,14 @@ async def _execute_http_with_retry(
     timeout: float | None = None,
     max_retries: int = 0,
     retry_base_delay: float = 1.0,
+    http_client: httpx.AsyncClient | None = None,
 ) -> dict[str, Any]:
     """Execute HTTP POST with exponential backoff retry on transient errors."""
     max_retries = max(0, int(max_retries))
     if max_retries > 0 and retry_base_delay < 0:
         retry_base_delay = 0.0
 
-    client = _get_shared_client()
+    client = http_client if http_client is not None else _get_shared_client()
     request_timeout: float = (
         timeout if timeout is not None else _DEFAULT_CLIENT_TIMEOUT_S
     )
@@ -521,6 +522,7 @@ async def complete_vlm_prompt(
     system_prompt: str | None = None,
     max_retries: int = 0,
     retry_base_delay: float = 1.0,
+    http_client: httpx.AsyncClient | None = None,
 ) -> str:
     """Execute asynchronous LLM completion based on provider configuration format.
 
@@ -547,6 +549,9 @@ async def complete_vlm_prompt(
             retries must opt in explicitly.
         retry_base_delay: Base delay in seconds for exponential backoff
             between retries. Only used when ``max_retries > 0``.
+        http_client: Optional custom httpx.AsyncClient to use for requests
+            (e.g., pinned client for SSRF defense). If not provided, falls
+            back to the shared client.
 
     Returns:
         Generated text completion.
@@ -599,6 +604,7 @@ async def complete_vlm_prompt(
         timeout=timeout,
         max_retries=max_retries,
         retry_base_delay=retry_base_delay,
+        http_client=http_client,
     )
 
     return adapter.extract_text(data, provider_config.id)

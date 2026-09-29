@@ -10,6 +10,8 @@ import logging
 from typing import Any
 from urllib.parse import urlsplit
 
+import httpx
+
 from omniscribe.core.llm.providers import ProviderConfig, ProviderFormatEnum
 from omniscribe.core.ocr.exceptions import LLMCallError
 from omniscribe.core.ocr.multi_format_client import complete_vlm_prompt
@@ -328,6 +330,7 @@ async def call_vlm(
     timeout: float | None = None,
     provider_config: ProviderConfig | None = None,
     system_prompt: str | None = None,
+    http_client: httpx.AsyncClient | None = None,
 ) -> str:
     """Make an asynchronous VLM call using active ProviderManager configuration or explicit settings."""
     provider_config = _resolve_provider_config(
@@ -343,6 +346,7 @@ async def call_vlm(
         max_tokens=max_tokens,
         timeout=timeout,
         system_prompt=system_prompt,
+        http_client=http_client,
     )
 
 
@@ -360,6 +364,7 @@ async def call_llm(
     timeout: float | None = None,
     provider_config: ProviderConfig | None = None,
     system_prompt: str | None = None,
+    http_client: httpx.AsyncClient | None = None,
 ) -> str:
     """Make an asynchronous LLM chat completion call using active ProviderManager config.
 
@@ -388,6 +393,7 @@ async def call_llm(
         max_tokens=max_tokens or 4096,
         timeout=timeout,
         system_prompt=system_prompt,
+        http_client=http_client,
     )
 
 

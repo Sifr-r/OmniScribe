@@ -43,6 +43,10 @@ class MarkdownWriter(BaseDocumentExporter):
         return render_markdown(tree, **kwargs)
 
 
+# Deprecated: MarkdownExporter is retained as an alias for MarkdownWriter for backwards compatibility.
+MarkdownExporter = MarkdownWriter
+
+
 def render_markdown(
     tree: DocumentTree,
     *,
@@ -345,6 +349,7 @@ def _clean_table_cell(text: str | None) -> str:
 
 
 __all__ = [
+    "MarkdownExporter",
     "MarkdownWriter",
     "render_markdown",
 ]

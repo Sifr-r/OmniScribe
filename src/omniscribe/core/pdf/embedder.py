@@ -20,9 +20,10 @@ from omniscribe.core.pdf.embedder_helpers import (
     _EMBED_RASTER_WORKERS,
     # Font probing and log helpers
     _PROBE_CODEPOINTS,
+    # Image-input branch
+    _build_image_sandwich_pdf,
     # Per-page rendering pipeline
     _draw_invisible_text,
-    # Image-input branch
     _embed_from_image_input,
     _log_once,
     # Per-page rasterization
@@ -76,6 +77,8 @@ def embed_structured_text(
             else list(range(len(doc)))
         )
         if not page_nums:
+            if len(new_doc) == 0:
+                new_doc.new_page(width=595.0, height=842.0)
             new_doc.save(output_pdf_path, garbage=3, deflate=True)
             return
 
@@ -86,6 +89,8 @@ def embed_structured_text(
             for rect_coords, text in pages_data.get(pn, []):
                 _draw_invisible_text(new_page, rect_coords, text, width, height)
 
+        if len(new_doc) == 0:
+            new_doc.new_page(width=595.0, height=842.0)
         new_doc.save(output_pdf_path, garbage=3, deflate=True)
     finally:
         new_doc.close()
@@ -94,6 +99,7 @@ def embed_structured_text(
 
 __all__ = [
     "_PROBE_CODEPOINTS",
+    "_build_image_sandwich_pdf",
     "_log_once",
     "embed_structured_text",
 ]

@@ -10,6 +10,8 @@ import logging
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+import httpx
+
 from omniscribe.config import RuntimeSettings
 from omniscribe.core.block_tree import DocumentTree
 from omniscribe.core.llm.client import call_llm
@@ -21,7 +23,7 @@ from omniscribe.plugins.documents.prompts import (
 from omniscribe.plugins.documents.schemas import ExtractionRequest
 from omniscribe.plugins.errors import PluginError
 from omniscribe.utils.json_parse import extract_json
-from omniscribe.utils.security import check_ssrf_target_sync
+from omniscribe.utils.security import check_ssrf_target_sync, create_pinned_client
 
 _LOGGER = logging.getLogger("omniscribe.plugins.documents")
 
@@ -179,6 +181,7 @@ async def run_extraction(
     if not request.text.strip():
         return {}
 
+    pinned_client: httpx.AsyncClient | None = None
     if request.api_base and request.api_base.strip():
         check = check_ssrf_target_sync(request.api_base.strip())
         if not check.allowed:
@@ -186,6 +189,12 @@ async def run_extraction(
                 403,
                 "ssrf_blocked",
                 f"URL targets a blocked address: {check.reason}",
+            )
+        if check.resolved_ip:
+            pinned_client = create_pinned_client(
+                request.api_base.strip(),
+                check.resolved_ip,
+                timeout=settings.llm_extraction_timeout,
             )
 
     prompt = build_extraction_prompt(
@@ -202,9 +211,13 @@ async def run_extraction(
             timeout=settings.llm_extraction_timeout,
             system_prompt=EXTRACTION_SYSTEM_MESSAGE,
             messages=[{"role": "user", "content": prompt}],
+            http_client=pinned_client,
         )
     except Exception as exc:
         _LOGGER.exception("Extraction request failed")
         raise DocumentsError(502, "ai_error", "The AI service request failed.") from exc
+    finally:
+        if pinned_client is not None:
+            await pinned_client.aclose()
     parsed = extract_json(content.strip())
     return parsed if isinstance(parsed, dict) else {}

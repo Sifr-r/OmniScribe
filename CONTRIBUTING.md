@@ -67,8 +67,8 @@ someone else's code.
   line you're adding should be exercised. A new endpoint without a
   test is a fast way to get a "needs tests" review.
 - **Doc updates when behaviour changes.** If a user-facing behaviour
-  changes, the change log (`docs/CHANGELOG.md`) and the relevant
-  section of `docs/AGENTS.md` should reflect it in the same PR.
+  changes, the change log ([`docs/CHANGELOG.md`](docs/CHANGELOG.md)) and the relevant
+  section of [`docs/AGENTS.md`](docs/AGENTS.md) should reflect it in the same PR.
 - **No drive-by reformats.** Don't mix a real change with `ruff
   format` rewrites of unrelated files; reviewers can't tell what to
   actually look at.
@@ -100,10 +100,6 @@ make doctor         # env / Redis / VLM health check
 
 ## Out of scope
 
-- **Building a desktop binary** is on the Phase 4 roadmap
-  ([remediation plan](docs/audits/2026-09-04-remediation-plan.md));
-  until that RFC lands, please don't open PRs that touch
-  `pyinstaller` / `fbs` / `flutter_dist` setup.
 - **A web-hosted version of OmniScribe** is not in scope. The
   product is local-first by design.
 - **Live LLM tests in CI** are explicitly excluded (the marker was
@@ -116,7 +112,6 @@ make doctor         # env / Redis / VLM health check
 - [`README.md`](README.md) — product overview.
 - [`docs/AGENTS.md`](docs/AGENTS.md) — the real contributor guide.
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — system architecture.
-- [`docs/audits/2026-09-04-remediation-plan.md`](docs/audits/2026-09-04-remediation-plan.md) —
-  the current roadmap.
+- [`docs/outstanding-work.md`](docs/outstanding-work.md) — the current roadmap.
 
-_Last updated: 2026-09-05_
+_Last updated: 2026-09-27_
