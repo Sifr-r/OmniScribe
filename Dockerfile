@@ -25,7 +25,7 @@
 #  self-digest re-lookup consistent). Satisfies the digest-pinning
 # requirement in SECURITY.md (M7).
 # ---- builder stage ----
-FROM python:3.14-slim@sha256:656d12e70054d5fda18a045e2494c96701e9792dd1445f95b3d038df954f57e9 AS builder
+FROM python:3.14-slim@sha256:51dafde81dbdb6ebde285137a295cf18a47ca95234fe388a343719cb97305b3d AS builder
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -74,7 +74,7 @@ RUN uv sync --locked --extra web --extra async-translation --extra preprocessing
  && rm -rf /root/.cache
 
 # ---- runtime stage ----
-FROM python:3.14-slim@sha256:656d12e70054d5fda18a045e2494c96701e9792dd1445f95b3d038df954f57e9 AS runtime
+FROM python:3.14-slim@sha256:51dafde81dbdb6ebde285137a295cf18a47ca95234fe388a343719cb97305b3d AS runtime
 
 # Drop root for runtime. The official Python slim image ships a
 # ``nonroot`` user, but we create our own so the path is stable.
