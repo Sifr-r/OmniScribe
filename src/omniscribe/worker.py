@@ -73,11 +73,19 @@ async def boot_worker_context(
     from omniscribe.plugins.logging import LoggingPlugin
     from omniscribe.plugins.ocr import OCRPlugin
     from omniscribe.plugins.progress import ProgressPlugin
-    from omniscribe.plugins.runtime import RuntimePlugin
+    from omniscribe.plugins.runtime import RuntimePlugin, RuntimeService
     from omniscribe.plugins.state_backend import StateBackendPlugin
     from omniscribe.plugins.translate.plugin import TranslatePlugin
 
     await ctx.plugin(RuntimePlugin(), config={})
+    # Single source of truth for the broker (audit Finding 5). ``--redis-url``
+    # only ever reaches ``runtime_settings``; the environment that
+    # ``load_settings()`` re-reads never sees it, so publish the resolved
+    # object onto the RuntimeService. Every plugin below then resolves its
+    # broker from the same settings (and the same explicit config values,
+    # taken from that object), instead of each re-deriving a URL the worker
+    # was never told about.
+    ctx.inject(RuntimeService).settings = runtime_settings
     await ctx.plugin(
         LoggingPlugin(),
         config={"format": runtime_settings.log_format, "level": "INFO"},

@@ -4,10 +4,10 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:omniscribe_client/core/enums/app_tab.dart';
 import 'package:omniscribe_client/core/enums/server_health.dart';
-import 'package:omniscribe_client/data/models/provider_preset.dart';
-import 'package:omniscribe_client/data/providers/provider_notifier.dart';
-import 'package:omniscribe_client/presentation/providers/provider_modal.dart';
-import 'package:omniscribe_client/presentation/shell/shell_state.dart';
+import 'package:omniscribe_client/features/providers/provider_preset.dart';
+import 'package:omniscribe_client/features/providers/provider_notifier.dart';
+import 'package:omniscribe_client/features/providers/provider_modal.dart';
+import 'package:omniscribe_client/app/shell_state.dart';
 
 import '_test_helpers.dart';
 import 'stub_omniscribe_server.dart';
@@ -123,9 +123,11 @@ void main() {
       await tester.pump(const Duration(milliseconds: 500));
 
       // Locate the search field by its placeholder.
-      final searchField = find.byWidgetPredicate(
-        (w) => w is TextField || w is EditableText,
-      ).first;
+      final searchField = find
+          .byWidgetPredicate(
+            (w) => w is TextField || w is EditableText,
+          )
+          .first;
       await tester.enterText(searchField, 'anth');
       await tester.pump(const Duration(milliseconds: 500));
 
@@ -134,8 +136,7 @@ void main() {
   });
 
   group('ProviderModal - dismiss', () {
-    testWidgets('tapping outside the modal dismisses it',
-        (tester) async {
+    testWidgets('tapping outside the modal dismisses it', (tester) async {
       final ctx = await _boot(tester, providers: const []);
       addTearDown(ctx.stub.stop);
 

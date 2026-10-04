@@ -4,11 +4,13 @@ import asyncio
 import dataclasses
 import logging
 from collections.abc import Awaitable, Callable, Sequence
+from copy import deepcopy
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from PIL import Image
 
+    from omniscribe.core.block_tree import DocumentTree
     from omniscribe.core.callbacks import BlockCallbackSet
     from omniscribe.core.document import (
         BBox,
@@ -54,6 +56,58 @@ class DocumentResultWriter(Protocol):
 
 #: Accepted output-writer shapes: the legacy 4-arg callable or a rich writer.
 AnyOutputWriter = OutputWriter | DocumentResultWriter
+
+
+def _sync_scored_tree(
+    tree: DocumentTree | None, pages: Sequence[DocumentPage]
+) -> DocumentTree | None:
+    """Copy scored trust into existing structure, including split table cells."""
+    if tree is None:
+        return None
+    from omniscribe.core.block_tree import BlockNode, TableNode
+
+    tree = deepcopy(tree)
+    page_blocks = {page.page_index: page.blocks for page in pages}
+
+    def sync_node(node: BlockNode | TableNode) -> None:
+        if isinstance(node, TableNode):
+            for row in node.cells:
+                for cell in row:
+                    sync_node(cell)
+            return
+        blocks = page_blocks.get(node.page_idx, [])
+        source = next(
+            (b for b in blocks if b.bbox == node.bbox and b.text == node.text), None
+        )
+        if source is None and node.text.strip():
+            # ponytail: scan split table cells; add stable source IDs if large
+            # tables make this bounded per-page scan expensive.
+            candidates = [
+                b
+                for b in blocks
+                if b.bbox[0] <= node.bbox[0]
+                and b.bbox[1] <= node.bbox[1]
+                and b.bbox[2] >= node.bbox[2]
+                and b.bbox[3] >= node.bbox[3]
+                and node.text.strip() in b.text
+            ]
+            source = min(
+                candidates,
+                key=lambda b: (b.bbox[2] - b.bbox[0]) * (b.bbox[3] - b.bbox[1]),
+                default=None,
+            )
+        if source is not None:
+            node.trust_score = source.trust_score
+            node.trust_flags = source.trust_flags
+        for child in node.children:
+            sync_node(child)
+
+    for tree_page in tree.pages:
+        for node in tree_page.children:
+            sync_node(node)
+    for table in tree.tables:
+        sync_node(table)
+    return tree
 
 
 async def notify(
@@ -228,7 +282,7 @@ class EngineBase:
         return DocumentResult(
             pages=scored_pages,
             source_path=document_result.source_path,
-            tree=document_result.tree,
+            tree=_sync_scored_tree(document_result.tree, scored_pages),
         )
 
     def _cross_page_merge(

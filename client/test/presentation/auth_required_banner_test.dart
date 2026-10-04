@@ -2,8 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:omniscribe_client/data/providers/repository_providers.dart';
-import 'package:omniscribe_client/presentation/common/auth_required_banner.dart';
+import 'package:omniscribe_client/shared/providers/repository_providers.dart';
+import 'package:omniscribe_client/shared/widgets/auth_required_banner.dart';
 
 /// Wave 16 / flutter_riverpod 3.4: ``NotifierProvider.overrideWith`` now
 /// requires a ``Notifier Function()`` — a Notifier subclass that overrides

@@ -1,7 +1,7 @@
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:omniscribe_client/data/models/feature_models.dart';
+import 'package:omniscribe_client/data/models/models.dart';
 import 'package:omniscribe_client/data/providers/features_state.dart';
 
 void main() {
@@ -302,16 +302,16 @@ void main() {
     test('value equality with nested map extraction data', () {
       final a = ExtractionState(
         inputText: 'Text',
-        extractedData: const {
+        extractedData: {
           'key': 'value',
           'nested': [1, 2, 3],
         },
       );
       final b = ExtractionState(
         inputText: 'Text',
-        extractedData: const {
-          'key': 'value',
+        extractedData: {
           'nested': [1, 2, 3],
+          'key': 'value',
         },
       );
       final c = ExtractionState(

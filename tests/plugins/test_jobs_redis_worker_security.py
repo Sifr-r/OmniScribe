@@ -702,8 +702,12 @@ async def test_run_ocr_cancellation_preserves_input_path_and_work_dir() -> None:
                 )
 
         # Both work_dir and input_file must be preserved after cancellation
-        assert work_dir.exists(), "work_dir should be preserved on asyncio.CancelledError"
-        assert input_file.exists(), "input_path should be preserved on asyncio.CancelledError"
+        assert work_dir.exists(), (
+            "work_dir should be preserved on asyncio.CancelledError"
+        )
+        assert input_file.exists(), (
+            "input_path should be preserved on asyncio.CancelledError"
+        )
         assert input_file.read_bytes() == b"%PDF-cancel-preserve"
     finally:
         shutil.rmtree(work_dir, ignore_errors=True)

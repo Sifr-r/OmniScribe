@@ -1,10 +1,22 @@
+import 'dart:typed_data';
+
 import 'package:flutter_test/flutter_test.dart';
-import 'package:omniscribe_client/data/models/bbox_item.dart';
-import 'package:omniscribe_client/data/models/document_result.dart';
-import 'package:omniscribe_client/data/models/process_settings.dart';
-import 'package:omniscribe_client/data/models/ws_frames.dart';
+import 'package:omniscribe_client/features/workstation/bbox_item.dart';
+import 'package:omniscribe_client/features/workstation/document_result.dart';
+import 'package:omniscribe_client/features/workstation/process_settings.dart';
+import 'package:omniscribe_client/core/websocket/ws_frames.dart';
 
 void main() {
+  test('page preview updates have distinct identity without scanning bytes', () {
+    final preview = Uint8List.fromList([1]);
+    final page = PageResult(page: 0, previewBytes: preview);
+    final shared = page.copyWith();
+    expect(shared, page);
+    expect(shared.hashCode, page.hashCode);
+    expect(page.copyWith(previewBytes: Uint8List.fromList([2])), isNot(page));
+    expect(PageResult(page: 0), isNot(page));
+  });
+
   group('BBoxItem Model Tests', () {
     test('Calculates normalized dimensions and confidence tiers correctly', () {
       const box = BBoxItem(

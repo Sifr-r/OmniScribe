@@ -7,7 +7,31 @@
 | **Target** | v0.2.0 source install (live); v0.3.0 PyInstaller bundle (shipped; see `docs/deployment/windows-bundle.md`) |
 | **Audit refs** | U2, U3, U4, U6, C2 |
 
-## Problem
+## Current decision and action validity (2026-09-30)
+
+Source installation remains supported; the Windows PyInstaller server bundle
+shipped in v0.3.0 with a separately installed Flutter client. The original
+anyio blocker was traced to local spec exclusions/import omissions and fixed
+on 2026-09-06. Waiting for upstream PyInstaller changes or switching to Nuitka
+is superseded; see [Sprint 1 findings](2026-09-bundle-sprint-1-findings.md).
+
+The option estimates, initial recommendation and 2026-09-05 decision below
+are historical proposal/decision records, not current implementation steps.
+Use the [Windows bundle guide](../deployment/windows-bundle.md) and
+[deployment guide](../DEPLOYMENT.md) for the current install paths.
+The [canonical backlog](../outstanding-work.md#release-and-deployment-decisions)
+owns the release choice and fresh bundle smoke. No new bundle smoke was
+performed for this documentation review.
+
+There is no separate `bundle.yml` workflow in the current tree:
+`.github/workflows/release.yml` builds/uploads the Python wheel and sdist.
+Binary builds and attachments remain a separate release operation; the
+proposed three-platform bundle matrix is not implemented. Codesigning,
+macOS/Linux bundles and an embedded server remain optional distribution
+decisions. The historical `omniscribe <file.pdf>` command from Option C was
+deprecated; use the server/API or import `OCRPipeline` for programmatic use.
+
+## Original problem (2026-09-04)
 
 The audit's end-user lens is unambiguous: a non-developer cannot install OmniScribe today. The shortest path is 12–16 steps (clone → install Python 3.11+ → install `uv` → `uv sync` with multiple `--extra` flags → install Flutter SDK → `flutter pub get` → `flutter run` → start LM Studio → download a vision model → drop a PDF in). Five of five lenses flagged something in the install-path cluster.
 
@@ -80,7 +104,7 @@ A `pyproject.toml`-published package that gives the user `omniscribe <file.pdf>`
 - Loses the Flutter UI entirely. The audit's stated persona doesn't have a way to *use* the product without a UI.
 - The PyPI story is open (`omniscribe` is a common namespace; a real release would need to negotiate that).
 
-## Recommendation
+## Original recommendation (superseded 2026-09-06)
 
 **v0.2.0 = source install (Phase 2's `TROUBLESHOOTING.md` + improved `make doctor` are the user-facing win). v0.3+ = Option A (PyInstaller bundle) when the anyio bundling issue is unblocked.** Option B (Flutter-embedded) is a v0.4+ stretch.
 
@@ -92,7 +116,7 @@ The reasoning:
 4. **The infrastructure is reusable.** `omniscribe_server.spec`, `scripts/build_windows.py`, `scripts/run_server.py`, and `hooks/hook-anyio.py` are kept in tree. (hook-anyio.py was removed 2026-09-06 — the shipped fix is `collect_submodules("anyio")` in the spec; the hook was orphaned.) The moment PyInstaller's analysis recognizes anyio (or a different bundler is chosen), the smoke test gate (`scripts/build_windows.py --smoke` must report `/api/health -> 200`) is the same.
 5. **The source install is a known quantity.** The 12-step install is what shipped in v0.1.0; the v0.2.0 improvements are the first-run affordances (Phase 2), not the install steps. A user who hit v0.1.0 install errors and gave up has a real reason to retry v0.2.0.
 
-## Concrete steps for v0.2.0 (source install — the supported path now)
+## Original v0.2.0 source-install steps
 
 v0.2.0 ships the source install as the supported end-user path. The
 first-run affordances from Phase 2 are the user-facing improvement.
@@ -121,7 +145,7 @@ The user-facing v0.2.0 install journey is: (1) clone, (2) `uv sync
 TROUBLESHOOTING.md is the first place to look when any of those
 fails.
 
-## Concrete steps for v0.3+ (PyInstaller bundle — deferred)
+## Original v0.3+ bundle proposal (superseded)
 
 The PyInstaller bundle ships in v0.3+ when the anyio bundling issue
 is unblocked. The infrastructure is in place; the gate is the smoke
@@ -169,7 +193,7 @@ test passing.
 
 6. **Backwards compatibility:** the source install (`uv sync --extra web --extra preprocessing`) keeps working. The bundle is a packaging option, not a replacement. Existing developer installs don't change.
 
-## Decision (2026-09-05)
+## Original decision (2026-09-05; bundle deferral superseded 2026-09-06)
 
 **Ship source install as v0.2.0; defer the PyInstaller bundle to v0.3+ when the anyio bundling issue is unblocked.**
 
@@ -195,7 +219,10 @@ The previously-offered alternatives are now historical:
   v0.2.0 path; a "supported platforms" table is added to the
   README (Phase 6 U11) to make the U2/U3 limitation explicit.
 
-## Open questions for the user
+## Optional distribution decisions
+
+These original questions are optional product choices, not required fixes for
+the shipped Windows install. Add their engineering work when a release needs it.
 
 1. **Codesigning budget.** Codesigning a Windows `.exe` and a macOS `.app` (notarization included) costs $200–500/year in certs and ~2 days of CI plumbing per platform. Worth it for a personal project, or skip and document the SmartScreen warning?
 2. **PyPI namespace.** `omniscribe` is a common-enough name that the PyPI slot may be taken or contested. Worth checking before the Option C sub-task.
@@ -207,4 +234,4 @@ The previously-offered alternatives are now historical:
 - [`docs/DEPLOYMENT.md`](../DEPLOYMENT.md) — the three deployment profiles; Option A only changes Profile 1.
 - [`docs/TROUBLESHOOTING.md`](../TROUBLESHOOTING.md) — install-step troubleshooting; needs a "the bundled server won't start" entry once A is in the wild.
 
-_Last updated: 2026-09-27_
+_Last updated: 2026-09-30_

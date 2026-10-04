@@ -28,6 +28,7 @@ from pydantic import ValidationError
 
 from omniscribe.core.workflows.base import OCRCancelled
 from omniscribe.plugins._http import envelope
+from omniscribe.plugins.errors import PluginError
 from omniscribe.plugins.ocr.schemas import (
     AsyncSubmitResponse,
     JobListItemResponse,
@@ -100,6 +101,14 @@ _SUPPORTED_FORMAT_SIGNATURES: tuple[tuple[str, Callable[[bytes], bool]], ...] = 
             and head[8:12] in {b"avif", b"avis", b"mif1"}
         ),
     ),
+    (
+        "tiff",
+        # Classic TIFF (II*\0 / MM\0*) and BigTIFF (II+\0 / MM\0+).
+        lambda head: (
+            head[:4] in (b"II\x2a\x00", b"MM\x00\x2a", b"II\x2b\x00", b"MM\x00\x2b")
+        ),
+    ),
+    ("bmp", lambda head: head[:2] == b"BM"),
     ("docx", lambda head: head.startswith(b"PK\x03\x04")),
     (
         "html",
@@ -139,11 +148,18 @@ _MIME_TO_FORMAT: dict[str, str] = {
     "image/jpeg": "jpeg",
     "image/webp": "webp",
     "image/avif": "avif",
+    "image/tiff": "tiff",
+    "image/bmp": "bmp",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
     "text/html": "html",
     "text/markdown": "md",
     "text/x-markdown": "md",
 }
+
+#: Human-readable list of the upload formats the OCR route accepts. Kept next
+#: to the two tables above so the error messages cannot drift from the
+#: allowlist again (BMP/TIFF were advertised in the README but rejected here).
+_SUPPORTED_UPLOAD_FORMATS: str = "PDF, PNG, JPEG, WebP, AVIF, TIFF, BMP"
 
 
 def _sniff_format(head: bytes) -> str | None:
@@ -239,6 +255,8 @@ async def parse_multipart_upload(
         "image/jpeg",
         "image/webp",
         "image/avif",
+        "image/tiff",
+        "image/bmp",
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         "text/html",
         "text/markdown",
@@ -249,7 +267,7 @@ async def parse_multipart_upload(
             status_code=415,
             detail=(
                 f"unsupported content type: {content_type!r}. "
-                "Allowed: PDF, PNG, JPEG, WebP, AVIF."
+                f"Allowed: {_SUPPORTED_UPLOAD_FORMATS}."
             ),
         )
 
@@ -266,6 +284,8 @@ async def parse_multipart_upload(
             "jpeg",
             "webp",
             "avif",
+            "tiff",
+            "bmp",
             "docx",
         } or not _is_markdown_text(blob):
             raise HTTPException(
@@ -280,7 +300,7 @@ async def parse_multipart_upload(
                 detail=(
                     "could not detect a supported document format from "
                     "the upload contents; octet-stream uploads must be "
-                    "one of PDF, PNG, JPEG, WebP, or AVIF"
+                    f"one of {_SUPPORTED_UPLOAD_FORMATS}"
                 ),
             )
     elif content_type in _MIME_TO_FORMAT:
@@ -328,6 +348,8 @@ async def handle_process_sync(request: Request, service: OCRServiceImpl) -> Resp
                 "detail": str(exc) or "OCR run was cancelled before completion.",
             },
         )
+    except PluginError as exc:
+        return envelope(exc.status_code, exc.error, exc.detail)
 
 
 async def handle_process_async(

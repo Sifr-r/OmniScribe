@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+import pytest
 from fastapi.testclient import TestClient
 
 from omniscribe.core.transcription.types import (
@@ -63,6 +64,75 @@ def test_transcribe_success_contract(api_client: TestClient, monkeypatch: Any) -
     assert data["text_artifact_id"] and data["text_artifact_token"]
     assert data["metadata_artifact_id"] and data["metadata_artifact_token"]
     assert data["segments"][0]["text"] == "Sample transcribed speech text"
+    assert set(data) == {
+        "text",
+        "language",
+        "duration",
+        "job_id",
+        "segments",
+        "text_artifact_id",
+        "text_artifact_token",
+        "metadata_artifact_id",
+        "metadata_artifact_token",
+    }
+    assert data["segments"] == [
+        {
+            "id": 0,
+            "start": 0.0,
+            "end": 4.0,
+            "text": "Sample transcribed speech text",
+            "confidence": None,
+        }
+    ]
+
+
+@pytest.mark.parametrize("malformed", [None, "id", "nan", "inf", "extension_nan"])
+def test_transcribe_response_boundary_preserves_fields_and_rejects_invalid_types(
+    api_client: TestClient, monkeypatch: Any, malformed: str | None
+) -> None:
+    from omniscribe.plugins.transcribe.service import TranscriptionServiceImpl
+
+    payload: dict[str, Any] = {
+        "text": "speech",
+        "language": None,
+        "vendor": "extension",
+        "segments": [
+            {
+                "id": 0,
+                "start": 0.0,
+                "end": 4.0,
+                "text": "speech",
+                "words": [{"word": "speech"}],
+            }
+        ],
+    }
+    if malformed == "id":
+        payload["segments"][0]["id"] = "provider-secret-invalid-id"
+    elif malformed == "nan":
+        payload["segments"][0]["start"] = float("nan")
+    elif malformed == "inf":
+        payload["duration"] = float("inf")
+    elif malformed == "extension_nan":
+        payload["vendor"] = float("nan")
+
+    async def stub_transcribe(self: Any, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        return payload
+
+    monkeypatch.setattr(TranscriptionServiceImpl, "transcribe", stub_transcribe)
+    response = api_client.post(
+        "/api/transcribe",
+        files={"file": ("test.wav", WAV_HEADER, "audio/wav")},
+    )
+    if malformed:
+        assert response.status_code == 500
+        assert response.json() == {
+            "error": "internal_server_error",
+            "detail": "Transcription service returned an invalid response.",
+        }
+        assert "provider-secret" not in response.text
+    else:
+        assert response.status_code == 200
+        assert response.json() == payload
 
 
 def test_transcribe_unsupported_format_400(api_client: TestClient) -> None:
@@ -74,6 +144,22 @@ def test_transcribe_unsupported_format_400(api_client: TestClient) -> None:
     body = response.json()
     assert body["error"] == "bad_request"
     assert "Unsupported audio format" in body["detail"]
+
+
+@pytest.mark.parametrize("options", [{"engine": "unknown"}, {"temperature": "bad"}])
+def test_transcribe_invalid_options_return_serializable_422(
+    api_client: TestClient, options: dict[str, str]
+) -> None:
+    response = api_client.post(
+        "/api/transcribe",
+        files={"file": ("test.wav", WAV_HEADER, "audio/wav")},
+        data=options,
+    )
+    assert response.status_code == 422
+    detail = response.json()["detail"]
+    assert isinstance(detail, list)
+    assert detail[0]["loc"] == [next(iter(options))]
+    assert detail[0]["type"] == "value_error"
 
 
 def test_transcribe_ssrf_override_403(api_client: TestClient, monkeypatch: Any) -> None:

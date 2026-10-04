@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:omniscribe_client/data/providers/settings_state.dart';
+import 'package:omniscribe_client/features/settings/settings_state.dart';
 
 void main() {
   group('SettingsState.initial', () {

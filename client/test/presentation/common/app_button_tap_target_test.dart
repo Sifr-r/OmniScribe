@@ -1,7 +1,8 @@
 // Regression test for Sprint 3 / M-2 audit fix: AppButton hit-target.
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:omniscribe_client/presentation/common/app_button.dart';
+import 'package:omniscribe_client/shared/widgets/app_button.dart';
+
 void main() {
   for (final entry in <(AppButtonSize, String)>[
     (AppButtonSize.sm, 'sm'),

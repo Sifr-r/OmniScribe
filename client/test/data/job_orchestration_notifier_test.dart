@@ -5,16 +5,14 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:omniscribe_client/core/websocket/ws_client.dart';
-import 'package:omniscribe_client/data/models/document_result.dart';
-import 'package:omniscribe_client/data/models/job_record.dart';
-import 'package:omniscribe_client/data/models/process_settings.dart';
-import 'package:omniscribe_client/data/models/ws_frames.dart';
-import 'package:omniscribe_client/data/providers/job_orchestration_notifier.dart';
-import 'package:omniscribe_client/data/providers/repository_providers.dart';
-import 'package:omniscribe_client/data/providers/workstation_notifier.dart';
-import 'package:omniscribe_client/data/providers/workstation_state.dart';
-import 'package:omniscribe_client/data/repositories/ocr_repository.dart';
-import 'package:omniscribe_client/data/repositories/sample_pdf_repository.dart';
+import 'package:omniscribe_client/features/workstation/document_result.dart';
+import 'package:omniscribe_client/features/jobs/job_record.dart';
+import 'package:omniscribe_client/features/workstation/process_settings.dart';
+import 'package:omniscribe_client/core/websocket/ws_frames.dart';
+import 'package:omniscribe_client/features/jobs/job_orchestration_notifier.dart';
+import 'package:omniscribe_client/shared/providers/repository_providers.dart';
+import 'package:omniscribe_client/features/workstation/workstation_notifier.dart';
+import 'package:omniscribe_client/features/workstation/workstation_state.dart';
 
 class _MockOcrRepository extends Mock implements OcrRepository {}
 
@@ -82,16 +80,20 @@ void main() {
     setUp(() {
       when(() => ocrRepo.getJobStatus('job-1'))
           .thenAnswer((_) async => completeStatus);
-      when(() => ocrRepo.downloadProcessedResult('job-1', token: any(named: 'token')))
+      when(() => ocrRepo
+              .downloadProcessedResult('job-1', token: any(named: 'token')))
           .thenAnswer((_) async => ProcessOcrResult(
                 pdfBytes: Uint8List.fromList([2]),
                 headers: const {},
                 textArtifactId: 'artifact-1',
                 textArtifactToken: 'token-1',
+                documentArtifactId: 'rich-1',
+                documentArtifactToken: 'rich-token-1',
               ));
     });
 
-    test('async completion recovers text and reports degraded progress', () async {
+    test('async completion recovers text and reports degraded progress',
+        () async {
       final container = makeContainer();
       addTearDown(container.dispose);
       final notifier = container.read(jobOrchestrationProvider.notifier);
@@ -105,6 +107,9 @@ void main() {
       await notifier.handleWsClosed();
 
       expect(container.read(jobOrchestrationProvider).stage, 'Complete');
+      expect(container.read(jobOrchestrationProvider).documentArtifactId, 'rich-1');
+      expect(container.read(jobOrchestrationProvider).documentArtifactToken,
+          'rich-token-1');
       expect(container.read(jobOrchestrationProvider).statusMessage,
           contains('recovered text from artifact'));
       expect(container.read(workstationProvider).allBBoxes.single.text,
@@ -136,6 +141,58 @@ void main() {
   });
 
   group('JobOrchestrationNotifier.cancelOcr cancellation safety', () {
+    test('server declining cancellation is reported as a warning', () async {
+      final container = makeContainer();
+      addTearDown(container.dispose);
+      final notifier = container.read(jobOrchestrationProvider.notifier);
+      when(() => ocrRepo.cancelJob('declined-job'))
+          .thenAnswer((_) async => false);
+      notifier.state = JobOrchestrationState(
+        isProcessing: true,
+        activeJobId: 'declined-job',
+      );
+
+      await notifier.cancelOcr();
+
+      expect(notifier.state.isProcessing, isFalse);
+      expect(notifier.state.warnings,
+          contains('Failed to cancel active OCR job/channel on server'));
+    });
+
+    test('late cancellation cannot mutate a replacement job', () async {
+      final container = makeContainer();
+      addTearDown(container.dispose);
+      final notifier = container.read(jobOrchestrationProvider.notifier);
+      final cancelled = Completer<bool>();
+      when(() => ocrRepo.cancelProgressChannel('old-channel',
+              sessionToken: any(named: 'sessionToken')))
+          .thenAnswer((_) => cancelled.future);
+      notifier.state = JobOrchestrationState(
+        isProcessing: true,
+        channelId: 'old-channel',
+        activeJobId: 'old-job',
+      );
+
+      final cancelling = notifier.cancelOcr();
+      expect(notifier.state.isProcessing, isFalse);
+      notifier.reset();
+      notifier.state = JobOrchestrationState(
+        isProcessing: true,
+        channelId: 'new-channel',
+        activeJobId: 'new-job',
+        stage: 'Queued',
+      );
+      cancelled.complete(true);
+      await cancelling;
+
+      expect(notifier.state.isProcessing, isTrue);
+      expect(notifier.state.activeJobId, 'new-job');
+      expect(notifier.state.stage, 'Queued');
+      verifyNever(() => ocrRepo.cancelJob('new-job'));
+      verifyNever(() => ocrRepo.cancelProgressChannel('new-channel',
+          sessionToken: any(named: 'sessionToken')));
+    });
+
     test('cancelOcr is a no-op when isProcessing is false', () async {
       final container = makeContainer();
       addTearDown(container.dispose);
@@ -248,10 +305,11 @@ void main() {
 
   group('WorkstationState Performance & Byte Equality', () {
     test(
-        'operator == compares loadedBytes by identity or length without hashing or scanning byte content',
+        'operator == compares loadedBytes by identity without scanning byte content',
         () {
       final bytesA = Uint8List.fromList([1, 2, 3, 4]);
-      final bytesB = Uint8List.fromList([9, 8, 7, 6]); // Different bytes, same length
+      final bytesB =
+          Uint8List.fromList([9, 8, 7, 6]); // Different bytes, same length
       final bytesC = Uint8List.fromList([1, 2, 3]); // Different length
 
       final stateA = WorkstationState(
@@ -270,9 +328,8 @@ void main() {
         pageCount: 1,
       );
 
-      // Same length => treated as equal to avoid multi-MB buffer comparisons
-      expect(stateA == stateB, isTrue);
-      expect(stateA.hashCode, equals(stateB.hashCode));
+      // Different buffers remain distinct even when their sizes match.
+      expect(stateA == stateB, isFalse);
 
       // Different length => not equal
       expect(stateA == stateC, isFalse);
@@ -286,15 +343,13 @@ void main() {
       expect(stateA == stateA2, isTrue);
     });
 
-    test('hashCode reflects buffer length rather than deep byte hash', () {
+    test('same buffer retains a consistent hash without deep byte scanning', () {
       final multiMb1 = Uint8List(1024 * 1024);
-      final multiMb2 = Uint8List(1024 * 1024);
-      multiMb2[100] = 42; // Change a byte deep in buffer
 
       final state1 = WorkstationState(loadedBytes: multiMb1);
-      final state2 = WorkstationState(loadedBytes: multiMb2);
+      final state2 = WorkstationState(loadedBytes: multiMb1);
 
-      // Fast hashCode without byte traversal: both hashcodes match because length is identical
+      // Reusing the same buffer preserves identity and hash consistency.
       expect(state1.hashCode, equals(state2.hashCode));
       expect(state1, equals(state2));
     });

@@ -1,12 +1,12 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
-import 'package:omniscribe_client/data/models/provider_preset.dart';
-import 'package:omniscribe_client/data/providers/provider_notifier.dart';
-import 'package:omniscribe_client/data/providers/repository_providers.dart';
-import 'package:omniscribe_client/data/providers/settings_notifier.dart';
-import 'package:omniscribe_client/data/repositories/config_repository.dart';
-import 'package:omniscribe_client/data/repositories/provider_repository.dart';
+import 'package:omniscribe_client/features/providers/provider_preset.dart';
+import 'package:omniscribe_client/features/providers/provider_notifier.dart';
+import 'package:omniscribe_client/shared/providers/repository_providers.dart';
+import 'package:omniscribe_client/features/settings/settings_notifier.dart';
+import 'package:omniscribe_client/features/settings/config_repository.dart';
+import 'package:omniscribe_client/features/providers/provider_repository.dart';
 
 class _MockProviderRepository extends Mock implements ProviderRepository {}
 

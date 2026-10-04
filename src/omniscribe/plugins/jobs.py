@@ -12,12 +12,14 @@ import contextlib
 import logging
 import os
 import shutil
+import sys
 import tempfile
 import time
 import uuid
+import weakref
 from dataclasses import dataclass, field, is_dataclass, replace
 from pathlib import Path
-from typing import Any, NamedTuple, Protocol, cast, runtime_checkable
+from typing import Any, BinaryIO, Literal, NamedTuple, Protocol, cast, runtime_checkable
 
 from pydantic import BaseModel
 
@@ -28,6 +30,9 @@ from omniscribe.harness.errors import ServiceNotFoundError
 from omniscribe.harness.events import AgentEvent, SessionEvent
 from omniscribe.harness.plugin import Plugin
 from omniscribe.plugins.artifacts import ArtifactStore
+from omniscribe.plugins.state_backend import resolve_broker_config
+from omniscribe.plugins.state_backend_redis import RedisStateBackend
+from omniscribe.plugins.state_backend_sqlite import SQLiteStateBackend
 from omniscribe.plugins.state_backend_types import (
     TERMINAL_JOB_STATUSES,
     JobRecord,
@@ -36,12 +41,23 @@ from omniscribe.plugins.state_backend_types import (
 from omniscribe.utils.security import redact_redis_url
 
 _LOGGER = logging.getLogger("omniscribe.plugins.jobs")
+_LOCAL_QUEUE_OWNERS: weakref.WeakValueDictionary[int, InMemoryJobQueue] = (
+    weakref.WeakValueDictionary()
+)
 
 # Pedantic 9.16: derive the terminal set from the JobStatus literal
 # instead of duplicating the literal set. The single source of truth
 # lives in ``state_backend.py`` so a new terminal status (e.g.
 # ``"superseded"``) needs only one edit.
 _TERMINAL_STATUSES = TERMINAL_JOB_STATUSES
+
+# Recorded on jobs a previous process left ``running`` (see
+# ``InMemoryJobQueue.mark_interrupted_terminal``). Operator-facing, so it
+# names the cause rather than the mechanism.
+_INTERRUPTED_BY_RESTART = (
+    "interrupted by an omniscribe process restart; not resumed because the "
+    "in-process queue keeps no durable job payload"
+)
 
 
 def _is_strictly_inside_spool(path: Path) -> bool:
@@ -287,6 +303,53 @@ class InMemoryJobQueue:
         self._payloads: dict[str, Any] = {}
         self._cancelled: set[str] = set()
         self._worker: asyncio.Task[None] | None = None
+        self._ownership_file: BinaryIO | None = None
+        self._shutdown_complete = False
+
+    def _claim_owner(self) -> None:
+        """Require exclusive dispatch ownership before touching persisted jobs."""
+        owner = _LOCAL_QUEUE_OWNERS.get(id(self._backend))
+        if owner is self:
+            return
+        if owner is not None:
+            raise RuntimeError("An in-process queue already owns this state backend")
+        if isinstance(self._backend, RedisStateBackend):
+            raise RuntimeError(
+                "Redis state requires jobs mode 'redis' for shared dispatch"
+            )
+        if isinstance(self._backend, SQLiteStateBackend):
+            lock_path = self._backend.db_path.with_suffix(".jobs.lock")
+            lock_path.parent.mkdir(parents=True, exist_ok=True)
+            handle = lock_path.open("a+b")
+            try:
+                if sys.platform == "win32":
+                    import msvcrt
+
+                    if handle.seek(0, os.SEEK_END) == 0:
+                        handle.write(b"\0")
+                        handle.flush()
+                    handle.seek(0)
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+                else:
+                    import fcntl
+
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError as exc:
+                handle.close()
+                raise RuntimeError(
+                    "Another process owns the in-process queue for this SQLite database; "
+                    "use one API process or Redis state and jobs mode 'redis'"
+                ) from exc
+            self._ownership_file = handle
+        _LOCAL_QUEUE_OWNERS[id(self._backend)] = self
+        self._shutdown_complete = False
+
+    def _release_owner(self) -> None:
+        if _LOCAL_QUEUE_OWNERS.get(id(self._backend)) is self:
+            del _LOCAL_QUEUE_OWNERS[id(self._backend)]
+        if self._ownership_file is not None:
+            self._ownership_file.close()
+            self._ownership_file = None
 
     # -- public seam -------------------------------------------------------
 
@@ -297,6 +360,7 @@ class InMemoryJobQueue:
         request_meta: dict[str, Any] | None = None,
         input_path: str | None = None,
     ) -> JobHandle:
+        self._claim_owner()
         job_id = uuid.uuid4().hex
         now = time.time()
         await self._backend.upsert_job(
@@ -397,12 +461,81 @@ class InMemoryJobQueue:
 
     # -- worker lifecycle ------------------------------------------------------
 
+    async def mark_interrupted_terminal(self) -> int:
+        """Flip jobs stranded by a previous process into a terminal status.
+
+        The default SQLite backend persists the job *record*, not the
+        executable work: payloads live in this process's
+        ``asyncio.Queue`` / ``self._payloads``, so a ``queued`` or
+        ``running`` row found at startup belongs to a process that died
+        and has nothing left to resume it. Leaving such rows
+        non-terminal strands the caller's status poll and WebSocket
+        forever, so startup closes them out:
+
+        - ``queued`` → ``cancelled``, the same verdict :meth:`shutdown`
+          reaches for work that will never run, plus the staged OCR
+          input cleanup (no payload references that file anymore);
+        - ``running`` → ``error`` with a restart reason, because the
+          runner was cut off mid-flight and never produced a result
+          artifact.
+
+        Idempotent: only non-terminal rows are ever transitioned, so a
+        second startup (or a second call) reports ``0`` and changes
+        nothing. Safe to run on every startup. The redis dispatch path
+        never calls it — there, job lifecycle across processes belongs
+        to the queue's own lease/visibility recovery, and a record left
+        ``running`` by a peer worker is that peer's to finish.
+
+        Returns the number of rows transitioned.
+        """
+        self._claim_owner()
+        if self._worker is not None:
+            raise RuntimeError(
+                "Interrupted-job reconciliation requires a stopped worker"
+            )
+        marked = 0
+        offset = 0
+        # Paginate until exhausted: list_jobs orders created_at DESC and
+        # this sweep does not delete rows, so a bounded page would strand
+        # older interrupted rows forever (same rule as shutdown()).
+        while True:
+            page = await self._backend.list_jobs(limit=100, offset=offset)
+            if not page:
+                break
+            offset += len(page)
+            now = time.time()
+            for record in page:
+                if record.status in _TERMINAL_STATUSES:
+                    continue
+                if record.status == "running":
+                    await self._backend.upsert_job(
+                        replace(
+                            record,
+                            status="error",
+                            error=_INTERRUPTED_BY_RESTART,
+                            updated_at=now,
+                        )
+                    )
+                elif record.status == "queued":
+                    self._cleanup_queued_job_input(record.job_id, record)
+                    await self._backend.upsert_job(
+                        replace(record, status="cancelled", updated_at=now)
+                    )
+                else:
+                    # A non-terminal status this build does not know how
+                    # to close out; leave it for a human rather than
+                    # guessing a terminal state.
+                    continue
+                marked += 1
+        return marked
+
     def start(self) -> None:
         """Spawn the worker task on the running loop (idempotent).
 
         Idempotent: a second call is a no-op so the plugin ``apply``
         can call this safely even if the queue was already started.
         """
+        self._claim_owner()
         if self._worker is None or self._worker.done():
             self._worker = asyncio.get_running_loop().create_task(
                 self._run(), name="omniscribe-job-worker"
@@ -410,6 +543,16 @@ class InMemoryJobQueue:
 
     async def shutdown(self) -> None:
         """Cancel the worker and mark any remaining queued rows ``cancelled``."""
+        if self._shutdown_complete:
+            return
+        self._claim_owner()
+        try:
+            await self._shutdown_owned()
+        finally:
+            self._release_owner()
+            self._shutdown_complete = True
+
+    async def _shutdown_owned(self) -> None:
         if self._worker is not None:
             self._worker.cancel()
             with contextlib.suppress(asyncio.CancelledError):
@@ -432,6 +575,7 @@ class InMemoryJobQueue:
                         replace(record, status="cancelled", updated_at=time.time())
                     )
         self._payloads.clear()
+        await self.mark_interrupted_terminal()
 
     async def _run(self) -> None:
         # Storage and dispatch failures must not terminate the only worker.
@@ -571,7 +715,8 @@ class InMemoryJobQueue:
 
 class JobsSchema(BaseModel):
     worker_count: int = 1
-    mode: str = "inprocess"
+    mode: Literal["", "inprocess", "redis"] = ""
+    redis_url: str = ""
 
 
 class JobsPlugin(Plugin):
@@ -580,33 +725,28 @@ class JobsPlugin(Plugin):
     Schema = JobsSchema
 
     async def apply(self, ctx: Context) -> None:
-        mode = str(self.config.get("mode") or "").strip().lower()
-        if not mode or mode == "inprocess":
-            from omniscribe.config import load_settings
-
-            settings_mode = load_settings().jobs_mode
-            if settings_mode and mode != "inprocess":
-                mode = settings_mode
+        # One broker per process: resolve the mode and URL together through
+        # the shared rule so the queue cannot land on a different Redis
+        # instance than the state backend it persists into.
+        broker = resolve_broker_config(ctx, self.config)
+        mode = broker.mode
         backend = ctx.inject(StateBackend)
         artifacts = ctx.inject(ArtifactStore)
         if mode == "redis":
-            from omniscribe.config import load_settings
-
             from .jobs_redis import RedisJobQueue
 
-            settings = load_settings()
             redis_queue = RedisJobQueue(
                 ctx,
                 backend,
                 artifacts,
-                redis_url=settings.redis_url,
+                redis_url=broker.redis_url,
             )
             await redis_queue.open()
             ctx.service(JobQueue, redis_queue)
             ctx.effect(redis_queue.aclose)
             _LOGGER.info(
                 "jobs plugin mounted (mode=redis, url=%s)",
-                redact_redis_url(settings.redis_url),
+                redact_redis_url(broker.redis_url),
             )
         else:
             worker_count = int(self.config.get("worker_count", 1))
@@ -616,6 +756,20 @@ class JobsPlugin(Plugin):
                     worker_count,
                 )
             inmem_queue = InMemoryJobQueue(ctx, backend, artifacts)
+            # Register release before the sweep so failed plugin boot also
+            # relinquishes ownership through the harness rollback.
+            inmem_queue._claim_owner()
+            ctx.effect(inmem_queue._release_owner)
+            # Audit Finding 5: nothing in the backend can re-enter this
+            # queue after a restart, so close out what the last process
+            # left behind before accepting new work.
+            interrupted = await inmem_queue.mark_interrupted_terminal()
+            if interrupted:
+                _LOGGER.info(
+                    "marked %d interrupted job(s) terminal at startup "
+                    "(in-process queue keeps no durable payload)",
+                    interrupted,
+                )
             inmem_queue.start()
             ctx.service(JobQueue, inmem_queue)
             ctx.effect(inmem_queue.shutdown)

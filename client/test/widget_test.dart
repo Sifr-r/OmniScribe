@@ -1,12 +1,13 @@
+import 'package:omniscribe_client/features/settings/runtime_config.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 
 import 'package:omniscribe_client/core/network/api_client.dart';
-import 'package:omniscribe_client/data/models/process_settings.dart';
-import 'package:omniscribe_client/data/providers/repository_providers.dart';
-import 'package:omniscribe_client/data/repositories/config_repository.dart';
+import 'package:omniscribe_client/features/workstation/process_settings.dart';
+import 'package:omniscribe_client/shared/providers/repository_providers.dart';
+import 'package:omniscribe_client/features/settings/config_repository.dart';
 import 'package:omniscribe_client/main.dart';
 
 class _MockConfigRepository extends Mock implements ConfigRepository {}

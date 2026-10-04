@@ -15,6 +15,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, Body, Request
+from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
@@ -130,7 +131,7 @@ def build_glossary_router(service: GlossaryImportService) -> APIRouter:
             except ValidationError as exc:
                 return JSONResponse(
                     status_code=422,
-                    content={"detail": exc.errors(include_url=False)},
+                    content={"detail": jsonable_encoder(exc.errors(include_url=False))},
                 )
         else:
             try:
@@ -142,14 +143,10 @@ def build_glossary_router(service: GlossaryImportService) -> APIRouter:
             except ValidationError as exc:
                 return JSONResponse(
                     status_code=422,
-                    content={"detail": exc.errors(include_url=False)},
+                    content={"detail": jsonable_encoder(exc.errors(include_url=False))},
                 )
 
-        try:
-            body = await service.import_glossary(source.source)
-        except GlossaryError:
-            raise
-        return body
+        return await service.import_glossary(source.source)
 
     @router.post("/api/glossary/import/url", response_model=None)
     async def import_glossary_from_url(
@@ -179,7 +176,7 @@ def build_glossary_router(service: GlossaryImportService) -> APIRouter:
             except ValidationError as exc:
                 return JSONResponse(
                     status_code=422,
-                    content={"detail": exc.errors(include_url=False)},
+                    content={"detail": jsonable_encoder(exc.errors(include_url=False))},
                 )
             url = body_model.url
             name = body_model.name
@@ -216,13 +213,9 @@ def build_glossary_router(service: GlossaryImportService) -> APIRouter:
         except ValidationError as exc:
             return JSONResponse(
                 status_code=422,
-                content={"detail": exc.errors(include_url=False)},
+                content={"detail": jsonable_encoder(exc.errors(include_url=False))},
             )
-        try:
-            body = await service.import_glossary(source.source)
-        except GlossaryError:
-            raise
-        return body
+        return await service.import_glossary(source.source)
 
     @router.get("/api/glossary/sources", response_model=None)
     async def list_sources() -> list[dict[str, Any]] | JSONResponse:
@@ -232,11 +225,8 @@ def build_glossary_router(service: GlossaryImportService) -> APIRouter:
         older Flutter client contract; both endpoints return the same
         payload.
         """
-        try:
-            service.ensure_store_ready()
-            return service.list_library()
-        except GlossaryError:
-            raise
+        service.ensure_store_ready()
+        return service.list_library()
 
     @router.delete("/api/glossary/sources/{source_id}", response_model=None)
     async def delete_source(source_id: str) -> dict[str, Any] | JSONResponse:
@@ -246,11 +236,8 @@ def build_glossary_router(service: GlossaryImportService) -> APIRouter:
         ``/api/glossary/sources/{id}`` route is preserved for clients
         that have not migrated to ``/api/glossary/library/{id}``.
         """
-        try:
-            service.ensure_store_ready()
-            return service.delete(source_id)
-        except GlossaryError:
-            raise
+        service.ensure_store_ready()
+        return service.delete(source_id)
 
     @router.get("/api/glossary/library", response_model=None)
     async def list_library() -> list[dict[str, Any]] | JSONResponse:
@@ -260,11 +247,8 @@ def build_glossary_router(service: GlossaryImportService) -> APIRouter:
         user-configured reorder). The Flutter client uses this to
         populate the glossary management screen.
         """
-        try:
-            service.ensure_store_ready()
-            return service.list_library()
-        except GlossaryError:
-            raise
+        service.ensure_store_ready()
+        return service.list_library()
 
     @router.post("/api/glossary/library/{glossary_id}/enable", response_model=None)
     async def toggle_library_entry(
@@ -277,11 +261,8 @@ def build_glossary_router(service: GlossaryImportService) -> APIRouter:
         (``true`` or ``false``) — there is no implicit-flip variant on
         this endpoint.
         """
-        try:
-            service.ensure_store_ready()
-            return service.toggle(glossary_id, enabled=req.enabled)
-        except GlossaryError:
-            raise
+        service.ensure_store_ready()
+        return service.toggle(glossary_id, enabled=req.enabled)
 
     @router.post("/api/glossary/library/{source_id}/toggle", response_model=None)
     async def toggle_source(
@@ -294,12 +275,9 @@ def build_glossary_router(service: GlossaryImportService) -> APIRouter:
         (handy for the Flutter "tap to toggle" UI); when a body is
         provided the explicit ``enabled`` value wins.
         """
-        try:
-            service.ensure_store_ready()
-            enabled = body.enabled if body is not None else None
-            return service.toggle(source_id, enabled=enabled)
-        except GlossaryError:
-            raise
+        service.ensure_store_ready()
+        enabled = body.enabled if body is not None else None
+        return service.toggle(source_id, enabled=enabled)
 
     @router.post("/api/glossary/library/reorder", response_model=None)
     async def reorder_library(
@@ -311,11 +289,8 @@ def build_glossary_router(service: GlossaryImportService) -> APIRouter:
         validates that every id is known and that no entry is missing
         before persisting the new ordering.
         """
-        try:
-            service.ensure_store_ready()
-            return service.reorder(req.ordered_ids)
-        except GlossaryError:
-            raise
+        service.ensure_store_ready()
+        return service.reorder(req.ordered_ids)
 
     @router.delete("/api/glossary/library/{glossary_id}", response_model=None)
     async def delete_library_entry(
@@ -328,11 +303,8 @@ def build_glossary_router(service: GlossaryImportService) -> APIRouter:
         row level (a missing id returns the standard not-found
         envelope).
         """
-        try:
-            service.ensure_store_ready()
-            return service.delete(glossary_id)
-        except GlossaryError:
-            raise
+        service.ensure_store_ready()
+        return service.delete(glossary_id)
 
     @router.get("/api/glossary/library/preview", response_model=None)
     async def library_preview() -> dict[str, Any] | JSONResponse:
@@ -342,11 +314,8 @@ def build_glossary_router(service: GlossaryImportService) -> APIRouter:
         first few entries per language pair so the user can sanity-check
         an import without paging through the full library.
         """
-        try:
-            service.ensure_store_ready()
-            return service.library_preview()
-        except GlossaryError:
-            raise
+        service.ensure_store_ready()
+        return service.library_preview()
 
     @router.get("/api/glossary/library/entries", response_model=None)
     async def get_library_entries(
@@ -361,16 +330,13 @@ def build_glossary_router(service: GlossaryImportService) -> APIRouter:
         filter; ``limit`` and ``offset`` paginate. The merged view is
         used when ``source_id`` is omitted.
         """
-        try:
-            service.ensure_store_ready()
-            return service.entries(
-                glossary_id=source_id,
-                query=q,
-                limit=limit,
-                offset=offset,
-            )
-        except GlossaryError:
-            raise
+        service.ensure_store_ready()
+        return service.entries(
+            glossary_id=source_id,
+            query=q,
+            limit=limit,
+            offset=offset,
+        )
 
     @router.get("/api/glossary/library/{glossary_id}/entries", response_model=None)
     async def library_entries(
@@ -384,16 +350,13 @@ def build_glossary_router(service: GlossaryImportService) -> APIRouter:
         Same shape as :func:`get_library_entries` but always scoped to
         the path-parameter glossary; ``source_id`` is unnecessary here.
         """
-        try:
-            service.ensure_store_ready()
-            return service.entries(
-                glossary_id=glossary_id,
-                query=q,
-                limit=limit,
-                offset=offset,
-            )
-        except GlossaryError:
-            raise
+        service.ensure_store_ready()
+        return service.entries(
+            glossary_id=glossary_id,
+            query=q,
+            limit=limit,
+            offset=offset,
+        )
 
     @router.get("/api/glossary/library/merged", response_model=None)
     async def merged_entries() -> dict[str, Any] | JSONResponse:
@@ -403,10 +366,7 @@ def build_glossary_router(service: GlossaryImportService) -> APIRouter:
         so the translation pipeline can consult the full vocabulary in
         one round-trip instead of fetching per-source.
         """
-        try:
-            service.ensure_store_ready()
-            return service.merged()
-        except GlossaryError:
-            raise
+        service.ensure_store_ready()
+        return service.merged()
 
     return router

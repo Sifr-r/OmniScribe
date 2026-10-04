@@ -7,8 +7,9 @@ without changes.
 
 from __future__ import annotations
 
-from pydantic import Field
+from pydantic import Field, field_validator
 
+from omniscribe.core.translate.nllb import resolve_nllb_code
 from omniscribe.plugins._schemas import TrimmedModel
 
 
@@ -41,3 +42,16 @@ class AsyncTranslationRequest(TranslationRequest):
 class NllbRequest(TrimmedModel):
     text: str = ""
     target_language: str = "English"
+
+    @field_validator("target_language")
+    @classmethod
+    def _validate_target_language(cls, value: str) -> str:
+        """Reject unmappable NLLB targets at the HTTP edge.
+
+        Without this, an unknown label used to fall back to English and the
+        caller received an English "translation" with a 200. Only the NLLB
+        route is constrained — :class:`TranslationRequest` drives the LLM
+        path, which accepts any language name.
+        """
+        resolve_nllb_code(value)
+        return value

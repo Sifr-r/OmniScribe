@@ -2,7 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:omniscribe_client/core/enums/server_health.dart';
-import 'package:omniscribe_client/presentation/shell/shell_state.dart';
+import 'package:omniscribe_client/app/shell_state.dart';
 
 import '_test_helpers.dart';
 import 'stub_omniscribe_server.dart';

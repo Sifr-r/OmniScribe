@@ -4,10 +4,10 @@ import 'dart:typed_data';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
-import 'package:omniscribe_client/data/models/job_record.dart';
-import 'package:omniscribe_client/data/providers/jobs_notifier.dart';
-import 'package:omniscribe_client/data/providers/repository_providers.dart';
-import 'package:omniscribe_client/data/repositories/job_repository.dart';
+import 'package:omniscribe_client/features/jobs/job_record.dart';
+import 'package:omniscribe_client/features/jobs/jobs_notifier.dart';
+import 'package:omniscribe_client/shared/providers/repository_providers.dart';
+import 'package:omniscribe_client/features/jobs/job_repository.dart';
 
 class _MockJobRepository extends Mock implements JobRepository {}
 
@@ -170,8 +170,7 @@ void main() {
   group('JobsNotifier.downloadResult', () {
     test('returns repo bytes on success', () async {
       final bytes = Uint8List.fromList([0x25, 0x50, 0x44, 0x46]); // %PDF
-      when(() => repo.downloadResult('job-1'))
-          .thenAnswer((_) async => bytes);
+      when(() => repo.downloadResult('job-1')).thenAnswer((_) async => bytes);
 
       final container = makeContainer();
       addTearDown(container.dispose);

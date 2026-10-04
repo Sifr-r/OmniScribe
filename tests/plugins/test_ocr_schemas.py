@@ -141,6 +141,7 @@ def test_response_shapes_match_frontend_contracts() -> None:
         "duration_s",
         "error",
         "text_artifact_id",
+        "document_artifact_id",
         "failed_pages",
     }
 

@@ -5,9 +5,9 @@ import 'package:mocktail/mocktail.dart';
 import 'package:omniscribe_client/core/enums/server_health.dart';
 import 'package:omniscribe_client/core/network/api_client.dart';
 import 'package:omniscribe_client/core/theme/app_theme.dart';
-import 'package:omniscribe_client/data/providers/repository_providers.dart';
-import 'package:omniscribe_client/presentation/shell/server_health_badge.dart';
-import 'package:omniscribe_client/presentation/shell/shell_state.dart';
+import 'package:omniscribe_client/shared/providers/repository_providers.dart';
+import 'package:omniscribe_client/app/server_health_badge.dart';
+import 'package:omniscribe_client/app/shell_state.dart';
 
 class _MockApiClient extends Mock implements ApiClient {}
 
@@ -77,7 +77,8 @@ void main() {
   });
 
   group('ServerHealthBadge', () {
-    testWidgets('tap triggers checkHealth via serverHealthProvider', (tester) async {
+    testWidgets('tap triggers checkHealth via serverHealthProvider',
+        (tester) async {
       when(() => mockClient.get<dynamic>('/api/health')).thenAnswer(
         (_) async => const ApiResponse(
           data: {'status': 'healthy'},

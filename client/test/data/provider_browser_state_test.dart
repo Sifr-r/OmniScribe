@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:omniscribe_client/data/models/provider_preset.dart';
-import 'package:omniscribe_client/data/providers/provider_browser_state.dart';
+import 'package:omniscribe_client/features/providers/provider_preset.dart';
+import 'package:omniscribe_client/features/providers/provider_browser_state.dart';
 
 void main() {
   const presetA = ProviderPreset(

@@ -214,7 +214,13 @@ def test_cors_allows_scoped_credentials_and_exposes_text_artifacts(
             name.strip().lower()
             for name in response.headers["access-control-expose-headers"].split(",")
         }
-        assert {"x-text-artifact-id", "x-text-artifact-token"} <= exposed
+        assert {
+            "x-text-artifact-id",
+            "x-text-artifact-token",
+            "x-document-artifact-id",
+            "x-document-artifact-token",
+            "x-failed-pages",
+        } <= exposed
 
 
 # ---------------------------------------------------------------------------
@@ -300,7 +306,9 @@ def test_websocket_bearer_auth_rejection(
             assert ws.receive_text() == "hello"
 
         # 4. Valid ?auth_token= -> allowed
-        with client.websocket_connect("/api/ws/test?auth_token=test-secret-token") as ws:
+        with client.websocket_connect(
+            "/api/ws/test?auth_token=test-secret-token"
+        ) as ws:
             assert ws.receive_text() == "hello"
 
         # 5. Valid Authorization: Bearer header -> allowed
@@ -308,4 +316,3 @@ def test_websocket_bearer_auth_rejection(
             "/api/ws/test", headers={"Authorization": "Bearer test-secret-token"}
         ) as ws:
             assert ws.receive_text() == "hello"
-

@@ -259,6 +259,11 @@ target-version = "py311"
 extend-exclude = [
     ".opencode/tmp/**",
     ".mavis/**",
+    # Same rationale as `.opencode/tmp/`: throwaway agent/verifier sandbox
+    # scratch (locked pytest cache dirs, one-shot review drivers) that is
+    # not part of the project source and is not git-tracked.
+    ".agent-tmp/**",
+    ".assessment-tmp/**",
 ]
 
 [tool.ruff.lint]

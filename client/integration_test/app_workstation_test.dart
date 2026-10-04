@@ -4,9 +4,9 @@ import 'dart:typed_data';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
-import 'package:omniscribe_client/data/providers/job_orchestration_notifier.dart';
-import 'package:omniscribe_client/data/providers/repository_providers.dart';
-import 'package:omniscribe_client/data/providers/workstation_notifier.dart';
+import 'package:omniscribe_client/features/jobs/job_orchestration_notifier.dart';
+import 'package:omniscribe_client/shared/providers/repository_providers.dart';
+import 'package:omniscribe_client/features/workstation/workstation_notifier.dart';
 import 'package:omniscribe_client/main.dart';
 
 import 'stub_omniscribe_server.dart';

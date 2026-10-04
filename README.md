@@ -139,6 +139,13 @@ The **source install** above is supported on all platforms, and a Windows onefil
 Docker is supported on all three (see [DEPLOYMENT.md](docs/DEPLOYMENT.md)
 Profile 3).
 
+> **Release assets are only partly automated.** The release workflow attaches
+> the Python wheel and sdist. The Windows server binary and the Flutter client
+> are built and attached manually — see
+> [Publishing release assets](docs/deployment/windows-bundle.md#publishing-release-assets)
+> for the exact steps and the release gate. A release page without an `.exe`
+> on it shipped without the Windows assets; use the source install instead.
+
 ## Flutter Client
 
 Start the backend (it serves the FastAPI surface that the Flutter client talks to):
@@ -187,7 +194,12 @@ carries a `trust_score` — keeping the no-orchestrator default
 byte-identical. Phase 3 ships `scripts/calibrate_model.py` (Platt
 scaling via pure-numpy gradient descent with backtracking line-search)
 and a pre-trained `qwen2_5_vl_72b.json` that drops ECE by 21.6% vs.
-raw confidence on the synthetic fixture. The `slow_dataset`-gated
+raw confidence on the synthetic fixture. Invalid `quality_options` (bad
+JSON, unknown field, unparseable boolean) are rejected with an explicit
+422 naming the offending field rather than being silently dropped. Today the
+Flutter client has no control that sends this field, so the trust layer is
+reachable over the API only; the no-orchestrator default is unchanged. The
+`slow_dataset`-gated
 regression tests run on OCR-Quality and KIE-HVQA fixtures via the
 nightly workflow. See [ARCHITECTURE.md](ARCHITECTURE.md) for the flag
 reference, fallback semantics, and dataset attribution.

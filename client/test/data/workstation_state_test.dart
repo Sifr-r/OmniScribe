@@ -10,9 +10,9 @@
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:omniscribe_client/data/models/bbox_item.dart';
-import 'package:omniscribe_client/data/models/document_result.dart';
-import 'package:omniscribe_client/data/providers/workstation_state.dart';
+import 'package:omniscribe_client/features/workstation/bbox_item.dart';
+import 'package:omniscribe_client/features/workstation/document_result.dart';
+import 'package:omniscribe_client/features/workstation/workstation_state.dart';
 
 void main() {
   group('WorkstationState Construction & Defaults', () {
@@ -39,10 +39,13 @@ void main() {
   });
 
   group('WorkstationState Getters', () {
-    test('hasDocument requires loadedBytes or filePath (pages alone are not enough)', () {
+    test(
+        'hasDocument requires loadedBytes or filePath (pages alone are not enough)',
+        () {
       // loadedBytes alone => true
       expect(
-        WorkstationState(loadedBytes: Uint8List.fromList([1, 2, 3])).hasDocument,
+        WorkstationState(loadedBytes: Uint8List.fromList([1, 2, 3]))
+            .hasDocument,
         isTrue,
       );
       // filePath alone => true
@@ -65,9 +68,13 @@ void main() {
       );
       // fully empty => false
       expect(WorkstationState().hasDocument, isFalse);
+      expect(WorkstationState(loadedBytes: Uint8List(0)).hasDocument, isFalse);
+      expect(WorkstationState(filePath: ' ').hasDocument, isFalse);
     });
 
-    test('currentPage returns page at selectedPageIndex or null if out of range', () {
+    test(
+        'currentPage returns page at selectedPageIndex or null if out of range',
+        () {
       const page0 = PageResult(page: 0);
       const page1 = PageResult(page: 1);
       final state = WorkstationState(
@@ -224,9 +231,11 @@ void main() {
   });
 
   group('WorkstationState Equality & HashCode', () {
-    test('instances with identical fields are equal and have matching hashCodes', () {
+    test(
+        'instances with identical fields are equal and have matching hashCodes',
+        () {
       final bytes1 = Uint8List.fromList([1, 2, 3]);
-      final bytes2 = Uint8List.fromList([1, 2, 3]);
+      final bytes2 = bytes1;
 
       final s1 = WorkstationState(
         loadedBytes: bytes1,
@@ -249,6 +258,23 @@ void main() {
       final s2 = WorkstationState(selectedPageIndex: 1);
 
       expect(s1, isNot(equals(s2)));
+    });
+
+    test('different same-length document buffers remain distinct', () {
+      final first = WorkstationState(loadedBytes: Uint8List.fromList([1, 2]));
+      final second = WorkstationState(loadedBytes: Uint8List.fromList([3, 4]));
+      expect(first, isNot(equals(second)));
+      expect(first.copyWith(), first);
+    });
+
+    test('processed PDF readiness can be set and cleared independently', () {
+      final source = Uint8List.fromList([1]);
+      final pdf = Uint8List.fromList([2]);
+      final original = WorkstationState(loadedBytes: source);
+      final processed = original.copyWith(processedPdfBytes: pdf);
+      expect(processed, isNot(original));
+      expect(processed.processedPdfBytes, same(pdf));
+      expect(processed.copyWith(clearProcessedPdfBytes: true), original);
     });
   });
 }

@@ -14,8 +14,10 @@ import httpx
 
 from omniscribe.config import RuntimeSettings
 from omniscribe.core.block_tree import DocumentTree
+from omniscribe.core.document import DocumentResult
 from omniscribe.core.llm.client import call_llm
 from omniscribe.core.llm.temperatures import TEMPERATURE_EXTRACTION
+from omniscribe.core.writers.markdown import render_markdown
 from omniscribe.plugins.documents.prompts import (
     EXTRACTION_SYSTEM_MESSAGE,
     build_extraction_prompt,
@@ -71,13 +73,36 @@ def load_pages(raw: Mapping[str, Any]) -> dict[int, list[str]]:
     return pages
 
 
-def build_tree(pages: dict[int, list[str]]) -> DocumentTree:
-    """Build a DocumentTree on demand from parsed pages.
+def tree_from_document(document: DocumentResult) -> DocumentTree:
+    """Return the structural tree carried by a rich document result.
 
-    Stored text artifacts carry no bboxes, so every line gets a zero
-    bbox — this is the pre-harness code's "legacy fallback" path; block
-    types come from ``_classify_simple`` text heuristics.
+    Prefers the processor-built :attr:`DocumentResult.tree` (native tables,
+    sections, figures, equations, and real bboxes) and falls back to
+    :func:`~omniscribe.core.block_tree.from_document_result` when the run
+    recorded pages only.
     """
+    if document.tree is not None:
+        return document.tree
+    from omniscribe.core.block_tree import from_document_result
+
+    return from_document_result(document)
+
+
+def build_tree(
+    pages: dict[int, list[str]], *, document: DocumentResult | None = None
+) -> DocumentTree:
+    """Build a DocumentTree, preferring the rich document artifact.
+
+    With ``document`` (the stored rich artifact) the real structure is
+    returned: real bboxes, block kinds, table grids, section paths, and trust
+    metadata. Without it — old jobs, older clients that only produced the text
+    artifact — this is the pre-harness "legacy fallback" path: every line gets
+    a zero bbox and block types come from ``_classify_simple`` text
+    heuristics.
+    """
+    if document is not None:
+        return tree_from_document(document)
+
     from omniscribe.core.block_tree import from_pages_data
 
     # Annotated with the exact parameter type of ``from_pages_data`` —
@@ -95,12 +120,24 @@ def build_document_export(
     page_text: Mapping[int, list[str]],
     metadata: Mapping[str, Any] | None,
     export_format: str,
+    document: DocumentResult | None = None,
 ) -> str | dict[str, Any]:
     """Build the export payload for one format.
 
     Verbatim re-home of the pre-harness ``build_document_export``, keyed
-    by int page.
+    by int page, plus the rich-artifact path: when ``document`` is given,
+    markdown/json/docling/mineru carry the real structure (block kinds,
+    bboxes, tables, sections, trust) instead of a re-heuristicized text-only
+    tree. ``text`` deliberately stays line-joined text in both paths — the
+    plain-text export is the legacy contract the Flutter client renders.
     """
+    if document is not None:
+        return _structured_export(
+            document=document,
+            page_text=page_text,
+            metadata=metadata,
+            export_format=export_format,
+        )
     match export_format:
         case "text":
             return _plain_text(page_text)
@@ -119,6 +156,51 @@ def build_document_export(
                 "schema": "mineru_compatible",
                 "pages": _pages_json(page_text),
                 "metadata": metadata,
+            }
+        case _:
+            raise DocumentsError(
+                400, "bad_request", f"Unsupported export format: {export_format}"
+            )
+
+
+def _structured_export(
+    *,
+    document: DocumentResult,
+    page_text: Mapping[int, list[str]],
+    metadata: Mapping[str, Any] | None,
+    export_format: str,
+) -> str | dict[str, Any]:
+    """Export from the rich document result, never from text heuristics.
+
+    The ``structure`` key carries the lossless tree payload for the
+    machine-readable formats; ``pages`` / ``document`` keep their legacy
+    page-text shape so existing consumers of those keys stay valid.
+    """
+    tree = tree_from_document(document)
+    match export_format:
+        case "text":
+            return _plain_text(page_text)
+        case "markdown":
+            return render_markdown(tree)
+        case "json":
+            return {
+                "pages": _pages_json(page_text),
+                "metadata": metadata,
+                "structure": tree.to_dict(),
+            }
+        case "docling":
+            return {
+                "schema": "docling_compatible",
+                "document": _pages_json(page_text),
+                "metadata": metadata,
+                "structure": tree.to_dict(),
+            }
+        case "mineru":
+            return {
+                "schema": "mineru_compatible",
+                "pages": _pages_json(page_text),
+                "metadata": metadata,
+                "structure": tree.to_dict(),
             }
         case _:
             raise DocumentsError(

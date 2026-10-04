@@ -20,6 +20,13 @@ Metrics per document:
 Blocks are matched greedily by IoU (best available pipeline box per GT box),
 without replacement. Not optimal in the Hungarian sense, but deterministic
 and close enough for a confidence summary.
+
+The module also owns the *reporting* layer the harness
+(``scripts/confidence_eval.py``) emits: the per-(path, fixture) result
+records, the failure records, and the exit-status rule. Scoring inputs are
+the canonical export and the rich :class:`DocumentResult` the pipeline
+produced -- never a raw bbox/text join, which measures the harness's own
+ordering rather than the product's output.
 """
 
 from __future__ import annotations
@@ -32,9 +39,9 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 from pathlib import Path
-from typing import TypeVar
+from typing import Any, TypeVar
 
-from omniscribe.core.document import BBox
+from omniscribe.core.document import BBox, DocumentResult
 from omniscribe.utils.text import normalize_text  # L-7 audit: shared helper
 
 T = TypeVar("T")
@@ -733,3 +740,229 @@ def blocks_to_markdown(
     normalized_items.sort(key=lambda item: (item[0], item[1]))
 
     return "\n\n".join(item[2] for item in normalized_items)
+
+
+# --- machine-readable reporting --------------------------------------------
+#
+# A run is only meaningful if it is reproducible and if a failed path is
+# visible. The dataclasses below are the JSON shape the harness writes and
+# the only place the exit-status rule lives, so a caller cannot score a run
+# "green" by ignoring a failure it happened not to print.
+
+#: JSON schema tag stamped on every emitted report.
+REPORT_SCHEMA = "omniscribe.confidence_eval_report.v1"
+
+#: Harness revision. Bumped whenever *how* a scored artifact is produced
+#: changes, so a report can be traced back to the code that produced it.
+HARNESS_VERSION = "2026-10-03.v1"
+
+#: Process status for an evaluation where every requested (path, fixture)
+#: combination was scored.
+EXIT_OK = 0
+
+#: Process status for an evaluation that was requested but left incomplete
+#: (a path raised, or a requested combination produced no record).
+EXIT_INCOMPLETE = 1
+
+
+def blocks_from_document_result(document: DocumentResult) -> list[tuple[BBox, str]]:
+    """Flatten a rich document result into ``(bbox, text)`` pairs.
+
+    Reads the blocks of the :class:`DocumentResult` the pipeline emitted --
+    i.e. *after* the document processors ran -- so the geometric report
+    describes the same object the export is built from. Blank-text blocks
+    are dropped: they are layout padding, not recognized content.
+    """
+    blocks: list[tuple[BBox, str]] = []
+    for page in document.pages:
+        for block in page.blocks:
+            text = block.text.strip()
+            if not text:
+                continue
+            bbox = block.bbox
+            blocks.append(((bbox[0], bbox[1], bbox[2], bbox[3]), text))
+    return blocks
+
+
+@dataclass(frozen=True)
+class EvaluationFailure:
+    """One failed ``(path, fixture)`` evaluation and why it failed.
+
+    A failure is a first-class record, not a console line: an evaluation
+    that cannot report a missing endpoint, a crashed path, or a missing
+    rich document is an evaluation that did not run.
+    """
+
+    path: str
+    fixture: str
+    stage: str
+    error_type: str
+    message: str
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return the JSON record for this failure."""
+        return {
+            "path": self.path,
+            "fixture": self.fixture,
+            "stage": self.stage,
+            "error_type": self.error_type,
+            "message": self.message,
+        }
+
+    @classmethod
+    def from_exception(
+        cls, *, path: str, fixture: str, stage: str, exc: BaseException
+    ) -> EvaluationFailure:
+        """Build a failure record from a raised exception."""
+        return cls(
+            path=path,
+            fixture=fixture,
+            stage=stage,
+            error_type=type(exc).__name__,
+            message=str(exc) or repr(exc),
+        )
+
+
+@dataclass
+class PathResult:
+    """The scored (or failed) outcome of one ``(path, fixture)`` run."""
+
+    path: str
+    fixture: str
+    status: str  # "scored" | "failed"
+    export_source: str | None = None
+    export_path: str | None = None
+    document_artifact_path: str | None = None
+    ground_truth_markdown_source: str | None = None
+    latency_seconds: float | None = None
+    confidence: ConfidenceReport | None = None
+    markdown: MarkdownScoreReport | None = None
+    failure: EvaluationFailure | None = None
+
+    @property
+    def scored(self) -> bool:
+        """True when this combination produced a scored export."""
+        return self.status == "scored" and self.failure is None
+
+    @classmethod
+    def from_failure(cls, failure: EvaluationFailure) -> PathResult:
+        """Build a failed record; the only kind a failure can produce."""
+        return cls(
+            path=failure.path,
+            fixture=failure.fixture,
+            status="failed",
+            failure=failure,
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return the JSON record for this result."""
+        confidence: dict[str, Any] | None = None
+        if self.confidence is not None:
+            confidence = {
+                "iou_threshold": self.confidence.iou_threshold,
+                "gt_blocks": self.confidence.gt_count,
+                "pipeline_blocks": self.confidence.pipeline_count,
+                "matched_blocks": len(self.confidence.matched),
+                "block_recall": self.confidence.block_recall,
+                "avg_iou": self.confidence.avg_iou,
+                "avg_text_similarity": self.confidence.avg_text_similarity,
+            }
+        markdown: dict[str, Any] | None = None
+        if self.markdown is not None:
+            markdown = {
+                "cer": self.markdown.cer,
+                "wer": self.markdown.wer,
+                "bleu": self.markdown.bleu,
+                "chrf": self.markdown.chrf,
+                "heading_f1": self.markdown.heading_f1,
+                "table_similarity": self.markdown.table_similarity,
+            }
+        return {
+            "path": self.path,
+            "fixture": self.fixture,
+            "status": self.status,
+            "export_source": self.export_source,
+            "export_path": self.export_path,
+            "document_artifact_path": self.document_artifact_path,
+            "ground_truth_markdown_source": self.ground_truth_markdown_source,
+            "latency_seconds": self.latency_seconds,
+            "confidence": confidence,
+            "markdown": markdown,
+            "failure": self.failure.to_dict() if self.failure is not None else None,
+        }
+
+
+@dataclass
+class EvaluationReport:
+    """The complete machine-readable result of one harness invocation.
+
+    ``requested_paths`` / ``requested_fixtures`` are the *contract*: a
+    combination that produced no record is a gap, not an absence.
+    """
+
+    requested_paths: list[str]
+    requested_fixtures: list[str]
+    records: list[PathResult]
+    provenance: dict[str, Any] = field(default_factory=dict)
+    allow_partial: bool = False
+
+    @property
+    def failures(self) -> list[EvaluationFailure]:
+        """Every recorded failure, in record order."""
+        return [r.failure for r in self.records if r.failure is not None]
+
+    def missing_combinations(self) -> list[dict[str, str]]:
+        """Requested ``(path, fixture)`` pairs that produced no record."""
+        recorded = {(r.path, r.fixture) for r in self.records}
+        return [
+            {"path": path, "fixture": fixture}
+            for path in self.requested_paths
+            for fixture in self.requested_fixtures
+            if (path, fixture) not in recorded
+        ]
+
+    @property
+    def is_complete(self) -> bool:
+        """True only when every requested combination was scored."""
+        if not self.records:
+            return False
+        if self.missing_combinations():
+            return False
+        return all(r.scored for r in self.records)
+
+    @property
+    def status(self) -> str:
+        """``"complete"``, ``"partial"``, or ``"incomplete"``."""
+        if self.is_complete:
+            return "complete"
+        if self.records:
+            return "partial"
+        return "incomplete"
+
+    def exit_code(self) -> int:
+        """Process status: non-zero unless every requested run was scored.
+
+        ``allow_partial`` is the single opt-out, and it only changes the
+        status -- the gaps and failures stay in the report either way.
+        """
+        if self.is_complete or self.allow_partial:
+            return EXIT_OK
+        return EXIT_INCOMPLETE
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return the JSON document for this report."""
+        return {
+            "schema": REPORT_SCHEMA,
+            "harness_version": HARNESS_VERSION,
+            "status": self.status,
+            "exit_code": self.exit_code(),
+            "allow_partial": self.allow_partial,
+            "requested": {
+                "paths": list(self.requested_paths),
+                "fixtures": list(self.requested_fixtures),
+            },
+            "records": [record.to_dict() for record in self.records],
+            "failures": [failure.to_dict() for failure in self.failures],
+            "missing": self.missing_combinations(),
+            "provenance": dict(self.provenance),
+        }

@@ -8,8 +8,8 @@
 // ignore_for_file: prefer_const_constructors, prefer_const_literals_to_create_immutables
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:omniscribe_client/data/models/document_result.dart';
-import 'package:omniscribe_client/data/providers/job_orchestration_notifier.dart';
+import 'package:omniscribe_client/features/workstation/document_result.dart';
+import 'package:omniscribe_client/features/jobs/job_orchestration_notifier.dart';
 
 void main() {
   group('JobOrchestrationState Construction & Defaults', () {
@@ -45,7 +45,8 @@ void main() {
       expect(state.totalRetriesAttempted, 3);
     });
 
-    test('repairedCount prefers the quality summary over the document count', () {
+    test('repairedCount prefers the quality summary over the document count',
+        () {
       final withSummary = JobOrchestrationState(
         qualitySummary: const QualitySummary(
           scope: 'document',
@@ -85,7 +86,8 @@ void main() {
       expect(JobOrchestrationState(stage: 'Warning').currentStageIndex, -1);
       expect(JobOrchestrationState(stage: 'Error').currentStageIndex, -1);
       expect(JobOrchestrationState(stage: 'Cancelled').currentStageIndex, -1);
-      expect(JobOrchestrationState(stage: 'UnknownStage').currentStageIndex, -1);
+      expect(
+          JobOrchestrationState(stage: 'UnknownStage').currentStageIndex, -1);
     });
 
     test('effectiveJobId prefers the active job over the last submitted', () {
@@ -222,7 +224,9 @@ void main() {
   });
 
   group('JobOrchestrationState Equality & HashCode', () {
-    test('instances with identical fields are equal and have matching hashCodes', () {
+    test(
+        'instances with identical fields are equal and have matching hashCodes',
+        () {
       final s1 = JobOrchestrationState(
         stage: 'OCR',
         warnings: const ['warn1'],
@@ -264,7 +268,8 @@ void main() {
       final baseMap = <String, int>{'p0_b0': 1, 'p0_b1': 2};
       final s3 = JobOrchestrationState(blockRetryCounts: baseMap);
       baseMap['p0_b2'] = 3;
-      final s4 = JobOrchestrationState(blockRetryCounts: {'p0_b0': 1, 'p0_b1': 2});
+      final s4 =
+          JobOrchestrationState(blockRetryCounts: {'p0_b0': 1, 'p0_b1': 2});
       expect(s3, equals(s4));
       expect(s3.hashCode, equals(s4.hashCode));
     });

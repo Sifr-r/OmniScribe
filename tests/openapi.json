@@ -219,6 +219,32 @@
       "DocumentExportRequest": {
         "additionalProperties": false,
         "properties": {
+          "document_artifact_id": {
+            "anyOf": [
+              {
+                "maxLength": 32,
+                "minLength": 32,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Document Artifact Id"
+          },
+          "document_artifact_token": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "minLength": 32,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Document Artifact Token"
+          },
           "export_format": {
             "$ref": "#/components/schemas/DocumentExportFormat",
             "default": "json"
@@ -272,6 +298,32 @@
       "ExportBlockTreeRequest": {
         "additionalProperties": false,
         "properties": {
+          "document_artifact_id": {
+            "anyOf": [
+              {
+                "maxLength": 32,
+                "minLength": 32,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Document Artifact Id"
+          },
+          "document_artifact_token": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "minLength": 32,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Document Artifact Token"
+          },
           "metadata_artifact_id": {
             "anyOf": [
               {
@@ -322,6 +374,32 @@
         "additionalProperties": false,
         "description": "Request for section-aware chunks export with tuning knobs.",
         "properties": {
+          "document_artifact_id": {
+            "anyOf": [
+              {
+                "maxLength": 32,
+                "minLength": 32,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Document Artifact Id"
+          },
+          "document_artifact_token": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "minLength": 32,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Document Artifact Token"
+          },
           "max_chars": {
             "default": 1200,
             "exclusiveMinimum": 0.0,
@@ -404,6 +482,32 @@
       "ExportHtmlRequest": {
         "additionalProperties": false,
         "properties": {
+          "document_artifact_id": {
+            "anyOf": [
+              {
+                "maxLength": 32,
+                "minLength": 32,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Document Artifact Id"
+          },
+          "document_artifact_token": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "minLength": 32,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Document Artifact Token"
+          },
           "text_artifact_id": {
             "maxLength": 32,
             "minLength": 32,
@@ -428,6 +532,32 @@
         "additionalProperties": false,
         "description": "Request for markdown export from text/metadata artifacts.",
         "properties": {
+          "document_artifact_id": {
+            "anyOf": [
+              {
+                "maxLength": 32,
+                "minLength": 32,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Document Artifact Id"
+          },
+          "document_artifact_token": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "minLength": 32,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Document Artifact Token"
+          },
           "metadata_artifact_id": {
             "anyOf": [
               {
@@ -701,6 +831,17 @@
           "created_at": {
             "title": "Created At",
             "type": "number"
+          },
+          "document_artifact_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Document Artifact Id"
           },
           "duration_s": {
             "anyOf": [

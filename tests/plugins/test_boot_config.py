@@ -34,6 +34,7 @@ SHIPPED_CORDIS_YML = (
 _CORDIS_ENV_VARS = (
     "OMNISCRIBE_STATE_BACKEND",
     "OMNISCRIBE_STATE_DB_PATH",
+    "OMNISCRIBE_JOBS_MODE",
     "OMNISCRIBE_LOG_FORMAT",
     "OMNISCRIBE_LOG_LEVEL",
     "OMNISCRIBE_QUALITY_LOOP",
@@ -43,10 +44,11 @@ _CORDIS_ENV_VARS = (
 
 
 @pytest.fixture
-def clean_cordis_env(monkeypatch: pytest.MonkeyPatch) -> None:
+def clean_cordis_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Neutralize env inputs so the shipped tree expands deterministically."""
     for name in _CORDIS_ENV_VARS:
         monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("OMNISCRIBE_ARTIFACT_DIR", str(tmp_path / "artifacts"))
 
 
 def test_shipped_cordis_yml_declares_fourteen_rows_in_boot_order() -> None:

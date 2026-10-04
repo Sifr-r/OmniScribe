@@ -15,6 +15,7 @@ from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
+from starlette.applications import Starlette
 
 from omniscribe.plugins.state_backend import StateBackend
 
@@ -96,6 +97,46 @@ def test_documents_plugin_is_mounted(api_client: TestClient) -> None:
     assert "/api/text/{artifact_id}" in paths
     assert "/api/metadata/{artifact_id}" in paths
     assert "/api/export/{artifact_id}" in paths
+
+
+@pytest.mark.parametrize(
+    ("route", "extra"),
+    [
+        ("html", {}),
+        ("docx-tree", {}),
+        ("blocktree", {}),
+        ("markdown", {}),
+        ("chunks", {}),
+        *[
+            ("document", {"export_format": fmt})
+            for fmt in ("json", "markdown", "text", "docling", "mineru")
+        ],
+    ],
+)
+@pytest.mark.parametrize("handle_parts", ["both", "id", "token"])
+def test_unavailable_supplied_document_never_falls_back_to_valid_text(
+    api_client: TestClient,
+    route: str,
+    extra: dict[str, str],
+    handle_parts: str,
+) -> None:
+    text_id, text_token = _seed_text_artifact(api_client, {"0": "Legacy text survives"})
+    document_id, document_token = _seed_artifact(api_client, blob=b"{}")
+    assert isinstance(api_client.app, Starlette)
+    backend = api_client.app.state.context.inject(StateBackend)
+    asyncio.run(backend.delete_artifact(document_id))
+    body = {
+        "text_artifact_id": text_id,
+        "text_artifact_token": text_token,
+        **extra,
+    }
+    if handle_parts in {"both", "id"}:
+        body["document_artifact_id"] = document_id
+    if handle_parts in {"both", "token"}:
+        body["document_artifact_token"] = document_token
+    response = api_client.post(f"/api/export/{route}", json=body)
+    assert response.status_code == 404
+    assert response.json()["error"] == "not_found"
 
 
 def test_export_document_markdown_round_trip(api_client: TestClient) -> None:

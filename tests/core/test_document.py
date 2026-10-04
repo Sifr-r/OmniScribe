@@ -72,7 +72,12 @@ def test_bbox_alias_is_fixed_length_tuple():
     assert document_module._normalize_bbox([0.1, 0.2, 0.3, 0.4]) == (0.1, 0.2, 0.3, 0.4)
     assert isinstance(document_module._normalize_bbox((0.0, 0.0, 1.0, 1.0)), tuple)
     # Epsilon tolerance allows tiny boundary jitter within 1e-3 and clamps
-    assert document_module._normalize_bbox([-0.0005, 0.0, 1.0005, 1.0]) == (0.0, 0.0, 1.0, 1.0)
+    assert document_module._normalize_bbox([-0.0005, 0.0, 1.0005, 1.0]) == (
+        0.0,
+        0.0,
+        1.0,
+        1.0,
+    )
     with pytest.raises(ValueError, match="4 values"):
         document_module._normalize_bbox([0.0, 0.0, 1.0])
     with pytest.raises(ValueError, match="normalized bbox"):

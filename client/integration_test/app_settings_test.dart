@@ -1,17 +1,18 @@
+import 'package:omniscribe_client/features/settings/runtime_config.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:omniscribe_client/core/enums/app_tab.dart';
 import 'package:omniscribe_client/core/enums/server_health.dart';
-import 'package:omniscribe_client/data/models/process_settings.dart';
-import 'package:omniscribe_client/data/providers/provider_browser_state.dart';
-import 'package:omniscribe_client/data/providers/provider_notifier.dart';
-import 'package:omniscribe_client/data/providers/repository_providers.dart';
-import 'package:omniscribe_client/data/providers/settings_notifier.dart';
-import 'package:omniscribe_client/presentation/common/section_header.dart';
-import 'package:omniscribe_client/presentation/providers/provider_modal.dart';
-import 'package:omniscribe_client/presentation/shell/shell_state.dart';
+import 'package:omniscribe_client/features/workstation/process_settings.dart';
+import 'package:omniscribe_client/features/providers/provider_browser_state.dart';
+import 'package:omniscribe_client/features/providers/provider_notifier.dart';
+import 'package:omniscribe_client/shared/providers/repository_providers.dart';
+import 'package:omniscribe_client/features/settings/settings_notifier.dart';
+import 'package:omniscribe_client/shared/widgets/section_header.dart';
+import 'package:omniscribe_client/features/providers/provider_modal.dart';
+import 'package:omniscribe_client/app/shell_state.dart';
 
 import '_test_helpers.dart';
 import 'stub_omniscribe_server.dart';
@@ -103,8 +104,8 @@ void main() {
       await tester.pumpAndSettle();
 
       // Capture the config update sent to the repo.
-      final configRepo = ctx.container.read(configRepositoryProvider)
-          as MockConfigRepository;
+      final configRepo =
+          ctx.container.read(configRepositoryProvider) as MockConfigRepository;
       await tester.tap(find.text('Save settings'));
       await tester.pumpAndSettle();
 
@@ -160,8 +161,7 @@ void main() {
       // the modal — both must see the same value.
       final browser = ctx.container.read(providerBrowserProvider);
       expect(browser, isA<ProviderBrowserState>());
-      expect(browser.providers, isEmpty,
-          reason: 'mock returned no providers');
+      expect(browser.providers, isEmpty, reason: 'mock returned no providers');
     }, tags: const [kPlatformWindows, kPlatformWeb]);
   });
 }

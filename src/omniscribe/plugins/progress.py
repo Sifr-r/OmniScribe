@@ -21,7 +21,7 @@ import secrets
 import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
-from typing import Any, NamedTuple, Protocol, runtime_checkable
+from typing import Any, Literal, NamedTuple, Protocol, runtime_checkable
 
 from fastapi import (
     APIRouter,
@@ -38,6 +38,7 @@ from omniscribe.harness.context import Context
 from omniscribe.harness.events import AgentEvent
 from omniscribe.harness.plugin import Plugin
 from omniscribe.plugins.jobs import JobCancelled, JobCompleted, JobFailed
+from omniscribe.plugins.state_backend import resolve_broker_config
 from omniscribe.plugins.state_backend_types import ChannelRecord, StateBackend
 
 _LOGGER = logging.getLogger("omniscribe.plugins.progress")
@@ -628,7 +629,8 @@ def build_progress_router(
 class ProgressSchema(BaseModel):
     frame_cap: int = 1000
     channel_ttl_seconds: int = 600
-    mode: str = "inprocess"
+    mode: Literal["", "inprocess", "redis"] = ""
+    redis_url: str = ""
 
 
 class ProgressPlugin(Plugin):
@@ -637,14 +639,14 @@ class ProgressPlugin(Plugin):
     Schema = ProgressSchema
 
     async def apply(self, ctx: Context) -> None:
-        from omniscribe.config import load_settings
-
-        settings = load_settings()
-        mode = str(self.config.get("mode") or "").strip().lower()
-        if not mode or mode == "inprocess":
-            mode = settings.jobs_mode
-
-        redis_mode = mode == "redis"
+        # One broker per process: resolve the mode and URL through the
+        # shared rule so progress publishes to the same Redis the job
+        # queue and the state backend use. ``broker.settings`` is that
+        # same resolved object, so the router below cannot disagree
+        # with the service about how this process was configured.
+        broker = resolve_broker_config(ctx, self.config)
+        mode = broker.mode
+        redis_mode = broker.redis_mode
         backend = ctx.inject(StateBackend)
         service = ProgressServiceImpl(
             ctx,
@@ -652,22 +654,14 @@ class ProgressPlugin(Plugin):
             frame_cap=int(self.config.get("frame_cap", 1000)),
             channel_ttl_seconds=int(self.config.get("channel_ttl_seconds", 600)),
             redis_mode=redis_mode,
-            redis_url=settings.redis_url if redis_mode else None,
+            redis_url=broker.redis_url if redis_mode else None,
         )
         if redis_mode:
             await service.open()
             ctx.effect(service.aclose)
 
         ctx.service(ProgressService, service)
-        try:
-            from omniscribe.plugins.runtime import RuntimeService
-
-            runtime_settings = (
-                ctx.inject(RuntimeService).settings if ctx.has(RuntimeService) else None
-            )
-        except Exception:
-            runtime_settings = None
-        ctx.mount_router(build_progress_router(service, settings=runtime_settings))
+        ctx.mount_router(build_progress_router(service, settings=broker.settings))
         _LOGGER.info(
             "progress plugin mounted (frame_cap=%d, mode=%s)",
             int(self.config.get("frame_cap", 1000)),

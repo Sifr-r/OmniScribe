@@ -139,8 +139,22 @@ class TranscriptionConfigResponse(BaseModel):
     temperature: float = 0.0
 
 
+class TranscriptionSegmentResponse(BaseModel):
+    """Timed segment emitted to the client; retain provider extension fields."""
+
+    model_config = ConfigDict(strict=True, extra="allow", allow_inf_nan=False)
+
+    id: int
+    start: float
+    end: float
+    text: str
+    confidence: float | None = None
+
+
 class TranscriptionJobResponse(BaseModel):
     """Response returned upon transcription execution."""
+
+    model_config = ConfigDict(strict=True, extra="allow", allow_inf_nan=False)
 
     text: str
     language: str | None = None
@@ -150,7 +164,7 @@ class TranscriptionJobResponse(BaseModel):
     metadata_artifact_id: str | None = None
     metadata_artifact_token: str | None = None
     job_id: str | None = None
-    segments: list[dict[str, Any]] = []
+    segments: list[TranscriptionSegmentResponse] = Field(default_factory=list)
 
 
 UpdateTranscriptionConfigRequest = TranscriptionConfigUpdate
@@ -162,6 +176,7 @@ __all__ = [
     "TranscriptionConfigUpdate",
     "TranscriptionEngineType",
     "TranscriptionJobResponse",
+    "TranscriptionSegmentResponse",
     "UpdateTranscriptionConfigRequest",
     "unpack_transcribe_options",
 ]

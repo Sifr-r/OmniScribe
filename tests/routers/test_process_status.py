@@ -20,6 +20,7 @@ _STATUS_KEYS = {
     "duration_s",
     "error",
     "text_artifact_id",
+    "document_artifact_id",
     "failed_pages",
 }
 

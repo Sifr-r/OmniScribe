@@ -2,12 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:omniscribe_client/core/theme/app_theme.dart';
-import 'package:omniscribe_client/presentation/common/app_badge.dart';
-import 'package:omniscribe_client/presentation/common/app_button.dart';
-import 'package:omniscribe_client/presentation/common/app_card.dart';
-import 'package:omniscribe_client/presentation/common/app_input.dart';
-import 'package:omniscribe_client/presentation/common/app_toggle.dart';
-import 'package:omniscribe_client/presentation/common/toast_service.dart';
+import 'package:omniscribe_client/shared/widgets/app_badge.dart';
+import 'package:omniscribe_client/shared/widgets/app_button.dart';
+import 'package:omniscribe_client/shared/widgets/app_card.dart';
+import 'package:omniscribe_client/shared/widgets/app_input.dart';
+import 'package:omniscribe_client/shared/widgets/app_toggle.dart';
+import 'package:omniscribe_client/shared/widgets/toast_service.dart';
 
 void main() {
   Widget buildTestableWidget(Widget child) {

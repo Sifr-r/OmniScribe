@@ -21,12 +21,14 @@ this module only handles plugin-side wiring.
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from pydantic import BaseModel
 
-from omniscribe.config import load_settings
+from omniscribe.config import RuntimeSettings, load_settings
 from omniscribe.harness.plugin import Plugin
 from omniscribe.utils.security import redact_redis_url as _redact_redis_url
 
@@ -59,6 +61,80 @@ from .state_backend_types import (
 _LOGGER = logging.getLogger("omniscribe.plugins.state")
 
 _ALLOWED_BACKENDS = {"memory", "sqlite", "redis"}
+
+
+@dataclass(frozen=True)
+class ResolvedBroker:
+    """The broker a plugin must connect with, plus the settings it resolved from.
+
+    ``settings`` is the process's single resolved
+    :class:`~omniscribe.config.RuntimeSettings` object (see
+    :func:`process_settings`). Plugins that need more than the mode and
+    the URL — the progress router's CORS origins, for instance — read
+    them from this object instead of calling ``load_settings()`` again,
+    which is what let a worker's ``--redis-url`` override split the
+    state backend, the job queue, and the progress broker across three
+    different Redis instances.
+    """
+
+    mode: str
+    redis_url: str
+    settings: RuntimeSettings
+
+    @property
+    def redis_mode(self) -> bool:
+        """``True`` when this process dispatches over Redis."""
+        return self.mode == "redis"
+
+
+def process_settings(ctx: Context) -> RuntimeSettings:
+    """Return the settings object this process is running on.
+
+    ``RuntimePlugin`` (:mod:`omniscribe.plugins.runtime`) owns the
+    resolved settings of a booted harness, and it is the only place a
+    caller-supplied override (``omniscribe-worker --redis-url``) can be
+    published: ``load_settings()`` re-reads the environment, which never
+    sees it. Broker resolution therefore goes through here so every
+    plugin in the process agrees on one broker.
+
+    Falls back to ``load_settings()`` when the runtime plugin is not
+    mounted (bare ``Context`` in tests, embedded use).
+    """
+    from omniscribe.plugins.runtime import RuntimeService
+
+    if ctx.has(RuntimeService):
+        return cast(RuntimeSettings, ctx.inject(RuntimeService).settings)
+    return load_settings()
+
+
+def resolve_broker_config(ctx: Context, config: Mapping[str, Any]) -> ResolvedBroker:
+    """Resolve the queue/progress broker under one shared precedence rule.
+
+    The same two steps apply to ``mode`` and ``redis_url``:
+
+    1. the plugin's own config row, whenever it carries a non-empty value;
+    2. otherwise the process's resolved settings (:func:`process_settings`),
+       which already carry the environment and any published override.
+
+    This is the precedence the redis branch of this module already used
+    for ``redis_url`` ("config wins, else ``settings``"), lifted out so
+    the jobs and progress plugins resolve the broker the same way instead
+    of re-deriving it from ``load_settings()``. Explicit plugin config
+    therefore always beats the environment, and an absent value defers
+    to it — including for ``mode``, where the two plugins previously
+    disagreed about whether an explicit ``inprocess`` was a decision or
+    a placeholder.
+    """
+    settings = process_settings(ctx)
+    mode = str(config.get("mode") or "").strip().lower()
+    if not mode:
+        mode = str(settings.jobs_mode or "").strip().lower()
+    if mode not in {"inprocess", "redis"}:
+        raise ValueError("jobs mode must be 'inprocess' or 'redis'")
+    redis_url = str(config.get("redis_url") or "").strip()
+    if not redis_url:
+        redis_url = str(settings.redis_url or "").strip()
+    return ResolvedBroker(mode=mode, redis_url=redis_url, settings=settings)
 
 
 class StateBackendSchema(BaseModel):
@@ -138,9 +214,7 @@ class StateBackendPlugin(Plugin):
             # it for non-loopback deployments. ``open()`` pings the
             # server so a misconfigured URL fails loud at boot, not
             # on the first request.
-            redis_url = (
-                str(self.config.get("redis_url") or "").strip() or settings.redis_url
-            )
+            redis_url = resolve_broker_config(ctx, self.config).redis_url
             redis_tls = bool(self.config.get("redis_tls")) or settings.redis_tls
             redis_backend = RedisStateBackend(redis_url=redis_url, redis_tls=redis_tls)
             await redis_backend.open()
@@ -165,10 +239,13 @@ __all__ = [
     "JobStatus",
     "MemoryStateBackend",
     "RedisStateBackend",
+    "ResolvedBroker",
     "SQLiteStateBackend",
     "StateBackend",
     "StateBackendPlugin",
     "StateBackendSchema",
     "get_args",
     "plugin",
+    "process_settings",
+    "resolve_broker_config",
 ]

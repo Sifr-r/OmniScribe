@@ -324,19 +324,19 @@ class TestEmbedUnicodeFontChain:
         finally:
             doc.close()
 
-    def test_uncovered_chars_dropped_not_null(
+    def test_arabic_actual_text_survives_without_covering_font(
         self, pdf_handler: PDFHandler, tmp_path: Path, monkeypatch
     ):
-        # The built-in cjk font has no Arabic glyphs; characters it
-        # cannot encode must be omitted — writing them anyway extracts
-        # as U+0000 and pollutes copy/paste.
+        # The scanned image supplies glyphs. ActualText must retain logical
+        # Arabic even when the host's font chain cannot render Arabic.
         from omniscribe.core.pdf import embedder_helpers as embedder
 
         monkeypatch.setattr(embedder, "_UNICODE_CHAIN", (fitz.Font("cjk"),))
         text, doc = self._embed_and_extract(pdf_handler, tmp_path, "مرحبا")
         try:
             assert "\x00" not in text
-            assert not any(0x0600 <= ord(c) <= 0x06FF for c in text)
+            assert "مرحبا" in text
+            assert doc[0].search_for("مرحبا")
         finally:
             doc.close()
 

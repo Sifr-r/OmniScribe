@@ -1,10 +1,11 @@
+import 'package:omniscribe_client/features/settings/runtime_config.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
-import 'package:omniscribe_client/data/providers/repository_providers.dart';
-import 'package:omniscribe_client/data/providers/settings_notifier.dart';
-import 'package:omniscribe_client/data/repositories/config_repository.dart';
-import 'package:omniscribe_client/data/models/process_settings.dart';
+import 'package:omniscribe_client/shared/providers/repository_providers.dart';
+import 'package:omniscribe_client/features/settings/settings_notifier.dart';
+import 'package:omniscribe_client/features/settings/config_repository.dart';
+import 'package:omniscribe_client/features/workstation/process_settings.dart';
 
 class _MockConfigRepository extends Mock implements ConfigRepository {}
 
@@ -221,15 +222,15 @@ void main() {
 
   group('SettingsNotifier.setServerBearerToken', () {
     void stubConfigFetch() {
-      when(() => repo.getConfig()).thenAnswer((_) async =>
-          RuntimeConfig.fromJson(<String, dynamic>{
-            'api_base': 'http://example.test/v1',
-            'api_key': '',
-            'model': 'm',
-            'ocr_provider': 'openai',
-          }));
-      when(() => repo.getModelsForProvider(any(),
-              apiBase: any(named: 'apiBase')))
+      when(() => repo.getConfig())
+          .thenAnswer((_) async => RuntimeConfig.fromJson(<String, dynamic>{
+                'api_base': 'http://example.test/v1',
+                'api_key': '',
+                'model': 'm',
+                'ocr_provider': 'openai',
+              }));
+      when(() =>
+              repo.getModelsForProvider(any(), apiBase: any(named: 'apiBase')))
           .thenAnswer((_) async => <String>['m']);
     }
 

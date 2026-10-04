@@ -1,5 +1,179 @@
 # Architecture Ledger
 
+## Goal-alignment implementation closeout (2026-10-04)
+
+GitHub preparation keeps the assessment's responsibility as the current acceptance
+record, moves historical findings after current evidence, and excludes local agent
+and assessment scratch output via `.gitignore`. The existing closeout blueprint
+records review ownership; no new source files or runtime boundaries are introduced.
+
+The [scoped blueprint](goal-alignment-closeout-blueprint-2026-10-04.md) retains
+existing domain ownership. [Current acceptance evidence](goal-alignment-assessment-2026-10-03.md#implementation-closeout-2026-10-04)
+supersedes the historical DONE table: reproduced defects are implemented, while
+client SDK, real Redis, current bundle and satisfactory accuracy proof remain
+open. No new runtime module or dependency was introduced.
+
+- Core trust synchronizes scored fields into a copied existing document tree;
+  tables, sections and geometry retain their existing owners.
+- Client OCR/result/orchestration models carry capability-bound rich document
+  handles into documents exports. Supplied unavailable rich artifacts fail
+  visibly; omitted legacy handles retain text reconstruction.
+- Documents exports use completed artifacts; partial preview hydration fills
+  missing line occurrences without replacing live coordinates. Glossary owns
+  nullable status decoding, bounded polling and modal error retention.
+- The jobs plugin exclusively owns in-process dispatch for each SQLite database
+  using a native process lock. Only the owner reconciles interrupted work;
+  release after process death allows safe startup. Redis state requires Redis
+  dispatch, and progress inherits omitted mode through the same broker resolver.
+- The PDF helper owns invisible carrier/ActualText placement for logical
+  shaping-dependent script extraction, including separate multiline positions.
+- Boot tests own isolated temporary storage; deployment instructions own
+  versioned asset copies, complete client archives and SHA-256 manifests.
+
+| New artifact | Single responsibility |
+| --- | --- |
+| `docs/goal-alignment-closeout-blueprint-2026-10-04.md` | Scoped implementation ownership and acceptance boundaries. |
+| `docs/goal-alignment-live-evidence-2026-10-04.json` | Token-free live benchmark provenance/scores and backend HTTP journey observations. |
+
+Regression additions stay in existing domain test files. Temporary live probes,
+raw outputs and checker caches remain under workspace `.assessment-tmp/`.
+
+## Outstanding work verification tools (2026-09-30)
+
+The [scoped blueprint](outstanding-work-blueprint-2026-09-30.md) records parallel
+ownership and verification evidence. These changes extend existing tools and
+tests; no production module or dependency is introduced.
+
+| File | Single responsibility |
+| --- | --- |
+| `scripts/dev_redis_smoke.py` | Maintainer Redis health/keyspace probe and opt-in concurrent job/result and lease-recovery verification. |
+| `tests/scripts/test_dev_redis_smoke.py` | Offline regression proof of the Redis smoke's validation, terminal results, failures and recovery observations. |
+| `client/integration_test/app_real_server_test.dart` | Real server preview verification and opt-in raster-image VLM OCR through workstation orchestration, with an isolated test runtime. |
+| `client/test/presentation/workstation/modals/export_modal_smoke_test.dart` | Widget export smoke, selected-format readiness and document replacement regressions. |
+| `docs/outstanding-work-blueprint-2026-09-30.md` | Scoped implementation ownership and verification evidence for this backlog pass. |
+
+Live OCR and production Redis/recovery execution remain unverified. Normal Dart
+formatting again failed on the denied user telemetry directory; SDK gates were
+halted without a bypass. The Redis smoke's 21 offline regressions and its existing
+script import check passed; focused Ruff lint/format and script typing passed.
+See the [open work list](outstanding-work.md).
+
+## Flutter feature ownership (2026-09-29)
+
+The application shell owns composition in `client/lib/app/`. Features own their models, Riverpod state, API adapters and UI in `client/lib/features/<domain>/`. Shared transport/authentication is in `shared/providers/api_providers.dart`; reusable widgets are in `shared/widgets/`. The four old aggregate Dart files contain exports only for existing multi-domain tests. They define no duplicate providers or business logic.
+
+The data flow is UI → feature state owner → domain API adapter → shared HTTP/WebSocket client. Existing OCR/config/provider/job test interfaces remain where tests use them; translation/transcription/glossary/documents adapters are concrete classes. Export preparation is owned by the documents notifier, and the view owns the platform save dialog. Required wire fields use contextual strict decoding without adding generated-model dependencies.
+
+Python retains the existing `plugins/<domain>/{routes,schemas,service}.py` ownership. Shared `PluginError` mapping now also handles OCR domain failures. The transcription HTTP boundary validates typed segments and finite numeric outputs while retaining omitted fields, explicit nulls and provider extensions. FastAPI-style validation errors remain JSON 422 detail arrays, and plugin failures retain the `{error, detail}` envelope.
+
+Every moved or added Flutter production file is listed below with its single responsibility. Exact before/after code and source moves are in [the Flutter refactor artifact](flutter-refactor-details-2026-09-29.md); Python diffs are in [the backend artifact](backend-refactor-details-2026-09-29.md).
+
+| File | Single responsibility |
+| --- | --- |
+| `client/lib/features/workstation/bbox_item.dart` | Immutable OCR bounding-box wire model. |
+| `client/lib/features/workstation/document_result.dart` | OCR page, trust, quality, document and text-artifact response models, including preview-buffer identity. |
+| `client/lib/features/jobs/job_record.dart` | Job history, OCR status and asynchronous submission wire models. |
+| `client/lib/features/workstation/process_settings.dart` | OCR processing options and processing enums. |
+| `client/lib/features/providers/provider_preset.dart` | Provider catalog, discovery, validation and activation wire models. |
+| `client/lib/features/workstation/smart_preset.dart` | Named OCR setting presets. |
+| `client/lib/core/websocket/ws_frames.dart` | Typed WebSocket event envelope parsing shared by processing features. |
+| `client/lib/features/workstation/document_selection_notifier.dart` | Selected OCR block state. |
+| `client/lib/features/workstation/document_viewport_notifier.dart` | Canvas zoom, pan and fit state. |
+| `client/lib/features/jobs/job_orchestration_notifier.dart` | OCR execution, streaming, queue polling and artifact lifecycle. |
+| `client/lib/features/jobs/jobs_notifier.dart` | History loading, cancellation and result download state. |
+| `client/lib/features/jobs/jobs_state.dart` | Immutable job history/filter state. |
+| `client/lib/features/providers/provider_browser_state.dart` | Immutable provider discovery and validation UI state. |
+| `client/lib/features/providers/provider_notifier.dart` | Provider discovery, activation and validation orchestration. |
+| `client/lib/shared/providers/repository_providers.dart` | Export-only composition barrel retained for multi-feature tests; production uses precise owner imports. |
+| `client/lib/features/settings/settings_notifier.dart` | Configuration load/save and settings state transitions. |
+| `client/lib/features/settings/settings_state.dart` | Immutable runtime configuration, theme and settings form state. |
+| `client/lib/features/workstation/workstation_notifier.dart` | Document loading, replacement, previews and recognition-content state transitions. |
+| `client/lib/features/workstation/workstation_state.dart` | Immutable document identity, processed PDF readiness and OCR canvas state. |
+| `client/lib/features/settings/config_repository.dart` | Runtime configuration HTTP operations and existing test seam; owns config adapter provider. |
+| `client/lib/features/jobs/job_repository.dart` | History/result HTTP operations and existing test seam; owns job adapter provider. |
+| `client/lib/features/workstation/ocr_repository.dart` | OCR HTTP/SSE operations and its existing test seam; owns OCR adapter provider. |
+| `client/lib/features/providers/provider_repository.dart` | Provider catalog/discovery HTTP operations and existing test seam; owns provider adapter provider. |
+| `client/lib/features/workstation/sample_pdf_repository.dart` | Server sample-PDF download; owns its adapter provider. |
+| `client/lib/shared/widgets/app_badge.dart` | Shared status badge. |
+| `client/lib/shared/widgets/app_button.dart` | Shared accessible application button. |
+| `client/lib/shared/widgets/app_card.dart` | Shared card surface. |
+| `client/lib/shared/widgets/app_input.dart` | Shared text input. |
+| `client/lib/shared/widgets/app_modal.dart` | Shared dialog frame. |
+| `client/lib/shared/widgets/app_select.dart` | Shared typed dropdown. |
+| `client/lib/shared/widgets/app_toggle.dart` | Shared switch control. |
+| `client/lib/shared/widgets/auth_required_banner.dart` | Authentication-required banner. |
+| `client/lib/shared/widgets/common.dart` | Shared widget public exports. |
+| `client/lib/shared/widgets/error_banner.dart` | Shared dismissible error presentation. |
+| `client/lib/shared/widgets/feature_screen_scaffold.dart` | Shared feature-view chrome and pane layout. |
+| `client/lib/shared/widgets/section_header.dart` | Shared section title/action UI. |
+| `client/lib/shared/widgets/toast_overlay.dart` | Shared toast overlay rendering. |
+| `client/lib/shared/widgets/toast_service.dart` | Shared toast message state and timing. |
+| `client/lib/features/documents/extraction_screen.dart` | Structured extraction input/template/result UI. |
+| `client/lib/features/glossary/glossary_screen.dart` | Glossary library/import/entry UI. |
+| `client/lib/features/transcription/transcription_screen.dart` | Audio selection, transcription controls and segment presentation. |
+| `client/lib/features/translation/translation_screen.dart` | Translation controls and result presentation. |
+| `client/lib/features/jobs/job_history_screen.dart` | Job history table and history actions UI. |
+| `client/lib/features/providers/ai_setup_wizard_modal.dart` | AI provider setup wizard UI. |
+| `client/lib/features/providers/provider_card.dart` | Provider catalog item UI. |
+| `client/lib/features/providers/provider_modal.dart` | Provider catalog/discovery modal UI. |
+| `client/lib/features/settings/settings_screen.dart` | Runtime configuration form UI. |
+| `client/lib/app/app_shell.dart` | Top-level application chrome, navigation and authentication banner. |
+| `client/lib/app/server_health_badge.dart` | Backend connection status presentation. |
+| `client/lib/app/shell.dart` | Application-shell public exports. |
+| `client/lib/app/shell_state.dart` | Navigation, selected provider/theme and server-health state owners. |
+| `client/lib/app/tab_ribbon.dart` | Accessible top-level navigation ribbon. |
+| `client/lib/app/workspace_view.dart` | Active feature view composition. |
+| `client/lib/features/workstation/canvas/bbox_inspector.dart` | Selected OCR block detail UI. |
+| `client/lib/features/workstation/canvas/bbox_painter.dart` | OCR bounding-box canvas painting. |
+| `client/lib/features/workstation/canvas/document_viewport.dart` | OCR page canvas UI and gestures. |
+| `client/lib/features/workstation/controls/components/ai_engine_status_card.dart` | Active OCR AI engine status presentation. |
+| `client/lib/features/workstation/controls/components/document_processors_card.dart` | Optional document processor controls. |
+| `client/lib/features/workstation/controls/components/execution_options_section.dart` | OCR execution/queue options controls. |
+| `client/lib/features/workstation/controls/components/image_preprocessing_card.dart` | Image preprocessing controls. |
+| `client/lib/features/workstation/controls/components/smart_preset_section.dart` | OCR preset selection section. |
+| `client/lib/features/workstation/controls/components/workstation_action_buttons.dart` | OCR execution and cancellation action buttons. |
+| `client/lib/features/workstation/controls/page_strip.dart` | OCR page thumbnail/navigation UI. |
+| `client/lib/features/workstation/controls/quality_repair_dock.dart` | Repair settings and live repair metrics UI; watches only consumed metrics. |
+| `client/lib/features/workstation/controls/right_control_dock.dart` | OCR processing-control composition. |
+| `client/lib/features/workstation/controls/smart_preset_selector.dart` | OCR preset selector UI. |
+| `client/lib/features/workstation/controls/trust_breakdown_panel.dart` | Trust and confidence breakdown UI. |
+| `client/lib/features/workstation/controls/upload_dropzone.dart` | Document picker/drop UI. |
+| `client/lib/features/documents/export_modal.dart` | Export format selection and platform save-dialog UI; delegates export preparation to documentExportProvider. |
+| `client/lib/features/workstation/progress/bottom_progress_dock.dart` | Processing progress and execution log UI. |
+| `client/lib/features/workstation/workstation_screen.dart` | OCR workstation UI composition. |
+| `client/lib/core/serialization/json_fields.dart` | Three dependency-free required wire-field readers (string, finite number, integer) with contextual FormatException errors. |
+| `client/lib/features/documents/document_repository.dart` | Concrete documents API adapter and its domain-owned Riverpod provider; no new interface or pass-through service. |
+| `client/lib/features/documents/documents_models.dart` | Documents request/response models and applicable enums. |
+| `client/lib/features/documents/export_notifier.dart` | Export format/prepared bytes models and state owner for representation generation, artifact checks and DOCX API calls. |
+| `client/lib/features/documents/extraction_notifier.dart` | Extraction state transitions and async side effects using its domain API adapter. |
+| `client/lib/features/documents/extraction_state.dart` | Immutable extraction UI state; extracted unchanged except ownership. |
+| `client/lib/features/glossary/glossary_models.dart` | Glossary request/response models and applicable enums. |
+| `client/lib/features/glossary/glossary_notifier.dart` | Glossary state transitions and async side effects using its domain API adapter. |
+| `client/lib/features/glossary/glossary_repository.dart` | Concrete glossary API adapter and its domain-owned Riverpod provider; no new interface or pass-through service. |
+| `client/lib/features/glossary/glossary_state.dart` | Immutable glossary UI state; extracted unchanged except ownership. |
+| `client/lib/features/settings/runtime_config.dart` | Runtime configuration read/update DTOs, extracted from processing settings. |
+| `client/lib/features/transcription/transcription_models.dart` | Transcription request/response models and applicable enums. |
+| `client/lib/features/transcription/transcription_notifier.dart` | Transcription state transitions and async side effects using its domain API adapter. |
+| `client/lib/features/transcription/transcription_repository.dart` | Concrete transcription API adapter and its domain-owned Riverpod provider; no new interface or pass-through service. |
+| `client/lib/features/transcription/transcription_state.dart` | Immutable transcription UI state; extracted unchanged except ownership. |
+| `client/lib/features/translation/translation_models.dart` | Translation request/response models and applicable enums. |
+| `client/lib/features/translation/translation_notifier.dart` | Translation state transitions and async side effects using its domain API adapter. |
+| `client/lib/features/translation/translation_repository.dart` | Concrete translation API adapter and its domain-owned Riverpod provider; no new interface or pass-through service. |
+| `client/lib/features/translation/translation_state.dart` | Immutable translation UI state; extracted unchanged except ownership. |
+| `client/lib/shared/providers/api_providers.dart` | Transport base URL, auth flags, HTTP client and WebSocket lifetime provider wiring; contains no feature adapter imports. |
+
+| Review/check artifact | Single responsibility |
+| --- | --- |
+| `client/test/data/modularity_regression_test.dart` | Regression proof for stale/disposed async work, strict engine/import contracts and export preflight/escaping. |
+| `client/tool/check_feature_contracts.dart` | Runnable dependency-free proof of required JSON fields, finite numbers and enum roundtrips. |
+| `client/tool/check_feature_layout.py` | Runnable feature ownership, local import resolution, provider uniqueness and UI dependency checks. |
+| `docs/refactor-blueprint-2026-09-29.md` | Scoped implementation ownership and behavior-preservation plan. |
+| `docs/modularity-review-2026-09-29.md` | Consolidated results, design decisions and final verification record. |
+| `docs/flutter-refactor-details-2026-09-29.md` | Complete Flutter relocation/responsibility inventory and exact before/after snippets. |
+| `docs/backend-refactor-details-2026-09-29.md` | Complete Python boundary diffs, responsibilities and focused verification. |
+| `docs/contract-review-2026-09-29.md` | Independent contract/lifecycle findings, corrections and review proof. |
+| `docs/document-state-review-2026-09-30.md` | Document lifecycle/export blueprint, consolidation decisions and current verification limitations. |
+
 ## System Shape
 
 `omniscribe` is a Python 3.11+ Web UI/API OCR application with a shared
@@ -217,14 +391,16 @@ Protocol (`ctx.inject(JobQueue)`), never by module singleton.
 | `tests/routers/test_glossary_library_routes.py` | FastAPI route tests for glossary library management (sources listing, deletion, toggle, reordering, entry pagination, merged/preview routes, and 503 fallback when LanceDB lexicon is absent) |
 | `tests/core/glossary_sources/test_encoding_and_xliff.py` | Unit tests for BOM detection, fallback text encodings (UTF-8/16/32, Windows-1252, ISO-8859-1), and robust XLIFF 1.2 / 2.0 parsing |
 | `tests/scripts/test_arrow_substrait_present.py` | Integration test validating `arrow_substrait.dll` presence on Windows when the LanceDB lexicon extra is installed (migrated from `tests/ops/`) |
-| `client/lib/data/providers/features_state.dart` | Immutable state models (`TranslationState`, `TranscriptionState`, `GlossaryState`, `ExtractionState`) with copyWith, equality, and clearError support |
-| `client/lib/data/providers/features_notifier.dart` | Riverpod 2.x `Notifier` controllers (`translationProvider`, `transcriptionProvider`, `glossaryProvider`, `extractionProvider`) for feature operations |
-| `client/lib/data/models/smart_preset.dart` | Immutable `SmartPreset` models, presets catalog (Standard, Receipt, Handwriting, Historical, Fast, Deep), filename heuristics, and ProcessSettings bidirectional mapping |
-| `client/lib/presentation/workstation/controls/smart_preset_selector.dart` | Visual 1-click smart preset selector cards, active preset highlight, and filename auto-detect suggestion banner |
-| `client/lib/presentation/workstation/controls/page_strip.dart` | Interactive multi-page thumbnail rail with vertical/horizontal orientation, auto-scrolling, and bounded flex layout |
-| `client/lib/presentation/workstation/canvas/document_viewport.dart` | Full-height GPU interactive document canvas with zoom, pan, spatial grid, bounding box overlays, and floating viewport controls |
-| `client/lib/presentation/workstation/workstation_screen.dart` | Primary OCR workstation screen orchestrating unified top header bar, left vertical page strip rail, viewport canvas, BBox inspector, right controls dock, and progress dock |
-| `client/lib/presentation/providers/ai_setup_wizard_modal.dart` | 3-step beginner-friendly guided AI setup wizard for local (Ollama/LM Studio) and cloud (OpenAI/Gemini/Claude/Groq) engine configuration |
+| `client/lib/data/providers/features_state.dart` | Export-only compatibility barrel for domain-owned immutable state models used by existing multi-domain tests |
+| `client/lib/data/providers/features_notifier.dart` | Export-only compatibility barrel for the four domain-owned Riverpod notifier/provider definitions; contains no state or implementation |
+| `client/lib/data/models/models.dart` | Combined compatibility exports for domain wire models used by multi-feature tests |
+| `client/lib/data/repositories/repositories.dart` | Combined compatibility exports for domain API adapters used by multi-feature tests |
+| `client/lib/features/workstation/smart_preset.dart` | Immutable `SmartPreset` models, presets catalog (Standard, Receipt, Handwriting, Historical, Fast, Deep), filename heuristics, and ProcessSettings bidirectional mapping |
+| `client/lib/features/workstation/controls/smart_preset_selector.dart` | Visual 1-click smart preset selector cards, active preset highlight, and filename auto-detect suggestion banner |
+| `client/lib/features/workstation/controls/page_strip.dart` | Interactive multi-page thumbnail rail with vertical/horizontal orientation, auto-scrolling, and bounded flex layout |
+| `client/lib/features/workstation/canvas/document_viewport.dart` | Full-height GPU interactive document canvas with zoom, pan, spatial grid, bounding box overlays, and floating viewport controls |
+| `client/lib/features/workstation/workstation_screen.dart` | Primary OCR workstation screen orchestrating unified top header bar, left vertical page strip rail, viewport canvas, BBox inspector, right controls dock, and progress dock |
+| `client/lib/features/providers/ai_setup_wizard_modal.dart` | 3-step beginner-friendly guided AI setup wizard for local (Ollama/LM Studio) and cloud (OpenAI/Gemini/Claude/Groq) engine configuration |
 | `src/omniscribe/plugins/ocr/routes.py` | FastAPI route definitions, multipart upload parsing, full-content-addressed preview caching, and HTTP endpoint handlers for the OCR plugin (`POST /api/process`, `POST /api/process/async`, job status/listing/cancelling/deletion, SSE event streaming, config GET/POST, preflight, and page previews) |
 | `src/omniscribe/plugins/ocr/services/` | Modular OCR service sub-components (`error_sanitization.py`, `content_sniff.py`, `config_seeding.py`) extracted from the former monolithic `service.py` to isolate concerns |
 | `scripts/build_windows.py` | PyInstaller build orchestrator generating standalone Windows server bundle with icon and spec integration |
@@ -428,6 +604,17 @@ provider mutation routes (`POST/DELETE /api/providers*`) — see the design
 spec's out-of-scope list.
 
 ## Documentation Maintenance
+
+The 2026-10-04 implementation closeout section of
+`goal-alignment-assessment-2026-10-03.md` is the current acceptance status of
+that remediation. Earlier implementation/DONE entries are not verification
+sign-off; the report records fixed boundary defects and blocked or unsatisfactory
+product/deployment gates.
+
+`goal-alignment-assessment-2026-10-03.md` records the current working tree's
+alignment with product goals, API/client boundary gaps, fresh verification,
+and prioritized acceptance checks. Its single responsibility is assessment;
+it adds no runtime components or source ownership changes.
 
 This ledger describes the current system only. Release history belongs in
 [CHANGELOG.md](CHANGELOG.md), the active backlog in

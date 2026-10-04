@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'app_colors.dart';
+import 'package:omniscribe_client/core/theme/app_colors.dart';
 
 /// DocuVerse Typography Scale for OmniScribe.
 ///

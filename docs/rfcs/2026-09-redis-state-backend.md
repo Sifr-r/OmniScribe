@@ -7,6 +7,33 @@
 | **Target** | OmniScribe v0.3.1+ (Profile 4 multi-worker LAN deployment) |
 | **Audit refs** | §6 deferred capabilities, Phase 4 follow-up, D2-02 |
 
+## Current status and action validity (2026-09-30)
+
+The Redis state backend is implemented in `plugins/state_backend_redis.py`;
+`StateBackendSchema` accepts `redis`, and the registration site opens the
+backend at boot. RFC 004 subsequently added distributed dispatch in
+`plugins/jobs_redis.py`, the `omniscribe-worker` CLI, and Redis Pub/Sub progress
+fan-out in `plugins/progress.py`. The original non-goals below describe this
+RFC's initial scope; they do not describe missing features in the current app.
+
+`scripts/dev_redis_smoke.py` checks API health and Redis keys by default.
+Opt in with `--jobs 4 --verify-recovery --timeout 600` to submit concurrent
+translation jobs, verify token-bound HTTP/Redis artifacts and observe the same
+job moving to a different worker before completion. Restart the identified
+worker at the printed cue; the script does not control deployment processes.
+Export the deployment's `OMNISCRIBE_AUTH_TOKEN` for authenticated API requests;
+the smoke rejects redirects before forwarding credentials or artifact tokens.
+Executing this smoke against a real deployment and recording a measured
+production profile remain open in [outstanding-work.md](../outstanding-work.md#release-and-deployment-decisions).
+TLS is supported through `REDIS_TLS` / `OMNISCRIBE_REDIS_TLS`; credentials can
+be supplied through the Redis URL. Select deployment settings rather than
+adding those already-supported capabilities. No fresh runtime validation was
+performed for this deployment profile.
+
+Sections 1–11 retain the original design and implementation plan. Use the
+[architecture ledger](../ARCHITECTURE.md) and
+[deployment guide](../DEPLOYMENT.md) for current runtime ownership and recipes.
+
 ## 1. Background
 
 v0.2.0 shipped the `MemoryStateBackend` and `SQLiteStateBackend` as the
@@ -150,6 +177,7 @@ rely on Redis's expiration policy alone.
 ```python
 import redis.asyncio as redis_async
 
+
 class RedisStateBackend:
     def __init__(self, redis_url: str) -> None:
         self._redis = redis_async.from_url(
@@ -184,6 +212,7 @@ The plugin's `apply()` adds a new branch:
 ```python
 if backend_name == "redis":
     from .state_backend_redis import RedisStateBackend
+
     redis_url = settings.redis_url
     backend = RedisStateBackend(redis_url=redis_url)
     await backend.open()  # ping the server, raise if unreachable
@@ -202,6 +231,7 @@ silent broken behavior.
 class StateBackendSchema(BaseModel):
     backend: Literal["memory", "sqlite", "redis"] = "memory"
     sqlite_path: str = ""
+
 
 _ALLOWED_BACKENDS = {"memory", "sqlite", "redis"}
 ```
@@ -231,13 +261,11 @@ _ALLOWED_BACKENDS = {"memory", "sqlite", "redis"}
 
 ## 10. End-to-end smoke
 
-`scripts/dev_redis_smoke.sh` (new, ~30 lines): starts a local
-`redis-server --save "" --appendonly no`, runs the existing
-`scripts/smoke_existing.py` against a binary booted with
-`OMNISCRIBE_STATE_BACKEND=redis`, asserts both endpoints return
-200, and verifies the artifact and job records are visible in
-`redis-cli` after the test. This is a manual maintainer recipe,
-not part of the CI gate.
+The implemented recipe is `scripts/dev_redis_smoke.py`, run against an
+already-started API and Redis. It checks `/api/health` and lists the
+`omniscribe:*` keyspace. The planned `.sh` recipe does not exist. Job submission,
+artifact verification and restart recovery remain separate verification work;
+an empty keyspace currently counts as a successful boot probe.
 
 ## 11. Staging
 
@@ -259,14 +287,18 @@ not part of the CI gate.
   or a single instance is enough.
 - **Migration path from sqlite.** Is there an existing Profile
   4 deployment using sqlite that needs to migrate to redis
-  without losing job history? If yes, we need a
-  `sqlite-to-redis` migration tool; if no, the migration is
-  "delete the sqlite file and start fresh".
+  without losing job history? The utility already exists at
+  [`scripts/migrate_sqlite_to_redis.py`](../../scripts/migrate_sqlite_to_redis.py),
+  with regression coverage in `tests/scripts/test_migrate_sqlite_to_redis.py`.
+  Inspect the real database with `uv run python scripts/migrate_sqlite_to_redis.py
+  --sqlite-path <existing-state.db> --dry-run`, then verify the chosen migration
+  against that deployment before switching backends. Keep the SQLite database
+  as the rollback/source record; a fresh Redis deployment need not delete it.
 - **Auth.** The `REDIS_URL` is plain by default. For Profile 4
-  LAN deployment, is that OK, or do we need TLS / password?
-  The current schema already supports a `password` in the URL
-  (`redis://:password@host:port/0`); the user supplies it via
-  `REDIS_URL`.
+  LAN deployment, select the required TLS/password configuration. The current
+  schema supports TLS and a password in the URL
+  (`redis://:password@host:port/0`); the user supplies these through
+  `REDIS_TLS` / `OMNISCRIBE_REDIS_TLS` and `REDIS_URL`.
 
 These don't block Stages 1-7. Stage 8 (manual smoke) is the
 right place to surface them.

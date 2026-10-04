@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:omniscribe_client/core/websocket/ws_client.dart';
-import 'package:omniscribe_client/data/models/ws_frames.dart';
+import 'package:omniscribe_client/core/websocket/ws_frames.dart';
 
 void main() {
   group('WsClient & WsEnvelope Frame Parsing', () {

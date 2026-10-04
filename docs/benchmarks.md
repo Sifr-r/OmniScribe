@@ -66,16 +66,30 @@ $$S_{\text{table}} = 0.3 \cdot S_{\text{shape}} + 0.7 \cdot S_{\text{cell}}$$
 
 ## 3. Command Usage
 
+### What is scored
+Every `(path, fixture)` run goes through the product pipeline
+(`plugins.ocr.pipeline_bridge.build_pipeline` -> `run_pipeline`), so the
+document processors, the quality-repair loop and the searchable-PDF writer
+all run as they do for a user upload. The scored artifact is the Markdown the
+export surface produces from the resulting rich `DocumentResult`:
+`plugins.documents.service.build_document_export(export_format="markdown")` ->
+`core.writers.markdown.render_markdown`. It is **not** `blocks_to_markdown`,
+which only sorts and joins bbox/text pairs, so scoring it measured the
+harness's own ordering rather than the product's output.
+
 ### Basic Evaluation
 Run standard bounding-box confidence evaluation:
 ```bash
 uv run python scripts/confidence_eval.py
 ```
 
-### End-to-End Markdown Evaluation (`--score-markdown`)
-Run full OmniDocBench-style scoring (CER, WER, BLEU, chrF, Heading F1, Table Similarity) across example fixtures:
+Markdown export scoring is **on by default** (it is the advertised output);
+pass `--no-markdown` to skip it.
+
+### End-to-End Markdown Evaluation (default)
+Full OmniDocBench-style scoring (CER, WER, BLEU, chrF, Heading F1, Table Similarity) across example fixtures:
 ```bash
-uv run python scripts/confidence_eval.py --score-markdown
+uv run python scripts/confidence_eval.py --score-markdown   # explicit; also the default
 ```
 
 ### Targeting Specific Pipeline Paths
@@ -89,6 +103,28 @@ Evaluate only the grounded VLM path (Qwen-VL / GLM-OCR direct bbox detection):
 uv run python scripts/confidence_eval.py --path grounded --score-markdown
 ```
 
+### Exit status and machine-readable output
+- An evaluation is **complete** only when every requested `(path, fixture)`
+  combination produced a scored export. Anything else exits **non-zero (1)**:
+  a crashed path, an unreachable endpoint, a pipeline that recorded no
+  `DocumentResult`, or a run that dropped pages (`last_failed_pages`). An
+  engine that warns and emits an empty page would otherwise be scored as a
+  legitimately terrible export instead of a failed evaluation.
+- `--allow-partial` is the only way to exit 0 on an incomplete run. It is
+  explicit on the CLI, and the gaps stay in the report; the run is still marked
+  `partial`, never `complete`.
+- `<out-dir>/report.json` (override with `--json-out`) holds the
+  machine-readable result: `status`, `exit_code`, `requested`, per-`record`
+  metrics (`confidence` + `markdown`, plus `export_path`, `export_source`,
+  `document_artifact_path`, `latency_seconds`, `ground_truth_markdown_source`),
+  the `failures` list (`path`, `fixture`, `stage`, `error_type`, `message`),
+  the `missing` requested combinations, and `provenance` (harness version,
+  models, endpoint, request settings, prompt versions/digests, hardware, corpus
+  digests, and where the raw outputs were written).
+- Raw per-run outputs are written next to the report: `export.md` (the scored
+  canonical Markdown), `document.json` (the rich `DocumentResult` the export
+  was built from) and `output.pdf` (the pipeline's searchable-PDF output).
+
 ### Options & Parameter Flags
 | Flag | Default | Description |
 | --- | --- | --- |
@@ -96,47 +132,97 @@ uv run python scripts/confidence_eval.py --path grounded --score-markdown
 | `--api-base` | `http://localhost:1234/v1` | OpenAI-compatible endpoint (LM Studio / Ollama / vLLM) |
 | `--grounded-model` | `qwen/qwen3-vl-8b` | Model for grounded layout detection |
 | `--hybrid-model` | `allenai/olmocr-2-7b` | Model for hybrid text refinement |
+| `--score-markdown` | `True` | Score the canonical Markdown export (CER, WER, BLEU, chrF, heading F1, table sim) |
+| `--no-markdown` | - | Skip the canonical-export Markdown metrics |
 | `--max-image-dim` | `1024` | Maximum page rasterization dimension in pixels |
+| `--dpi` | `200` | Page rasterization DPI |
+| `--concurrency` | `1` | Per-page OCR concurrency |
+| `--processors` | every registered processor | Comma-separated document processors to run |
+| `--fixtures` | all | Comma-separated subset of `examples/*.pdf` to evaluate |
 | `--iou-threshold` | `0.3` | IoU threshold for bounding box matching |
-| `--score-markdown` | `False` | Computes CER, WER, BLEU, chrF, Heading F1, and Table Sim |
+| `--out-dir` | `reports/confidence_eval/<utc ts>` | Raw per-run outputs and the default report location |
+| `--json-out` | `<out-dir>/report.json` | Report path |
+| `--allow-partial` | `False` | Exit 0 on an incomplete run; the gaps stay in the report |
 
 ---
 
 ## 4. Baseline Metrics Table
 
+> **Status: ILLUSTRATIVE - NOT MEASURED ON THE CURRENT PROTOCOL.**
+> The rows below predate the canonical-export harness. They were produced when
+> scoring ran against a bbox/text join rather than the exported Markdown, and no
+> run backing them is recorded in the repository. They are kept for shape only
+> and must not be quoted as accuracy results. Re-run
+> `uv run python scripts/confidence_eval.py` to obtain a measured row: the
+> emitted report carries its own `provenance` block and a per-record
+> `ground_truth_markdown_source` flag.
+
 Baseline evaluations across OmniScribe standard fixtures and public evaluation profiles:
 
-| Document | Pipeline Path | CER ↓ | WER ↓ | BLEU ↑ | chrF ↑ | Heading F1 ↑ | Table Sim ↑ | IoU Avg ↑ | Recall ↑ |
-| :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| **digital.pdf** (1 page, clean) | Grounded | 0.014 | 0.028 | 94.2 | 96.1 | 1.00 | 0.96 | 0.88 | 0.98 |
-| **digital.pdf** (1 page, clean) | Hybrid | 0.008 | 0.015 | 97.4 | 98.2 | 1.00 | 0.98 | 0.91 | 0.99 |
-| **hybrid.pdf** (mixed scan/print) | Grounded | 0.038 | 0.065 | 86.8 | 91.4 | 0.92 | 0.89 | 0.82 | 0.93 |
-| **hybrid.pdf** (mixed scan/print) | Hybrid | 0.026 | 0.048 | 90.5 | 93.8 | 0.94 | 0.94 | 0.85 | 0.95 |
-| **handwritten.pdf** (forms/ink) | Grounded | 0.082 | 0.142 | 71.3 | 78.4 | 0.80 | 0.76 | 0.74 | 0.86 |
-| **handwritten.pdf** (forms/ink) | Hybrid | 0.071 | 0.124 | 74.8 | 81.2 | 0.82 | 0.81 | 0.77 | 0.89 |
-| **dense.pdf** (two-column academic) | Hybrid | 0.021 | 0.039 | 92.1 | 95.0 | 0.96 | 0.91 | 0.86 | 0.96 |
-| **notes.pdf** (multimodal notebook) | Hybrid | 0.045 | 0.082 | 82.4 | 87.6 | 0.88 | 0.85 | 0.79 | 0.91 |
+| Document | Pipeline Path | Status | CER | WER | BLEU | chrF | Heading F1 | Table Sim | IoU Avg | Recall |
+| :--- | :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| **digital.pdf** (1 page, clean) | Grounded | illustrative | 0.014 | 0.028 | 94.2 | 96.1 | 1.00 | 0.96 | 0.88 | 0.98 |
+| **digital.pdf** (1 page, clean) | Hybrid | illustrative | 0.008 | 0.015 | 97.4 | 98.2 | 1.00 | 0.98 | 0.91 | 0.99 |
+| **hybrid.pdf** (mixed scan/print) | Grounded | illustrative | 0.038 | 0.065 | 86.8 | 91.4 | 0.92 | 0.89 | 0.82 | 0.93 |
+| **hybrid.pdf** (mixed scan/print) | Hybrid | illustrative | 0.026 | 0.048 | 90.5 | 93.8 | 0.94 | 0.94 | 0.85 | 0.95 |
+| **handwritten.pdf** (forms/ink) | Grounded | illustrative | 0.082 | 0.142 | 71.3 | 78.4 | 0.80 | 0.76 | 0.74 | 0.86 |
+| **handwritten.pdf** (forms/ink) | Hybrid | illustrative | 0.071 | 0.124 | 74.8 | 81.2 | 0.82 | 0.81 | 0.77 | 0.89 |
+| **dense.pdf** (two-column academic) | Hybrid | illustrative | 0.021 | 0.039 | 92.1 | 95.0 | 0.96 | 0.91 | 0.86 | 0.96 |
+| **notes.pdf** (multimodal notebook) | Hybrid | illustrative | 0.045 | 0.082 | 82.4 | 87.6 | 0.88 | 0.85 | 0.79 | 0.91 |
 
 ### Competitive Benchmark Positioning (Macro-Average)
 
-| System | CER ↓ | WER ↓ | Heading F1 ↑ | Table Sim ↑ | Local LAN / Privacy |
-| :--- | :---: | :---: | :---: | :---: | :---: |
-| **OmniScribe (Hybrid + R5 Fallback)** | **0.034** | **0.061** | **0.93** | **0.91** | **100% Local (zero telemetry)** |
-| Marker | 0.042 | 0.078 | 0.89 | 0.84 | Local (Torch/GPU required) |
-| Docling | 0.038 | 0.069 | 0.91 | 0.88 | Local (CPU/GPU) |
-| MinerU | 0.039 | 0.071 | 0.90 | 0.87 | Local (GPU intensive) |
-| Unstructured.io (OSS local) | 0.065 | 0.118 | 0.82 | 0.78 | Local / Cloud hybrid |
+| System | Status | CER | WER | Heading F1 | Table Sim | Local LAN / Privacy |
+| :--- | :--- | :---: | :---: | :---: | :---: | :--- |
+| **OmniScribe (Hybrid + R5 Fallback)** | illustrative | **0.034** | **0.061** | **0.93** | **0.91** | **100% Local (zero telemetry)** |
+| Marker | illustrative | 0.042 | 0.078 | 0.89 | 0.84 | Local (Torch/GPU required) |
+| Docling | illustrative | 0.038 | 0.069 | 0.91 | 0.88 | Local (CPU/GPU) |
+| MinerU | illustrative | 0.039 | 0.071 | 0.90 | 0.87 | Local (GPU intensive) |
+| Unstructured.io (OSS local) | illustrative | 0.065 | 0.118 | 0.82 | 0.78 | Local / Cloud hybrid |
+
+Every row above, OmniScribe's included, is illustrative: none of them was
+measured on this corpus with this harness. The harness emits the comparison
+rows under `provenance.competitor_comparison` with `"measured": false` and
+`"status": "illustrative"` on every row, and prints them under an
+`ILLUSTRATIVE - unmeasured` heading, so no consumer of the JSON can mistake
+them for a same-protocol measurement.
 
 ### Provenance
 
-- **OmniScribe rows**: baseline numbers from an internal run of `uv run python scripts/confidence_eval.py --score-markdown` over the bundled `examples/*.pdf` fixtures with the default hybrid/grounded model configuration. They are model- and hardware-dependent; re-run the command to reproduce against your own endpoint.
-- **Competitor rows (Marker, Docling, MinerU, Unstructured.io)**: illustrative positioning carried over from the RFC 004 gap analysis (`docs/rfcs/2026-09-competitive-gap-remediation.md`). They are **not** same-protocol measurements — each system must be re-measured with the §2 methodology on the same public datasets before these numbers are treated as published results. The OmniDocBench public-dataset run remains gated on the §5 license review.
-- **Nightly CI**: `--score-markdown` is deliberately **not** wired into the nightly workflow. `scripts/confidence_eval.py` drives the live OCR pipeline against a VLM endpoint (`--api-base`), and no live LLM is contacted in CI; the script also fail-softs per pipeline path, so a CI step would exit green with empty tables — the exact silent-no-op-gate failure mode called out by audit P3-12. Run it manually per the command above.
+- **What the harness records per run**: harness version and report schema, the
+  scored export surface, endpoint and per-path models, the request settings
+  (processors, DPI, concurrency, IoU threshold), prompt versions plus the
+  grounded prompt SHA-256, hardware (platform, CPU count, torch/CUDA), the
+  corpus (per-fixture SHA-256 and `corpus_id`), per-record latency, whether the
+  ground-truth Markdown was a hand-checked fixture or synthesized from the flat
+  layout blocks, and the directory the raw outputs were written to.
+- **OmniScribe rows**: unverified placeholders from before the canonical-export
+  harness. No reproducing run is stored in the repository, so treat them as
+  shape, not accuracy.
+- **Competitor rows (Marker, Docling, MinerU, Unstructured.io)**: illustrative
+  positioning carried over from the RFC 004 gap analysis
+  (`docs/rfcs/2026-09-competitive-gap-remediation.md`). They are not
+  same-protocol measurements: each system must be re-measured with the section 2
+  methodology on the same public datasets before these numbers are treated as
+  published results.
+- **Fixture caveat**: `dense.pdf` and `notes.pdf` ground truth was bootstrapped
+  from this pipeline's own output, so their absolute scores are not an
+  independent accuracy measurement even when measured. Every report repeats
+  this in `provenance.corpus.note`.
+- **Nightly CI**: the harness is deliberately not wired into the nightly
+  workflow. It drives the live OCR pipeline against a VLM endpoint
+  (`--api-base`), and no live LLM is contacted in CI. It now exits non-zero on
+  an incomplete run, so a CI step is only meaningful once a real endpoint is
+  available. Run it manually per the commands above.
 
 ---
 
 ## 5. Dataset Ingestion & License Review Status
 
 To prevent proprietary encumbrance or license contagion, external dataset ingestion follows the protocol in `scripts/fetch_datasets.py`:
+
+- **Status: unavailable.** The full-dataset downloaders are license-gated stubs,
+  not a working capability. No external corpus is fetched, and every harness
+  report states this under `provenance.datasets.status = "unavailable"`.
 - `tests/fixtures/datasets/ocr_quality_mini.json` and `kie_hvqa_mini.json` provide in-tree regression fixtures without network access.
 - Download of full external datasets (OmniDocBench / OCR-Quality / KIE-HVQA) is gated on licensing confirmation. Unlicensed fetches exit with code `77` (`EX_NOPERM`), which the nightly CI test harness interprets as an expected skip rather than a failure.

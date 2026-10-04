@@ -2,8 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
-import 'package:omniscribe_client/data/providers/repository_providers.dart';
-import 'package:omniscribe_client/presentation/providers/ai_setup_wizard_modal.dart';
+import 'package:omniscribe_client/shared/providers/repository_providers.dart';
+import 'package:omniscribe_client/features/providers/ai_setup_wizard_modal.dart';
 
 import '_test_helpers.dart';
 
@@ -17,7 +17,8 @@ void main() {
   setUpAll(registerOmniscribeFallbacks);
 
   group('AI Setup Wizard', () {
-    testWidgets('renders its mode-selection screen with the four engine options',
+    testWidgets(
+        'renders its mode-selection screen with the four engine options',
         (tester) async {
       final configRepo = MockConfigRepository();
       final providerRepo = MockProviderRepository();

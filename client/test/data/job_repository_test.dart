@@ -4,8 +4,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:omniscribe_client/core/constants/api_constants.dart';
 import 'package:omniscribe_client/core/network/api_client.dart';
-import 'package:omniscribe_client/data/repositories/job_repository.dart';
-import 'package:omniscribe_client/data/repositories/ocr_repository.dart';
+import 'package:omniscribe_client/features/jobs/job_repository.dart';
+import 'package:omniscribe_client/features/workstation/ocr_repository.dart';
 
 class _MockApiClient extends Mock implements ApiClient {}
 

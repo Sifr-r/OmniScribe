@@ -390,7 +390,9 @@ def test_render_synthetic_pdf_unicode_scripts() -> None:
     from omniscribe.core.readers.pdf_renderer import render_pdf_from_document_result
 
     blocks = [
-        DocumentBlock(bbox=(0.1, 0.1, 0.9, 0.2), text="مرحبا بك في العالم", kind="heading"),
+        DocumentBlock(
+            bbox=(0.1, 0.1, 0.9, 0.2), text="مرحبا بك في العالم", kind="heading"
+        ),
         DocumentBlock(bbox=(0.1, 0.25, 0.9, 0.35), text="你好世界", kind="paragraph"),
         DocumentBlock(bbox=(0.1, 0.4, 0.9, 0.5), text="שלום עולם", kind="paragraph"),
         DocumentBlock(bbox=(0.1, 0.55, 0.9, 0.65), text="Привет мир", kind="code"),
@@ -457,4 +459,3 @@ def test_markdown_reader_with_unicode_renders_to_pdf() -> None:
         assert "Русский раздел" in text
     finally:
         doc.close()
-

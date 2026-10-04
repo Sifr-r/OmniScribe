@@ -4,9 +4,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:omniscribe_client/core/enums/app_tab.dart';
 import 'package:omniscribe_client/core/enums/server_health.dart';
-import 'package:omniscribe_client/data/models/job_record.dart';
-import 'package:omniscribe_client/presentation/jobs/job_history_screen.dart';
-import 'package:omniscribe_client/presentation/shell/shell_state.dart';
+import 'package:omniscribe_client/features/jobs/job_record.dart';
+import 'package:omniscribe_client/features/jobs/job_history_screen.dart';
+import 'package:omniscribe_client/app/shell_state.dart';
 
 import '_test_helpers.dart';
 import 'stub_omniscribe_server.dart';

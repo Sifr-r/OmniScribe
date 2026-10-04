@@ -1,7 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:omniscribe_client/data/models/bbox_item.dart';
-import 'package:omniscribe_client/data/providers/document_selection_notifier.dart';
+import 'package:omniscribe_client/features/workstation/bbox_item.dart';
+import 'package:omniscribe_client/features/workstation/document_selection_notifier.dart';
 
 void main() {
   ProviderContainer makeContainer() => ProviderContainer();

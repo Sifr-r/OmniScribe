@@ -183,6 +183,8 @@ cython_debug/
 .ruff_cache/
 
 # Local tool caches and agent scratch state
+.agent-tmp/
+.assessment-tmp/
 .codex_tmp/
 .fallow/
 .jules/
@@ -298,4 +300,3 @@ redis-password.txt
 
 # Local Trivy scan output (not for commit)
 .trivy-out/
-

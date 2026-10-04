@@ -48,6 +48,15 @@ class ExtractionRequest(_TrimmedModel):
 class ExportHtmlRequest(_TrimmedModel):
     text_artifact_id: str = Field(min_length=32, max_length=32)
     text_artifact_token: str = Field(min_length=32, max_length=256)
+    # Optional rich document handle. When both halves are present the
+    # canonical export is built from the stored ``DocumentResult`` (geometry,
+    # block kinds, sections, trust scores) instead of reconstructing the tree
+    # from page text. Omitted for jobs/artifacts produced before this field
+    # existed, in which case the legacy path runs unchanged.
+    document_artifact_id: str | None = Field(default=None, min_length=32, max_length=32)
+    document_artifact_token: str | None = Field(
+        default=None, min_length=32, max_length=256
+    )
 
 
 class ExportBlockTreeRequest(ExportHtmlRequest):

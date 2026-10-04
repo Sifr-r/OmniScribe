@@ -26,13 +26,21 @@ console window appears with the server log.
    [latest GitHub release](https://github.com/Sifr-r/OmniScribe/releases/latest).
    Drop it anywhere — `Desktop\OmniScribe\` is the convention.
 
+   > **How these assets get published:** the automated
+   > [release workflow](../../.github/workflows/release.yml) currently builds
+   > and attaches the **Python wheel and sdist only**. The Windows server
+   > binary and the Flutter client are built and attached **manually** by a
+   > maintainer — see [Publishing release assets](#publishing-release-assets).
+   > If a release page has no `.exe` on it, that release shipped without the
+   > Windows assets; use a source install (`uv sync` / `pip install`) instead.
+
 2. **Start LM Studio** (or your preferred OpenAI-compatible VLM
    server). Load a vision model. Start its local server on
    `http://localhost:1234/v1`. The
    [main README §Before you start](../../README.md#before-you-start)
    has the model recommendations.
 
-3. **Run the binary.** Double-click `omniscribe-server-windows.exe`
+3. **Run the binary.** Double-click `omniscribe-server-windows-x.y.z.exe`
    (or run it from a terminal). A console window appears with the
    server log. You should see, within ~5 seconds:
 
@@ -211,6 +219,61 @@ standalone `scripts/smoke_existing.py`) is the gate: it must report
 `/api/jobs -> 200 []`, `/openapi.json -> 200` (45 KB) on a 307 MB
 `omniscribe-server.exe`.
 
+## Publishing release assets
+
+The automated release pipeline does **not** produce the Windows binaries. It
+runs on `ubuntu-latest` and attaches only `dist/*.whl` and `dist/*.tar.gz`.
+Publishing the server binary and the client is a manual maintainer step.
+
+### Server binary
+
+```powershell
+uv run pytest -m "not slow and not slow_dataset"  # must be green first
+uv run python scripts/build_windows.py --smoke    # builds dist/omniscribe-server.exe and smoke checks it
+```
+
+### Client
+
+```powershell
+Push-Location client
+flutter build windows --release
+Pop-Location
+```
+
+### Naming, packaging, checksums and attaching to the release
+
+Run from the repository root after both builds pass. Set the exact release tag
+being published; the unversioned build outputs are copied into the versioned
+release filenames below. The client archive includes its DLLs and data directory.
+
+```powershell
+$releaseTag = 'vX.Y.Z' # replace with the actual release tag
+$releaseVersion = $releaseTag.TrimStart('v')
+$serverAsset = "dist/omniscribe-server-windows-$releaseVersion.exe"
+$clientAsset = "dist/omniscribe-client-windows-$releaseVersion.zip"
+Copy-Item -LiteralPath dist/omniscribe-server.exe -Destination $serverAsset -Force
+Compress-Archive -Path client/build/windows/x64/runner/Release/* -DestinationPath $clientAsset -Force
+@($serverAsset, $clientAsset) | ForEach-Object {
+    $assetHash = Get-FileHash -LiteralPath $_ -Algorithm SHA256
+    "$($assetHash.Hash.ToLowerInvariant())  $([IO.Path]::GetFileName($_))"
+} | Set-Content -LiteralPath dist/SHA256SUMS.txt -Encoding ascii
+gh release upload $releaseTag $serverAsset $clientAsset dist/SHA256SUMS.txt --clobber
+```
+
+### Rules
+
+- Source changes do **not** update an existing binary. Every release needs a
+  freshly built artifact; a new tag is not enough.
+- A release may only be tagged once the bundle smoke check
+  (`scripts/build_windows.py --smoke`) and the Flutter Windows/web builds
+  above have passed **for the working tree being released**.
+- Publish the SHA-256 of each asset in `SHA256SUMS.txt`; the install path
+  above tells users to verify it.
+
+Until a Windows build job is added to the workflow, treat every one of these
+steps as the release gate. Do not describe a release as "distributable" on
+the strength of the wheel alone.
+
 ## FAQ
 
 **Why is the binary large?** Torch, Surya-OCR, native PDF libraries, and the
@@ -226,11 +289,17 @@ working directory.
 **Will the binary auto-update?** No. Watch the GitHub releases page and replace
 the executable manually after verifying the published checksum.
 
-**Where does state go?** `OMNISCRIBE_ARTIFACT_DIR` defaults to the operating
-system temporary directory. The SQLite state file is
-`<artifact-dir>\omniscribe-state.db`, and artifact blobs are sibling `.bin`
-files. Set `OMNISCRIBE_ARTIFACT_DIR` to a dedicated persistent directory for
-normal use.
+**Where does state go?** `OMNISCRIBE_ARTIFACT_DIR` defaults to a durable
+per-user data directory — `%LOCALAPPDATA%\OmniScribe` on Windows,
+`~/Library/Application Support/OmniScribe` on macOS, and
+`$XDG_DATA_HOME/omniscribe` (or `~/.local/share/omniscribe`) on Linux. The
+SQLite state file is `<artifact-dir>\omniscribe-state.db`, and artifact
+blobs are sibling `.bin` files. This used to default to the operating
+system temporary directory, which meant job history and result handles were
+deleted by ordinary temp cleanup while the UI still listed them; that is why
+you should now leave the default alone rather than pointing it at `%TEMP%`.
+Set `OMNISCRIBE_ARTIFACT_DIR` yourself to relocate or to deliberately use a
+disposable directory.
 
 ## See also
 

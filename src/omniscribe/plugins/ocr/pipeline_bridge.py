@@ -3,10 +3,11 @@
 Three public surfaces:
 
 - :func:`build_pipeline` — assembles the engine components for the request
-  (hybrid vs grounded, processors, page preprocessor, block callbacks).
+  (hybrid vs grounded, processors, page preprocessor, trust orchestrator,
+  block callbacks).
 - :func:`resolve_run_kwargs` — translates request fields into the keyword
   arguments for :meth:`OCRPipeline.run` (dense mode, spellcheck, repair
-  options, preprocessing options).
+  options, preprocessing options, quality routing).
 - :func:`run_pipeline` — executes one upload, adapting the core progress
   callback into percent/stage frames for the caller's ``on_progress``.
 """
@@ -18,8 +19,6 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 from urllib.parse import urlsplit
 
-from fastapi import HTTPException
-
 from omniscribe.config import RuntimeSettings
 from omniscribe.core.callbacks import BlockCallbackSet
 from omniscribe.core.document import SpellcheckMode
@@ -27,8 +26,15 @@ from omniscribe.core.imaging.page_preprocess import (
     PagePreprocessingOptions,
     PagePreprocessor,
 )
+from omniscribe.core.ocr_quality import (
+    TrustOrchestrator,
+    build_trust_orchestrator,
+)
+from omniscribe.core.ocr_quality.config import OCrQualitySettings
+from omniscribe.core.ocr_quality.routing import QualityRoutingOptions
 from omniscribe.core.workflows.repair import RepairOptions
 from omniscribe.pipeline import OCRPipeline
+from omniscribe.plugins.errors import PluginError
 from omniscribe.plugins.ocr.schemas import OCRRequest
 from omniscribe.utils.security import (
     _rewrite_url_with_resolved_ip,
@@ -42,6 +48,37 @@ _LOGGER = logging.getLogger("omniscribe.plugins.ocr.bridge")
 OnProgress = Callable[[int, str, str], Awaitable[None]]
 OnWarning = Callable[[str], Awaitable[None]]
 CancelCheck = Callable[[], bool]
+
+
+def build_trust_orchestrator_for_request(
+    request: OCRRequest,
+) -> TrustOrchestrator | None:
+    """Build the trust orchestrator this request asks for.
+
+    Returns ``None`` when the request carries no ``quality_options.trust``
+    block or when every sub-module it enables is off — the factory's own
+    short-circuit — so an upload without quality options keeps the
+    pre-existing no-op path. ``trust_model_id`` alone never enables the
+    layer; the orchestrator is what turns it on, and the bridge
+    injects one here.
+    """
+    quality_options = request.quality_options
+    if quality_options is None or quality_options.trust is None:
+        return None
+    settings = OCrQualitySettings.model_validate(quality_options.trust.model_dump())
+    return build_trust_orchestrator(settings)
+
+
+def build_quality_routing_options(
+    request: OCRRequest,
+) -> QualityRoutingOptions | None:
+    """Return the routing options when the request enables routing, else ``None``."""
+    quality_options = request.quality_options
+    if quality_options is None or quality_options.routing is None:
+        return None
+    if not quality_options.routing.enabled:
+        return None
+    return QualityRoutingOptions(enabled=True)
 
 
 def build_pipeline(
@@ -63,9 +100,10 @@ def build_pipeline(
     if clean_base:
         check = check_ssrf_target_sync(clean_base)
         if not check.allowed:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Invalid api_base URL (SSRF blocked: {check.reason})",
+            raise PluginError(
+                400,
+                "bad_request",
+                f"Invalid api_base URL (SSRF blocked: {check.reason})",
             )
         resolved_ip = check.resolved_ip
         if not is_same_origin(clean_base, settings.llm_api_base):
@@ -81,6 +119,10 @@ def build_pipeline(
 
     model = (request.model or settings.llm_model).strip()
     processors = build_document_processors(request.document_processors)
+    # Both construction branches take the same orchestrator: the trust
+    # layer is engine-agnostic (the grounded path passes page_image=None,
+    # so pixel sub-modules degrade to their non-pixel behaviour).
+    trust_orchestrator = build_trust_orchestrator_for_request(request)
 
     if request.pipeline_mode == "grounded":
         backend = PromptedGroundedOCR(
@@ -96,6 +138,7 @@ def build_pipeline(
             grounded_backend=backend,
             document_processors=processors,
             block_callbacks=block_callbacks,
+            trust_orchestrator=trust_orchestrator,
         )
 
     from omniscribe.core.aligner import get_shared_hybrid_aligner
@@ -110,6 +153,7 @@ def build_pipeline(
         document_processors=processors,
         page_preprocessor=_build_page_preprocessor(request),
         block_callbacks=block_callbacks,
+        trust_orchestrator=trust_orchestrator,
     )
 
 
@@ -159,6 +203,11 @@ def resolve_run_kwargs(
             normalize_contrast=request.normalize_contrast,
             crop_cleanup=request.crop_cleanup,
         )
+        # Only present when the request opted in — an absent key keeps the
+        # engine's pre-existing default (no routing policy applied).
+        routing_options = build_quality_routing_options(request)
+        if routing_options is not None:
+            kwargs["quality_routing_options"] = routing_options
     return kwargs
 
 

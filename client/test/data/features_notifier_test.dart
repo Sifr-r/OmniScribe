@@ -3,13 +3,17 @@ import 'dart:typed_data';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
-import 'package:omniscribe_client/data/models/feature_models.dart';
-import 'package:omniscribe_client/data/models/job_record.dart';
+import 'package:omniscribe_client/data/models/models.dart';
 import 'package:omniscribe_client/data/providers/features_notifier.dart';
-import 'package:omniscribe_client/data/providers/repository_providers.dart';
-import 'package:omniscribe_client/data/repositories/feature_repository.dart';
+import 'package:omniscribe_client/shared/providers/repository_providers.dart';
+import 'package:omniscribe_client/data/repositories/repositories.dart';
 
-class _MockFeatureRepository extends Mock implements FeatureRepository {}
+class _MockFeatureRepository extends Mock
+    implements
+        TranslationRepository,
+        TranscriptionRepository,
+        GlossaryRepository,
+        DocumentRepository {}
 
 class _FakeTranslationRequest extends Fake implements TranslationRequest {}
 
@@ -32,7 +36,10 @@ void main() {
   ProviderContainer makeContainer() {
     return ProviderContainer(
       overrides: [
-        featureRepositoryProvider.overrideWithValue(repo),
+        translationRepositoryProvider.overrideWithValue(repo),
+        transcriptionRepositoryProvider.overrideWithValue(repo),
+        glossaryRepositoryProvider.overrideWithValue(repo),
+        documentRepositoryProvider.overrideWithValue(repo),
       ],
     );
   }

@@ -4,17 +4,21 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:omniscribe_client/core/theme/app_theme.dart';
-import 'package:omniscribe_client/data/models/bbox_item.dart';
-import 'package:omniscribe_client/data/models/feature_models.dart';
-import 'package:omniscribe_client/data/providers/job_orchestration_notifier.dart';
-import 'package:omniscribe_client/data/providers/repository_providers.dart';
-import 'package:omniscribe_client/data/providers/workstation_notifier.dart';
-import 'package:omniscribe_client/data/repositories/feature_repository.dart';
-import 'package:omniscribe_client/presentation/common/app_button.dart';
-import 'package:omniscribe_client/presentation/common/app_select.dart';
-import 'package:omniscribe_client/presentation/workstation/modals/export_modal.dart';
+import 'package:omniscribe_client/data/models/models.dart';
+import 'package:omniscribe_client/features/jobs/job_orchestration_notifier.dart';
+import 'package:omniscribe_client/shared/providers/repository_providers.dart';
+import 'package:omniscribe_client/features/workstation/workstation_notifier.dart';
+import 'package:omniscribe_client/data/repositories/repositories.dart';
+import 'package:omniscribe_client/shared/widgets/app_button.dart';
+import 'package:omniscribe_client/shared/widgets/app_select.dart';
+import 'package:omniscribe_client/features/documents/export_modal.dart';
 
-class _MockFeatureRepository extends Mock implements FeatureRepository {}
+class _MockFeatureRepository extends Mock
+    implements
+        TranslationRepository,
+        TranscriptionRepository,
+        GlossaryRepository,
+        DocumentRepository {}
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -75,7 +79,10 @@ void main() {
 
     final container = ProviderContainer(
       overrides: [
-        featureRepositoryProvider.overrideWithValue(mockRepo),
+        translationRepositoryProvider.overrideWithValue(mockRepo),
+        transcriptionRepositoryProvider.overrideWithValue(mockRepo),
+        glossaryRepositoryProvider.overrideWithValue(mockRepo),
+        documentRepositoryProvider.overrideWithValue(mockRepo),
       ],
     );
     addTearDown(container.dispose);
@@ -113,6 +120,10 @@ void main() {
     await tester.pumpWidget(buildModal(container));
     await tester.pumpAndSettle();
 
+    // Recognized text and artifact handles do not make the source PDF ready.
+    expect(find.text('NO DATA'), findsOneWidget);
+    expect(find.text('READY'), findsNothing);
+
     final formats = <String>{
       'Word Document',
       'DOCX Tree Layout',
@@ -124,6 +135,8 @@ void main() {
 
     for (final label in formats) {
       await selectFormat(tester, label);
+      expect(find.text('READY'), findsOneWidget,
+          reason: '$label must use its own export readiness');
       final exportButton = find.widgetWithText(AppButton, 'Export Document');
       expect(exportButton, findsOneWidget,
           reason: 'export button missing after selecting $label');
@@ -144,5 +157,19 @@ void main() {
         reason: 'expected ready status banner after exporting $label',
       );
     }
+
+    container.read(workstationProvider.notifier).loadDocument(
+          Uint8List.fromList([4, 5, 6]),
+          'replacement.pdf',
+        );
+    await tester.pumpAndSettle();
+
+    expect(find.text('replacement.pdf'), findsOneWidget);
+    expect(find.text('NO DATA'), findsOneWidget);
+    expect(find.text('READY'), findsNothing);
+
+    await selectFormat(tester, 'DOCX Tree Layout');
+    expect(find.text('NO DATA'), findsOneWidget,
+        reason: 'replacement documents must not reuse old artifact handles');
   });
 }

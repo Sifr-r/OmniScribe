@@ -37,7 +37,11 @@ from omniscribe.core.translate.config import (
 )
 from omniscribe.core.translate.entity_memory import EntityMemory
 from omniscribe.core.translate.glossary import Glossary
-from omniscribe.core.translate.nllb import NLLBEngine
+from omniscribe.core.translate.nllb import (
+    NLLBEngine,
+    UnsupportedLanguageError,
+    resolve_nllb_code,
+)
 from omniscribe.core.translate.nodes import (
     EVALUATION_SYSTEM_MESSAGE,
     build_evaluation_prompt,
@@ -649,6 +653,13 @@ class TranslationServiceImpl:
     async def translate_nllb(self, text: str, target_language: str) -> dict[str, Any]:
         if not text.strip():
             raise TranslateError(422, "bad_request", "'text' is required")
+        # Resolve the target BEFORE touching the engine: an unsupported label
+        # must fail fast with an explicit 400 instead of loading model weights
+        # and then silently producing an English-to-English "translation".
+        try:
+            resolve_nllb_code(target_language)
+        except UnsupportedLanguageError as exc:
+            raise TranslateError(400, "bad_request", str(exc)) from exc
         engine = _get_nllb_engine()
         if not engine.is_available():
             raise TranslateError(

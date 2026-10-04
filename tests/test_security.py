@@ -49,7 +49,9 @@ def test_create_pinned_client_initialization() -> None:
 
     from omniscribe.utils.security import _PinnedIPTransport, create_pinned_client
 
-    client = create_pinned_client("https://api.openai.com/v1", "93.184.216.34", timeout=45.0)
+    client = create_pinned_client(
+        "https://api.openai.com/v1", "93.184.216.34", timeout=45.0
+    )
     assert isinstance(client, httpx.AsyncClient)
     assert client.timeout.read == 45.0
     assert isinstance(client._transport, _PinnedIPTransport)
@@ -61,14 +63,16 @@ def test_create_pinned_client_initialization() -> None:
     assert backend._resolved_ip == "93.184.216.34"
 
 
-async def test_pinned_network_backend_redirects_matching_host() -> None:
+async def test_pinned_network_backend_redirects_matching_host(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from unittest.mock import AsyncMock
 
     from omniscribe.utils.security import _PinnedNetworkBackend
 
     backend = _PinnedNetworkBackend("api.openai.com", "93.184.216.34")
     mock_connect = AsyncMock()
-    setattr(backend._backend, "connect_tcp", mock_connect)
+    monkeypatch.setattr(backend._backend, "connect_tcp", mock_connect)
 
     await backend.connect_tcp("api.openai.com", 443)
     mock_connect.assert_called_once_with(
@@ -114,10 +118,14 @@ async def test_call_llm_uses_provided_http_client() -> None:
     )
     assert res == "pinned response"
     mock_client.post.assert_awaited_once()
-    assert mock_client.post.call_args[0][0] == "https://api.openai.com/v1/chat/completions"
+    assert (
+        mock_client.post.call_args[0][0] == "https://api.openai.com/v1/chat/completions"
+    )
 
 
-async def test_run_extraction_uses_pinned_client_when_resolved(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_run_extraction_uses_pinned_client_when_resolved(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     import omniscribe.plugins.documents.service as doc_service
     from omniscribe.config import RuntimeSettings
     from omniscribe.plugins.documents.schemas import (
@@ -166,7 +174,9 @@ async def test_run_extraction_uses_pinned_client_when_resolved(monkeypatch: pyte
     assert created_clients[0][2] == "93.184.216.34"
 
 
-async def test_translate_text_uses_pinned_client_when_resolved(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_translate_text_uses_pinned_client_when_resolved(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     import omniscribe.plugins.translate.service as trans_service
     from omniscribe.config import RuntimeSettings
     from omniscribe.plugins.translate.schemas import TranslationRequest
@@ -210,4 +220,3 @@ async def test_translate_text_uses_pinned_client_when_resolved(monkeypatch: pyte
     assert len(created_clients) == 1
     assert created_clients[0][1] == "https://api.openai.com/v1"
     assert created_clients[0][2] == "93.184.216.34"
-

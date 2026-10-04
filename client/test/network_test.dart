@@ -228,7 +228,8 @@ void main() {
       );
     });
 
-    test('Translates 413 payload too large to PayloadTooLargeException', () async {
+    test('Translates 413 payload too large to PayloadTooLargeException',
+        () async {
       final dio = apiClient.rawDio;
       dio.interceptors.clear();
       dio.interceptors.add(
@@ -240,7 +241,10 @@ void main() {
                 response: Response(
                   requestOptions: options,
                   statusCode: 413,
-                  data: {'error': 'payload_too_large', 'detail': 'File exceeds limit'},
+                  data: {
+                    'error': 'payload_too_large',
+                    'detail': 'File exceeds limit'
+                  },
                 ),
               ),
             );
@@ -270,7 +274,10 @@ void main() {
                 response: Response(
                   requestOptions: options,
                   statusCode: 422,
-                  data: {'error': 'validation_error', 'detail': 'Invalid field'},
+                  data: {
+                    'error': 'validation_error',
+                    'detail': 'Invalid field'
+                  },
                 ),
               ),
             );
@@ -300,7 +307,10 @@ void main() {
                 response: Response(
                   requestOptions: options,
                   statusCode: 429,
-                  data: {'error': 'rate_limited', 'detail': 'Too many requests'},
+                  data: {
+                    'error': 'rate_limited',
+                    'detail': 'Too many requests'
+                  },
                 ),
               ),
             );
@@ -360,7 +370,10 @@ void main() {
                 response: Response(
                   requestOptions: options,
                   statusCode: 503,
-                  data: {'error': 'service_unavailable', 'detail': 'Starting up'},
+                  data: {
+                    'error': 'service_unavailable',
+                    'detail': 'Starting up'
+                  },
                 ),
               ),
             );
@@ -409,7 +422,8 @@ void main() {
       );
     });
 
-    test('Translates DioExceptionType.cancel to JobCancelledException', () async {
+    test('Translates DioExceptionType.cancel to JobCancelledException',
+        () async {
       final dio = apiClient.rawDio;
       dio.interceptors.clear();
       dio.interceptors.add(
@@ -434,7 +448,8 @@ void main() {
       );
     });
 
-    test('onUnauthorized callback fires on 401 (flag UI without suppressing exception)',
+    test(
+        'onUnauthorized callback fires on 401 (flag UI without suppressing exception)',
         () async {
       unauthInvocations = 0;
       final flagged = ApiClient(onUnauthorized: () {
@@ -509,7 +524,8 @@ void main() {
           reason: 'onUnauthorized must NOT fire on non-401');
     });
 
-    test('postMultipartBytes passes receiveTimeout to RequestOptions', () async {
+    test('postMultipartBytes passes receiveTimeout to RequestOptions',
+        () async {
       Duration? capturedTimeout;
       final dio = apiClient.rawDio;
       dio.interceptors.clear();
@@ -538,7 +554,9 @@ void main() {
       expect(capturedTimeout, const Duration(minutes: 30));
     });
 
-    test('Translates 503 JSON error body delivered as bytes for byte-response routes', () async {
+    test(
+        'Translates 503 JSON error body delivered as bytes for byte-response routes',
+        () async {
       final dio = apiClient.rawDio;
       dio.interceptors.clear();
       dio.interceptors.add(
@@ -582,7 +600,8 @@ void main() {
       );
     });
 
-    test('Translates 402 payment required to PaymentRequiredException', () async {
+    test('Translates 402 payment required to PaymentRequiredException',
+        () async {
       final dio = apiClient.rawDio;
       dio.interceptors.clear();
       dio.interceptors.add(
@@ -596,9 +615,8 @@ void main() {
                   statusCode: 402,
                   data: {
                     'error': 'payment_required',
-                    'detail':
-                        'LLM provider reported insufficient balance: '
-                            'insufficient balance (1008)',
+                    'detail': 'LLM provider reported insufficient balance: '
+                        'insufficient balance (1008)',
                   },
                 ),
               ),

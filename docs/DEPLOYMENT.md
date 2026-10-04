@@ -181,6 +181,8 @@ the shared broker, state store, and event coordinator.
 In this profile:
 - Redis acts as the centralized state backend (`OMNISCRIBE_STATE_BACKEND=redis`)
   and distributed job broker (`OMNISCRIBE_JOBS_MODE=redis`).
+  Both settings are required together; Redis state with in-process dispatch
+  is rejected because an in-process queue cannot safely own shared Redis jobs.
 - The API server handles document ingestion, uploads, client queries, and
   WebSocket / SSE subscriptions.
 - Standalone `omniscribe-worker` processes run concurrently to execute OCR and
@@ -313,6 +315,13 @@ A restart preserves the state. The SQLite database lives at
 `<artifact_dir>/omniscribe-state.db` (WAL mode); artifact binaries are
 stored alongside it under `<artifact_dir>/<id>.bin`. Backing up this
 directory captures all job records and artifacts.
+
+SQLite with in-process dispatch permits one API process per database, enforced
+by a native ownership lock. A second process refuses startup rather than
+altering its live peer's jobs. After the owner exits, startup marks abandoned
+queued jobs cancelled and running jobs failed; it cannot resume in-memory
+payloads. Use both Redis state and Redis job dispatch, with standalone workers
+against the same `REDIS_URL`, when multiple API processes are needed.
 
 To opt back into the previous in-memory behaviour (every restart loses
 history):

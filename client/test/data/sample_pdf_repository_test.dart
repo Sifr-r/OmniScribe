@@ -4,7 +4,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:omniscribe_client/core/network/api_client.dart';
-import 'package:omniscribe_client/data/repositories/sample_pdf_repository.dart';
+import 'package:omniscribe_client/features/workstation/sample_pdf_repository.dart';
 
 class _MockApiClient extends Mock implements ApiClient {}
 

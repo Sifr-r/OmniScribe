@@ -97,6 +97,7 @@ import anyio.abc
 import anyio.streams
 import anyio.from_thread
 
+
 def main() -> int:
     print(f"anyio {anyio.__name__}.{anyio.abc.__name__} loaded ok")
     return 0

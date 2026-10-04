@@ -4,7 +4,7 @@ import 'dart:ui' show Offset, Size;
 import 'package:flutter/material.dart' show Matrix4;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:omniscribe_client/data/providers/document_viewport_notifier.dart';
+import 'package:omniscribe_client/features/workstation/document_viewport_notifier.dart';
 
 void main() {
   ProviderContainer makeContainer() => ProviderContainer();
@@ -115,7 +115,8 @@ void main() {
       final state = container.read(documentViewportProvider);
       const padding = DocumentViewportNotifier.fitPadding;
       const availWidth = 900 - padding * 2;
-      final expectedScale = math.min(availWidth / 680, (700 - padding * 2) / 880);
+      final expectedScale =
+          math.min(availWidth / 680, (700 - padding * 2) / 880);
       expect(state.scale, closeTo(expectedScale, 0.0001));
       expect(
         state.translation.dx,
@@ -132,9 +133,7 @@ void main() {
       addTearDown(container.dispose);
 
       // Tiny canvas inside a huge viewport: raw fit scale far above the cap.
-      container
-          .read(documentViewportProvider.notifier)
-          .fitToScreen(
+      container.read(documentViewportProvider.notifier).fitToScreen(
             viewportSize: const Size(2000, 2000),
             canvasSize: const Size(100, 100),
           );
@@ -154,7 +153,8 @@ void main() {
 
       final state = container.read(documentViewportProvider);
       expect(state.scale, 1.0);
-      expect(state.translation, const Offset((800 - 680) / 2.0, (600 - 880) / 2.0));
+      expect(state.translation,
+          const Offset((800 - 680) / 2.0, (600 - 880) / 2.0));
     });
 
     test('invalid sizes fall back to identity', () {
@@ -162,14 +162,17 @@ void main() {
       addTearDown(container.dispose);
       final notifier = container.read(documentViewportProvider.notifier);
 
-      notifier.fitToScreen(viewportSize: Size.zero, canvasSize: const Size(10, 10));
-      expect(container.read(documentViewportProvider), const DocumentViewportState());
+      notifier.fitToScreen(
+          viewportSize: Size.zero, canvasSize: const Size(10, 10));
+      expect(container.read(documentViewportProvider),
+          const DocumentViewportState());
 
       notifier.resetToActualSize(
         viewportSize: const Size(10, 10),
         canvasSize: Size.zero,
       );
-      expect(container.read(documentViewportProvider), const DocumentViewportState());
+      expect(container.read(documentViewportProvider),
+          const DocumentViewportState());
     });
   });
 }

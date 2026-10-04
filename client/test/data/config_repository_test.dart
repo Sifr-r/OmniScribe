@@ -1,7 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:omniscribe_client/core/network/api_client.dart';
-import 'package:omniscribe_client/data/repositories/config_repository.dart';
+import 'package:omniscribe_client/features/settings/config_repository.dart';
 
 class _MockApiClient extends Mock implements ApiClient {}
 
@@ -20,8 +20,8 @@ void main() {
       when(() => apiClient.get<Map<String, dynamic>>(
             '/api/providers/lmstudio/models',
           )).thenAnswer((_) async => <String, dynamic>{
-        'models': <String>['a', 'b', 'c'],
-      });
+            'models': <String>['a', 'b', 'c'],
+          });
 
       final models = await repo.getModelsForProvider('lmstudio');
 
@@ -48,8 +48,8 @@ void main() {
       when(() => apiClient.get<Map<String, dynamic>>(
             '/api/providers/lmstudio/models',
           )).thenAnswer((_) async => <String, dynamic>{
-        'models': <String>['m1'],
-      });
+            'models': <String>['m1'],
+          });
 
       final models = await repo.getModels(namespace: 'general');
 
@@ -66,8 +66,7 @@ void main() {
       verifyNever(() => apiClient.get<Map<String, dynamic>>(any()));
     });
 
-    test('transcription namespace returns an empty list (deferred)',
-        () async {
+    test('transcription namespace returns an empty list (deferred)', () async {
       final models = await repo.getModels(namespace: 'transcription');
 
       expect(models, isEmpty);

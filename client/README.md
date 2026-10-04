@@ -115,12 +115,73 @@ descriptive SnackBar notification.
 
 ## Where the code lives
 
-- `client/lib/main.dart` — app entry, theme, navigation.
-- `client/lib/presentation/` — screens and widgets.
-- `client/lib/data/` — repositories, providers, and the WebSocket
-  progress channel.
+- `client/lib/main.dart` and `client/lib/app/` — bootstrap, theme selection,
+  navigation, health and shell composition.
+- `client/lib/features/` — feature-owned models, state, API adapters and UI
+  for workstation, settings, providers, jobs, translation, transcription,
+  glossary and documents.
+- `client/lib/shared/` — reusable widgets and transport/auth provider wiring.
+- `client/lib/core/` — HTTP/WebSocket transport, strict wire-field decoding,
+  constants, enums and theme.
+- `client/lib/data/` — import-only compatibility exports used by existing
+  cross-feature tests; production callers import each feature directly.
 - `client/test/` — widget tests, state-notifier tests, and repository
   tests. Run with `flutter test`.
+- `client/tool/` — standalone feature contract and source-layout checks.
+
+## Real-server integration verification
+
+The desktop integration test starts its own `uv run omniscribe-server` on a
+free loopback port. From `client/`, run the no-VLM default:
+
+```bash
+flutter test integration_test/app_real_server_test.dart -d windows
+```
+
+This checks sample staging and real preview rendering. It skips if local
+Python/server tooling is unavailable. The child uses memory state and
+in-process jobs, with owned artifact/spool/temp files beneath `.agent-tmp/`
+in the repository. Windows teardown terminates the test-owned process tree
+before removing runtime files; failed or timed-out termination retains those
+files and fails the test. If the launcher has already exited (including failed
+startup), teardown refuses to target its potentially reused PID, retains files,
+and reports the cleanup failure even in the default no-VLM test. Other desktop
+platforms use direct child termination;
+the documented Windows target provides process-tree cleanup. For
+model-backed OCR, load a vision
+model on your OpenAI-compatible endpoint, install the backend dependencies
+(`uv sync --extra web --extra preprocessing` from the repository root), and
+configure the existing server environment or root `.env`:
+
+```dotenv
+LLM_API_BASE=http://127.0.0.1:1234/v1
+LLM_MODEL=allenai/olmocr-2-7b
+LLM_API_KEY=lm-studio
+```
+
+The existing `OMNISCRIBE_LLM_API_BASE`, `OMNISCRIBE_LLM_MODEL`, and
+`OMNISCRIBE_LLM_API_KEY` aliases also work. `LLM_MODEL` must match a loaded
+vision model. The test fetches `/api/config` and sends that endpoint/model
+through the normal workstation orchestration; the backend uses its configured
+VLM key, including masked keys. If backend authentication is enabled, export
+`OMNISCRIBE_AUTH_TOKEN` into the shell running Flutter so the spawned server
+and the client session receive the same token (a root `.env` token alone is
+insufficient for the client).
+
+```bash
+flutter test integration_test/app_real_server_test.dart -d windows --dart-define=OMNISCRIBE_LIVE_OCR=true
+```
+
+The opt-in run fails on missing tooling, server startup, invalid configuration,
+unreachable model, failed OCR, or missing recognized content/output. It stages
+the fixture's first-page raster preview as PNG, preventing an embedded PDF text
+layer from satisfying the check, and requires recognized `computer science`
+text, terminal `Complete` state, and a returned PDF that the real server can
+render. The OCR request has a
+five-minute limit and the whole test a ten-minute limit; startup is bounded to
+120 seconds. This is one real hybrid OCR pass with quality repair disabled,
+not an accuracy benchmark or Redis/async-worker check. It requires a desktop
+target because it starts a local process; the default still makes no VLM call.
 
 ## See also
 
@@ -131,4 +192,4 @@ descriptive SnackBar notification.
 - [`../docs/AGENTS.md`](../docs/AGENTS.md) — contributor guide and full
   env-var reference.
 
-_Last updated: 2026-09-27_
+_Last updated: 2026-09-30_

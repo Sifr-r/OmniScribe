@@ -5,18 +5,12 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:mocktail/mocktail.dart';
-import 'package:omniscribe_client/data/models/feature_models.dart';
-import 'package:omniscribe_client/data/models/process_settings.dart';
-import 'package:omniscribe_client/data/providers/repository_providers.dart';
-import 'package:omniscribe_client/data/repositories/config_repository.dart';
+import 'package:omniscribe_client/data/models/models.dart';
+import 'package:omniscribe_client/shared/providers/repository_providers.dart';
 // ConfigUpdate is a transitive type used by ConfigRepository.updateConfig
 // when mocktail matchers are applied with `any()`; without registering a
 // fallback the matcher library raises a `Bad state: registerFallbackValue`.
-import 'package:omniscribe_client/data/repositories/feature_repository.dart';
-import 'package:omniscribe_client/data/repositories/job_repository.dart';
-import 'package:omniscribe_client/data/repositories/ocr_repository.dart';
-import 'package:omniscribe_client/data/repositories/provider_repository.dart';
-import 'package:omniscribe_client/data/repositories/sample_pdf_repository.dart';
+import 'package:omniscribe_client/data/repositories/repositories.dart';
 import 'package:omniscribe_client/main.dart';
 import 'package:riverpod/misc.dart' show Override;
 
@@ -57,7 +51,7 @@ Future<ProviderContainer> bootAppForIntegration(
   List<Override> extraOverrides = const [],
   ConfigRepository? configRepo,
   ProviderRepository? providerRepo,
-  FeatureRepository? featureRepo,
+  MockFeatureRepository? featureRepo,
   JobRepository? jobRepo,
   OcrRepository? ocrRepo,
   SamplePdfRepository? samplePdfRepo,
@@ -75,8 +69,12 @@ Future<ProviderContainer> bootAppForIntegration(
       configRepositoryProvider.overrideWithValue(configRepo),
     if (providerRepo != null)
       providerRepositoryProvider.overrideWithValue(providerRepo),
-    if (featureRepo != null)
-      featureRepositoryProvider.overrideWithValue(featureRepo),
+    if (featureRepo != null) ...[
+      translationRepositoryProvider.overrideWithValue(featureRepo),
+      transcriptionRepositoryProvider.overrideWithValue(featureRepo),
+      glossaryRepositoryProvider.overrideWithValue(featureRepo),
+      documentRepositoryProvider.overrideWithValue(featureRepo),
+    ],
     if (jobRepo != null) jobRepositoryProvider.overrideWithValue(jobRepo),
     if (ocrRepo != null) ocrRepositoryProvider.overrideWithValue(ocrRepo),
     if (samplePdfRepo != null)
@@ -103,7 +101,7 @@ Future<ProviderContainer> bootAppWithMockedProviders(
   WidgetTester tester, {
   required ConfigRepository configRepo,
   ProviderRepository? providerRepo,
-  FeatureRepository? featureRepo,
+  MockFeatureRepository? featureRepo,
   JobRepository? jobRepo,
   OcrRepository? ocrRepo,
   SamplePdfRepository? samplePdfRepo,
@@ -120,8 +118,12 @@ Future<ProviderContainer> bootAppWithMockedProviders(
     configRepositoryProvider.overrideWithValue(configRepo),
     if (providerRepo != null)
       providerRepositoryProvider.overrideWithValue(providerRepo),
-    if (featureRepo != null)
-      featureRepositoryProvider.overrideWithValue(featureRepo),
+    if (featureRepo != null) ...[
+      translationRepositoryProvider.overrideWithValue(featureRepo),
+      transcriptionRepositoryProvider.overrideWithValue(featureRepo),
+      glossaryRepositoryProvider.overrideWithValue(featureRepo),
+      documentRepositoryProvider.overrideWithValue(featureRepo),
+    ],
     if (jobRepo != null) jobRepositoryProvider.overrideWithValue(jobRepo),
     if (ocrRepo != null) ocrRepositoryProvider.overrideWithValue(ocrRepo),
     if (samplePdfRepo != null)
@@ -157,7 +159,12 @@ class MockConfigRepository extends Mock implements ConfigRepository {}
 
 class MockProviderRepository extends Mock implements ProviderRepository {}
 
-class MockFeatureRepository extends Mock implements FeatureRepository {}
+class MockFeatureRepository extends Mock
+    implements
+        TranslationRepository,
+        TranscriptionRepository,
+        GlossaryRepository,
+        DocumentRepository {}
 
 class MockJobRepository extends Mock implements JobRepository {}
 
@@ -199,8 +206,7 @@ class _FakeExportBlockTreeRequest extends Fake
 
 class _FakeTranslationRequest extends Fake implements TranslationRequest {}
 
-class _FakeTranscriptionRequest extends Fake
-    implements TranscriptionRequest {}
+class _FakeTranscriptionRequest extends Fake implements TranscriptionRequest {}
 
 class _FakeExtractionRequest extends Fake implements ExtractionRequest {}
 

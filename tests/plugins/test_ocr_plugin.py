@@ -11,13 +11,16 @@ from typing import Any
 
 import httpx
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 
 from omniscribe.core.workflows.base import OCRCancelled
 from omniscribe.harness.context import Context
 from omniscribe.plugins import artifacts as art
 from omniscribe.plugins import jobs, progress, runtime
 from omniscribe.plugins import state_backend as sb
+from omniscribe.plugins._http import plugin_error_exception_handler
+from omniscribe.plugins.errors import PluginError
 from omniscribe.plugins.ocr.plugin import OCRPlugin
 from omniscribe.plugins.runtime import RuntimeService
 
@@ -74,6 +77,12 @@ async def _boot(**ocr_config: Any) -> tuple[Context, FastAPI]:
     await ctx.plugin(progress.ProgressPlugin(), config={})
     await ctx.plugin(OCRPlugin(), config=ocr_config)
     app = FastAPI()
+
+    async def handle_plugin_error(request: Request, exc: Exception) -> JSONResponse:
+        assert isinstance(exc, PluginError)
+        return await plugin_error_exception_handler(request, exc)
+
+    app.add_exception_handler(PluginError, handle_plugin_error)
     for router in ctx.routes():
         app.include_router(router)
     return ctx, app

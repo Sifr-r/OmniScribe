@@ -3,11 +3,11 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:omniscribe_client/core/enums/app_tab.dart';
 import 'package:omniscribe_client/core/enums/server_health.dart';
-import 'package:omniscribe_client/presentation/features/extraction_screen.dart';
-import 'package:omniscribe_client/presentation/features/glossary_screen.dart';
-import 'package:omniscribe_client/presentation/features/transcription_screen.dart';
-import 'package:omniscribe_client/presentation/features/translation_screen.dart';
-import 'package:omniscribe_client/presentation/shell/shell_state.dart';
+import 'package:omniscribe_client/features/documents/extraction_screen.dart';
+import 'package:omniscribe_client/features/glossary/glossary_screen.dart';
+import 'package:omniscribe_client/features/transcription/transcription_screen.dart';
+import 'package:omniscribe_client/features/translation/translation_screen.dart';
+import 'package:omniscribe_client/app/shell_state.dart';
 
 import '_test_helpers.dart';
 import 'stub_omniscribe_server.dart';
@@ -46,8 +46,7 @@ void main() {
       expect(find.text('Voice & Audio Transcription'), findsOneWidget);
     }, tags: const [kPlatformWindows, kPlatformWeb]);
 
-    testWidgets('Extraction screen renders the schema header',
-        (tester) async {
+    testWidgets('Extraction screen renders the schema header', (tester) async {
       final ctx = await _boot(tester);
       addTearDown(ctx.stub.stop);
 

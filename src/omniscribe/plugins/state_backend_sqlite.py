@@ -135,6 +135,11 @@ class SQLiteStateBackend:
         self._lock = asyncio.Lock()
         self._conn: sqlite3.Connection | None = None
 
+    @property
+    def db_path(self) -> Path:
+        """Canonical database identity used for exclusive in-process dispatch."""
+        return self._db_path.resolve()
+
     async def open(self) -> None:
         """Open the SQLite connection, create the schema, and migrate in place.
 

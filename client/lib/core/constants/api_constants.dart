@@ -53,7 +53,8 @@ abstract final class ApiConstants {
   static const String translateAsync = '/api/translate/async';
   static String translationStatus(String jobId) =>
       '/api/translate/status/$jobId';
-  static String translationResult(String jobId) => '/api/translate/result/$jobId';
+  static String translationResult(String jobId) =>
+      '/api/translate/result/$jobId';
   static const String translateNllb = '/api/translate/nllb';
 
   // Feature Endpoints - Transcription
@@ -66,6 +67,7 @@ abstract final class ApiConstants {
   static const String exportHtml = '/api/export/html';
   static const String exportDocxTree = '/api/export/docx-tree';
   static const String exportBlockTree = '/api/export/blocktree';
+  static const String exportMarkdown = '/api/export/markdown';
 
   // Feature Endpoints - Glossary
   static const String glossaryLibrary = '/api/glossary/library';
@@ -90,13 +92,15 @@ abstract final class ApiConstants {
   // ``name`` must be a member of the server-side allowlist
   // (``ALLOWED_SAMPLE_PDFS`` in
   // ``omniscribe.plugins.sample_pdfs``); unknown names return 404.
-  // See ``client/lib/data/repositories/sample_pdf_repository.dart``
+  // See ``client/lib/features/workstation/sample_pdf_repository.dart``
   // for the Flutter-side fetcher.
   static String samplePdf(String name) => '/api/sample-pdf/$name';
 
   // Response Header Keys (Exposed by FastAPI CORS middleware)
   static const String headerTextArtifactId = 'x-text-artifact-id';
   static const String headerTextArtifactToken = 'x-text-artifact-token';
+  static const String headerDocumentArtifactId = 'x-document-artifact-id';
+  static const String headerDocumentArtifactToken = 'x-document-artifact-token';
   static const String headerDocumentTrust = 'x-document-trust';
   static const String headerDocumentQuality = 'x-document-quality';
   static const String headerDocumentStructure = 'x-document-structure';

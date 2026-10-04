@@ -107,6 +107,33 @@ def test_nllb_request_defaults() -> None:
     assert body.target_language == "English"
 
 
+def test_nllb_request_accepts_client_offered_targets() -> None:
+    """The two labels that used to resolve to English now validate."""
+    assert NllbRequest(text="hi", target_language="Korean").target_language == "Korean"
+    assert (
+        NllbRequest(text="hi", target_language="Chinese (Simplified)").target_language
+        == "Chinese (Simplified)"
+    )
+    # Raw NLLB codes stay acceptable.
+    assert (
+        NllbRequest(text="hi", target_language="kor_Hang").target_language == "kor_Hang"
+    )
+
+
+def test_nllb_request_rejects_unknown_target() -> None:
+    """Unknown targets produce an explicit validation error, not a fallback."""
+    with pytest.raises(ValidationError) as excinfo:
+        NllbRequest(text="hi", target_language="Klingon")
+    assert "Klingon" in str(excinfo.value)
+
+
+def test_llm_translation_request_is_not_language_constrained() -> None:
+    """Only the NLLB route is constrained; the LLM path takes any name."""
+    assert TranslationRequest(text="hi", target_language="Klingon").target_language == (
+        "Klingon"
+    )
+
+
 def test_async_request_rejects_extra_fields() -> None:
     # extra="forbid" is inherited from _TrimmedModel.
     with pytest.raises(ValidationError):

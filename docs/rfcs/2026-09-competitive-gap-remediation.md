@@ -3,7 +3,7 @@
 | Field | Value |
 | --- | --- |
 | **Author** | OmniScribe gap analysis session (2026-09-07), benchmarked vs Unstructured.io / Docling / MinerU / Marker |
-| **Status** | **Implemented** (2026-09-07) — closeout pending (see §10) |
+| **Status** | **Implemented** (2026-09-07); closeout validity reviewed 2026-09-30 (see §10) |
 | **Target** | v0.3.1+ strategic roadmap |
 | **Refs** | RFC 003 (Redis state backend), historical Five-Lens Audit (preserved in Git history; distinct from this doc) |
 
@@ -116,27 +116,22 @@ Doc-only RFC. Each workstream is additive and opt-in (new routes/readers join th
 - RFC 003 — Redis state backend (R3 builds on its key layout and `consume_channel` Lua pattern)
 - Historical Five-Lens Audit (preserved in Git history) — audit remediation, distinct from this competitive track
 
-## 10. Closeout status (2026-09-07 audit)
+## 10. Closeout validity (reviewed 2026-09-30)
 
-All five workstreams are implemented and the new-surface test suites
-pass (49/49: chunking, readers, markdown writer, Redis jobs, digital
-ingest, export routes). Remaining closeout items:
+All five implementation workstreams ship. The original 2026-09-07 record
+reported 49 focused tests passing; that count is historical evidence.
+This documentation review checked action validity in source/docs and ran no
+new runtime tests.
 
-1. **Real-Redis multi-worker smoke** (DoD 4 second half): extend
-   `scripts/dev_redis_smoke.py` with `jobs_mode=redis` plus 2 workers ×
-   10 concurrent jobs; blocked on the RFC 003 §12 deployment-shape
-   decisions (see `docs/outstanding-work.md` §2).
-2. **R4 publication half**: add a `--score-markdown` step to
-   `.github/workflows/nightly.yml`; add a README benchmarks section;
-   annotate `docs/benchmarks.md`'s competitive-positioning table with
-   provenance (baselines are in-repo fixtures; competitor numbers are
-   illustrative, not measured runs).
-3. **OmniDocBench public-dataset run** (DoD 5 as written): gated on the
-   upstream license review (`scripts/fetch_datasets.py` exit-77
-   protocol).
-4. ~~**Table-fallback tests**~~ ✅ closed 2026-09-07:
-   `tests/core/processors/test_table_fallback.py` (7 tests) covers the
-   confidence-gated fallback behavior.
-5. **Full fast gate** (`ruff`, `mypy`, `pytest -m "not slow"`) to
-   confirm DoD 7; ruff and mypy are clean as of the 2026-09-07
-   remediation pass — only the full test-suite run remains.
+| Original closeout action | Current disposition |
+| --- | --- |
+| Real Redis, 2 workers × 10 concurrent jobs, recovery | Open. `scripts/dev_redis_smoke.py` is only a health/keyspace probe; extend it to assert dispatch, terminal results and recovery, then measure the chosen deployment. |
+| README benchmark command and table provenance | Closed in docs: the README has the benchmark command and [benchmarks.md](../benchmarks.md#provenance) separates internal baselines from illustrative competitor numbers. |
+| Add `--score-markdown` to nightly | Superseded by the documented manual-run decision. CI has no live VLM endpoint, and the evaluator can fail soft with empty tables; a green step would not prove OCR quality. |
+| Public OmniDocBench evaluation/publication | Open after license approval and downloader/conversion implementation. `scripts/fetch_datasets.py` has gated OCR-Quality/KIE-HVQA stubs and no OmniDocBench downloader. |
+| Table fallback regression tests | Implemented in `tests/core/processors/test_table_fallback.py`; the original review recorded seven tests. |
+| One-time full fast gate from the 2026-09-07 plan | Superseded by later dated verification, including the [2026-09-29 review](../modularity-review-2026-09-29.md#verification). Every new code change still requires the relevant gate; historical counts do not prove today's tree. |
+
+The [canonical open backlog](../outstanding-work.md) owns remaining operational,
+release and benchmark actions. Sections 1–9 retain the original plan and
+acceptance criteria rather than an additional current roadmap.

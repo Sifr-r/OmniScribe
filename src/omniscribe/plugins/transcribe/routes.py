@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, Request
+from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
@@ -18,11 +19,9 @@ from omniscribe.plugins.transcribe.schemas import (
     TranscribeRequest,
     TranscriptionConfigResponse,
     TranscriptionConfigUpdate,
+    TranscriptionJobResponse,
 )
-from omniscribe.plugins.transcribe.service import (
-    TranscribeError,
-    TranscriptionService,
-)
+from omniscribe.plugins.transcribe.service import TranscriptionService
 
 
 def build_transcribe_router(service: TranscriptionService) -> APIRouter:
@@ -41,7 +40,7 @@ def build_transcribe_router(service: TranscriptionService) -> APIRouter:
     router = APIRouter(tags=["transcribe"])
 
     @router.post("/api/transcribe", response_model=None)
-    async def transcribe_audio(request: Request) -> Any:
+    async def transcribe_audio(request: Request) -> JSONResponse:
         """Transcribe an uploaded audio file (multipart/form-data).
 
         Reads the ``file`` part and any string-typed form fields, then
@@ -65,20 +64,27 @@ def build_transcribe_router(service: TranscriptionService) -> APIRouter:
         except ValidationError as exc:
             return JSONResponse(
                 status_code=422,
-                content={"detail": exc.errors(include_url=False)},
+                content={"detail": jsonable_encoder(exc.errors(include_url=False))},
             )
         filename = str(getattr(upload, "filename", "") or "") or "audio.wav"
         content_type = getattr(upload, "content_type", "") or None
+        result = await service.transcribe(
+            options,
+            file_bytes=file_bytes,
+            filename=filename,
+            content_type=content_type,
+        )
         try:
-            result = await service.transcribe(
-                options,
-                file_bytes=file_bytes,
-                filename=filename,
-                content_type=content_type,
+            payload = TranscriptionJobResponse.model_validate(result)
+            return JSONResponse(
+                content=jsonable_encoder(payload.model_dump(exclude_unset=True))
             )
-        except TranscribeError:
-            raise
-        return result
+        except (ValidationError, ValueError, TypeError):
+            return envelope(
+                500,
+                "internal_server_error",
+                "Transcription service returned an invalid response.",
+            )
 
     @router.get("/api/config/transcription", response_model=None)
     async def get_transcription_config() -> TranscriptionConfigResponse:
@@ -94,7 +100,7 @@ def build_transcribe_router(service: TranscriptionService) -> APIRouter:
     @router.post("/api/config/transcription", response_model=None)
     async def update_transcription_config(
         body: TranscriptionConfigUpdate,
-    ) -> TranscriptionConfigResponse | JSONResponse:
+    ) -> TranscriptionConfigResponse:
         """Persist an updated transcription configuration.
 
         Validation failures (``TranscribeError``) propagate so the
@@ -102,10 +108,7 @@ def build_transcribe_router(service: TranscriptionService) -> APIRouter:
         envelope; successful updates echo the new config back to the
         caller.
         """
-        try:
-            return service.update_config(body)
-        except TranscribeError:
-            raise
+        return service.update_config(body)
 
     @router.get("/api/models/transcription", response_model=None)
     async def get_transcription_models() -> dict[str, Any]:

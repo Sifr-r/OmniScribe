@@ -21,21 +21,27 @@ import sqlite3
 import tempfile
 from collections import deque
 from collections.abc import Awaitable, Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 
-from fastapi import HTTPException
 from fastapi.responses import Response
 
 from omniscribe.config import RuntimeSettings
 from omniscribe.core.callbacks import BlockCallbackSet
+from omniscribe.core.document import DocumentResult
 from omniscribe.core.ocr_quality.summary import document_trust_summary
 from omniscribe.core.readers import get_reader_for_suffix, render_synthetic_pdf
 from omniscribe.core.workflows.base import OCRCancelled
 from omniscribe.harness.events import Event
-from omniscribe.plugins.artifacts import ArtifactStore
+from omniscribe.plugins.artifacts import ArtifactHandle, ArtifactStore
+from omniscribe.plugins.documents.artifact import (
+    DOCUMENT_ARTIFACT_CONTENT_TYPE,
+    DocumentArtifactError,
+    encode_document_artifact,
+)
+from omniscribe.plugins.errors import PluginError
 from omniscribe.plugins.jobs import (
     JobCancelled,
     JobCompleted,
@@ -122,6 +128,44 @@ class _OcrPayload:
     filename: str
     request: OCRRequest
     job_id: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class _ExecutionResult:
+    """Everything one OCR execution produced, rich representation included.
+
+    ``_execute`` keeps the historical ``(bytes, pages, trust)`` triple; this
+    carrier additionally holds the :class:`DocumentResult` the processors
+    built — so the rich document artifact and the per-page failure set are
+    available to ``run_sync`` / ``run_job`` instead of being dropped at the
+    boundary.
+    """
+
+    pdf_bytes: bytes
+    pages_data: dict[int, list[str]]
+    trust_summary: dict[str, Any] | None = None
+    document: DocumentResult | None = None
+    failed_pages: list[int] = field(default_factory=list)
+
+
+def _coerce_failed_pages(raw: object) -> list[int]:
+    """Return the sorted unique page numbers recorded by a core run.
+
+    Defensive by contract: the pipeline attribute is read through
+    ``getattr`` because faked doubles (and mocks) may not model it, and a
+    non-sequence value must yield "no recorded failures" rather than raise.
+    """
+    if not isinstance(raw, (list, tuple, set, frozenset)):
+        return []
+    pages: set[int] = set()
+    for item in raw:
+        if isinstance(item, bool):
+            continue
+        if isinstance(item, int):
+            pages.add(item)
+        elif isinstance(item, float) and item.is_integer():
+            pages.add(int(item))
+    return sorted(pages)
 
 
 def _is_safe_ocr_work_dir(work_dir: Path | str) -> bool:
@@ -381,24 +425,37 @@ class OCRServiceImpl:
         work_dir.mkdir(parents=True, exist_ok=True)
         input_path = work_dir / f"input{suffix}"
         input_path.write_bytes(blob)
-        pdf_bytes, pages_data, trust_summary = await self._execute(
+        result = await self._execute_with_document(
             options, input_path, filename, job_id=""
         )
+        # Legacy text artifact: unchanged shape, the Flutter client and
+        # ``load_pages`` depend on ``{page: "\\n".join(lines)}``.
         text_handle = await self._artifacts.put(
             json.dumps(
-                {str(idx): "\n".join(lines) for idx, lines in pages_data.items()}
+                {str(idx): "\n".join(lines) for idx, lines in result.pages_data.items()}
             ).encode("utf-8"),
             content_type="application/json",
             owner_job_id="",
+        )
+        # Rich document artifact: same capability-bound channel, parallel keys.
+        document_handle = await self._store_document_artifact(
+            result.document, job_id=""
         )
         headers: dict[str, str] = {
             "X-Text-Artifact-Id": text_handle.id,
             "X-Text-Artifact-Token": text_handle.token,
         }
-        if trust_summary is not None:
-            headers["X-Document-Trust"] = json.dumps(trust_summary)
+        if document_handle is not None:
+            headers["X-Document-Artifact-Id"] = document_handle.id
+            headers["X-Document-Artifact-Token"] = document_handle.token
+        if result.failed_pages:
+            headers["X-Failed-Pages"] = ",".join(
+                str(page) for page in result.failed_pages
+            )
+        if result.trust_summary is not None:
+            headers["X-Document-Trust"] = json.dumps(result.trust_summary)
         return Response(
-            content=pdf_bytes,
+            content=result.pdf_bytes,
             media_type="application/pdf",
             headers=headers,
         )
@@ -484,26 +541,64 @@ class OCRServiceImpl:
             payload.submission_id, ""
         )
         cancel_check = self._cancel_check(job_id, payload.request.progress_channel)
-        pdf_bytes, pages_data, trust_summary = await self._execute(
+        result = await self._execute_with_document(
             payload.request, payload.input_path, payload.filename, job_id=job_id
         )
         if cancel_check is not None and cancel_check():
             raise OCRCancelled(f"job {job_id} cancelled")
+        # Legacy text artifact first, then the rich document artifact: the
+        # metadata keys below are the capability-bound handle the documents
+        # plugin reads back through ``plugins.documents.artifact``.
         text_handle = await self._artifacts.put(
             json.dumps(
-                {str(idx): "\n".join(lines) for idx, lines in pages_data.items()}
+                {str(idx): "\n".join(lines) for idx, lines in result.pages_data.items()}
             ).encode("utf-8"),
             content_type="application/json",
             owner_job_id=job_id,
         )
+        document_handle = await self._store_document_artifact(
+            result.document, job_id=job_id
+        )
+        metadata: dict[str, Any] = {
+            "text_artifact_id": text_handle.id,
+            "text_artifact_token": text_handle.token,
+            "document_trust": result.trust_summary,
+            # Propagate the per-page failures the core run recorded instead
+            # of hardcoding an empty set in the status / list projections.
+            "failed_pages": list(result.failed_pages),
+        }
+        if document_handle is not None:
+            metadata["document_artifact_id"] = document_handle.id
+            metadata["document_artifact_token"] = document_handle.token
         return JobOutcome(
-            blob=pdf_bytes,
+            blob=result.pdf_bytes,
             content_type="application/pdf",
-            metadata={
-                "text_artifact_id": text_handle.id,
-                "text_artifact_token": text_handle.token,
-                "document_trust": trust_summary,
-            },
+            metadata=metadata,
+        )
+
+    async def _store_document_artifact(
+        self, document: DocumentResult | None, *, job_id: str
+    ) -> ArtifactHandle | None:
+        """Persist the rich document result; ``None`` when there is nothing to store.
+
+        The text artifact is the contract older clients and
+        ``load_pages`` depend on, so a document result that cannot be encoded
+        degrades to a logged warning plus "no rich artifact" rather than
+        failing the whole job.
+        """
+        if document is None:
+            return None
+        try:
+            blob = encode_document_artifact(document)
+        except DocumentArtifactError as exc:
+            _LOGGER.warning(
+                "Skipping document artifact (job %s): %s", job_id or "<sync>", exc
+            )
+            return None
+        return await self._artifacts.put(
+            blob,
+            content_type=DOCUMENT_ARTIFACT_CONTENT_TYPE,
+            owner_job_id=job_id,
         )
 
     async def _execute(
@@ -514,6 +609,33 @@ class OCRServiceImpl:
         *,
         job_id: str,
     ) -> tuple[bytes, dict[int, list[str]], dict[str, Any] | None]:
+        """Legacy ``(pdf, pages, trust)`` view of one execution.
+
+        Kept as the stable internal seam (``_run_ocr`` is the historical alias
+        still referenced by tests); callers that also need the rich document
+        or the failed-page set use :meth:`_execute_with_document`.
+        """
+        result = await self._execute_with_document(
+            options, input_path, filename, job_id=job_id
+        )
+        return result.pdf_bytes, result.pages_data, result.trust_summary
+
+    async def _execute_with_document(
+        self,
+        options: OCRRequest,
+        input_path: Path,
+        filename: str,
+        *,
+        job_id: str,
+    ) -> _ExecutionResult:
+        """Run one OCR job and return everything it produced, rich form included.
+
+        The digital-reader fast path already builds a full
+        :class:`DocumentResult`; the engine path reads back the one the
+        pipeline recorded. Both are carried out of here so the caller can
+        persist them as the rich document artifact instead of reducing them
+        to plain text lines.
+        """
         # Audit 2.8: input_path is the already-written per-job tempfile
         # (see ``submit`` and ``run_sync``). The worker re-uses the same
         # directory; the output PDF is written alongside it.
@@ -572,8 +694,12 @@ class OCRServiceImpl:
                     page.page_index: [b.text for b in page.blocks if b.text.strip()]
                     for page in doc_result.pages
                 }
-                trust_summary = document_trust_summary(doc_result)
-                return pdf_bytes, pages_data, trust_summary
+                return _ExecutionResult(
+                    pdf_bytes=pdf_bytes,
+                    pages_data=pages_data,
+                    trust_summary=document_trust_summary(doc_result),
+                    document=doc_result,
+                )
 
             pipeline = build_pipeline(
                 self._settings, options, block_callbacks=block_callbacks
@@ -588,15 +714,37 @@ class OCRServiceImpl:
                 on_warning=self._warning_adapter(job_id, channel),
                 cancel_check=self._cancel_check(job_id, channel),
             )
-            # Real pipelines carry the scored DocumentResult; faked/test
-            # doubles may not, hence the getattr fallback to ``None``.
+            # Real pipelines carry the scored DocumentResult and the set of
+            # pages that failed; faked/test doubles may not, hence the
+            # getattr fallbacks.
             pipeline_doc_result = getattr(pipeline, "last_document_result", None)
+            failed_pages = _coerce_failed_pages(
+                getattr(pipeline, "last_failed_pages", None)
+            )
+            if failed_pages and not set(pages_data).difference(failed_pages):
+                raise PluginError(
+                    502,
+                    "ocr_all_pages_failed",
+                    "OCR failed for every processed page "
+                    f"(source page indexes: {failed_pages}). Check the vision "
+                    "provider and retry the document.",
+                )
             trust_summary = (
                 document_trust_summary(pipeline_doc_result)
                 if pipeline_doc_result is not None
                 else None
             )
-            return output_path.read_bytes(), pages_data, trust_summary
+            return _ExecutionResult(
+                pdf_bytes=output_path.read_bytes(),
+                pages_data=pages_data,
+                trust_summary=trust_summary,
+                document=(
+                    pipeline_doc_result
+                    if isinstance(pipeline_doc_result, DocumentResult)
+                    else None
+                ),
+                failed_pages=failed_pages,
+            )
         except asyncio.CancelledError:
             preserve_work_dir = True
             raise
@@ -607,6 +755,10 @@ class OCRServiceImpl:
                 _LOGGER.warning("Refusing to delete unsafe OCR work_dir: %s", work_dir)
 
     _run_ocr = _execute
+
+    def _failed_pages_from_meta(self, meta: Mapping[str, Any]) -> list[int]:
+        """Read the recorded per-page failure set off a job record's metadata."""
+        return _coerce_failed_pages(meta.get("failed_pages"))
 
     def _progress_adapter(
         self, job_id: str, channel: str | None
@@ -824,7 +976,7 @@ class OCRServiceImpl:
             duration_s=(record.updated_at - record.created_at) if terminal else None,
             error=error,
             text_artifact_id=record.request_meta.get("text_artifact_id"),
-            failed_pages=[],
+            failed_pages=self._failed_pages_from_meta(record.request_meta),
         )
 
     def job_list_item(self, record: JobRecord) -> JobListItemResponse:
@@ -839,7 +991,7 @@ class OCRServiceImpl:
             duration_s=(record.updated_at - record.created_at) if terminal else 0.0,
             timestamp=datetime.fromtimestamp(record.created_at, tz=UTC).isoformat(),
             status=record.status,
-            failed_pages=[],
+            failed_pages=self._failed_pages_from_meta(meta),
         )
 
     async def fetch_result(self, job_id: str, token: str | None) -> Response:
@@ -856,7 +1008,7 @@ class OCRServiceImpl:
         to the caller; the only successful code is 200 with the
         PDF bytes.
         """
-        not_found = HTTPException(status_code=404, detail="result not available")
+        not_found = PluginError(404, "not_found", "result not available")
         record = await self._queue.status(job_id)
         # Token compare runs only when there is a token to compare
         # against (i.e. a record with a stored result_artifact_token).
@@ -894,10 +1046,15 @@ class OCRServiceImpl:
         for key, header in (
             ("text_artifact_id", "X-Text-Artifact-Id"),
             ("text_artifact_token", "X-Text-Artifact-Token"),
+            ("document_artifact_id", "X-Document-Artifact-Id"),
+            ("document_artifact_token", "X-Document-Artifact-Token"),
         ):
             value = record.request_meta.get(key)
             if isinstance(value, str) and value:
                 headers[header] = value
+        failed_pages = self._failed_pages_from_meta(record.request_meta)
+        if failed_pages:
+            headers["X-Failed-Pages"] = ",".join(str(page) for page in failed_pages)
         trust = record.request_meta.get("document_trust")
         if isinstance(trust, dict):
             headers["X-Document-Trust"] = json.dumps(trust)
@@ -1119,16 +1276,17 @@ class OCRServiceImpl:
             The updated effective configuration dictionary.
 
         Raises:
-            HTTPException: If an ``api_base`` update fails SSRF validation.
+            PluginError: If an ``api_base`` update fails SSRF validation.
         """
         if "api_base" in updates and updates["api_base"] is not None:
             new_base = str(updates["api_base"]).strip()
             if new_base and new_base != self._config.get("api_base"):
                 check = check_ssrf_target_sync(new_base)
                 if not check.allowed:
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"Invalid api_base URL (SSRF blocked: {check.reason})",
+                    raise PluginError(
+                        400,
+                        "bad_request",
+                        f"Invalid api_base URL (SSRF blocked: {check.reason})",
                     )
         numeric_keys = ("dpi", "concurrency", "dense_threshold", "max_image_dim")
         numeric_updates = {

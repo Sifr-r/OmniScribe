@@ -2,10 +2,9 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
 
-import 'package:web_socket_channel/web_socket_channel.dart';
-
-import 'package:omniscribe_client/data/models/ws_frames.dart';
 import 'package:omniscribe_client/core/constants/api_constants.dart';
+import 'package:omniscribe_client/core/websocket/ws_frames.dart';
+import 'package:web_socket_channel/web_socket_channel.dart';
 
 /// Connection states for the OmniScribe WebSocket client.
 enum WsConnectionState {

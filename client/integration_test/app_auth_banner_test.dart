@@ -3,10 +3,10 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:omniscribe_client/core/enums/app_tab.dart';
 import 'package:omniscribe_client/core/enums/server_health.dart';
-import 'package:omniscribe_client/data/providers/repository_providers.dart';
-import 'package:omniscribe_client/presentation/common/auth_required_banner.dart';
-import 'package:omniscribe_client/presentation/shell/shell_state.dart';
-import 'package:omniscribe_client/presentation/workstation/workstation_screen.dart';
+import 'package:omniscribe_client/shared/providers/repository_providers.dart';
+import 'package:omniscribe_client/shared/widgets/auth_required_banner.dart';
+import 'package:omniscribe_client/app/shell_state.dart';
+import 'package:omniscribe_client/features/workstation/workstation_screen.dart';
 
 import '_test_helpers.dart';
 import 'stub_omniscribe_server.dart';
@@ -21,8 +21,7 @@ void main() {
   setUpAll(registerOmniscribeFallbacks);
 
   group('AuthRequiredBanner', () {
-    testWidgets('renders nothing when the auth flag is false',
-        (tester) async {
+    testWidgets('renders nothing when the auth flag is false', (tester) async {
       final ctx = await _boot(tester, authRequired: false);
       addTearDown(ctx.stub.stop);
 

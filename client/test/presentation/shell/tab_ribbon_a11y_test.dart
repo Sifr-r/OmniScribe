@@ -19,8 +19,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:omniscribe_client/core/enums/app_tab.dart';
-import 'package:omniscribe_client/presentation/shell/shell_state.dart';
-import 'package:omniscribe_client/presentation/shell/tab_ribbon.dart';
+import 'package:omniscribe_client/app/shell_state.dart';
+import 'package:omniscribe_client/app/tab_ribbon.dart';
 
 /// Wave 16 / flutter_riverpod 3.4: ``NotifierProvider.overrideWith`` now
 /// requires a ``Notifier Function()`` — a Notifier subclass that overrides
@@ -63,11 +63,9 @@ void main() {
     // (``isTrue`` / ``isFalse`` / ``none``), so we compare against the
     // ``Tristate`` value rather than a plain ``bool``.
     expect(node.flagsCollection.isButton, isTrue,
-        reason:
-            'tab button must be announced as a button to screen readers');
+        reason: 'tab button must be announced as a button to screen readers');
     expect(node.flagsCollection.isSelected, Tristate.isTrue,
-        reason:
-            'active tab must be announced with the selected state');
+        reason: 'active tab must be announced with the selected state');
 
     final settingsHandle = tester.getSemantics(find.text('Settings'));
     final settingsNode = settingsHandle.getSemanticsData();

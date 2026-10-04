@@ -36,6 +36,10 @@ from omniscribe.core.writers.tree_json import export_json
 from omniscribe.harness.context import Context
 from omniscribe.plugins._http import envelope, extract_token
 from omniscribe.plugins.artifacts import ArtifactStore
+from omniscribe.plugins.documents.artifact import (
+    load_document_result,
+    load_document_tree,
+)
 from omniscribe.plugins.documents.schemas import (
     DocumentExportRequest,
     ExportBlockTreeRequest,
@@ -47,7 +51,6 @@ from omniscribe.plugins.documents.schemas import (
 )
 from omniscribe.plugins.documents.service import (
     EXPORT_MEDIA_TYPES,
-    DocumentsError,
     build_chunks_export,
     build_document_export,
     build_markdown_export,
@@ -92,14 +95,35 @@ def _docx_response(text: str) -> Response:
     )
 
 
-async def _load_tree_or_none(store: ArtifactStore, artifact_id: str, token: str) -> Any:
+async def _load_tree_or_none(
+    store: ArtifactStore,
+    artifact_id: str,
+    token: str,
+    *,
+    document_artifact_id: str | None = None,
+    document_artifact_token: str | None = None,
+) -> Any:
     """Load a text artifact and parse it into a block tree, or ``None``.
 
     Combines the artifact fetch + JSON decode + tree construction used
     by every export route that operates on a stored block tree. Returning
     ``None`` on any failure (missing, malformed, non-JSON) lets the route
     emit a single 404 path instead of branching on each failure mode.
+
+    When ``document_artifact_id``/``document_artifact_token`` are supplied the
+    rich stored :class:`DocumentResult` wins, so geometry, block kinds,
+    section paths and trust scores reach the export instead of being
+    reconstructed from page text with zero bboxes. Only an omitted rich
+    handle permits legacy text reconstruction; an unavailable supplied
+    handle must fail visibly instead of degrading the export.
     """
+    if document_artifact_id or document_artifact_token:
+        if not document_artifact_id or not document_artifact_token:
+            return None
+        return await load_document_tree(
+            store, document_artifact_id, document_artifact_token
+        )
+
     blob = await store.get(artifact_id, token)
     if blob is None:
         return None
@@ -116,16 +140,13 @@ async def handle_extract(
     """Run structured extraction against an OCR text blob.
 
     Validates that ``body.text`` is non-empty (returns 400 otherwise) and
-    delegates to :func:`run_extraction`. ``DocumentsError`` is re-raised
-    so the FastAPI exception handler can map it to the standard error
+    delegates to :func:`run_extraction`. Domain errors propagate
+    so the FastAPI exception handler can map them to the standard error
     envelope; any other exception is the service's responsibility.
     """
     if not body.text.strip():
         return envelope(400, "bad_request", "'text' is required")
-    try:
-        extracted = await run_extraction(body, settings)
-    except DocumentsError:
-        raise
+    extracted = await run_extraction(body, settings)
     return {"extracted_data": extracted}
 
 
@@ -158,10 +179,25 @@ async def handle_document_export(
     raw = _parse_json_object(text_blob.blob)
     if raw is None:
         return envelope(404, "not_found", "Export input not found")
+
+    # Prefer the rich stored document so JSON/Docling/MinerU exports carry
+    # real geometry, block kinds, section paths and trust scores instead of
+    # a structure re-guessed from page text. Absent handle -> legacy path.
+    document = None
+    if body.document_artifact_id or body.document_artifact_token:
+        if not body.document_artifact_id or not body.document_artifact_token:
+            return envelope(404, "not_found", "Export input not found")
+        document = await load_document_result(
+            store, body.document_artifact_id, body.document_artifact_token
+        )
+        if document is None:
+            return envelope(404, "not_found", "Export input not found")
+
     payload = build_document_export(
         page_text=load_pages(raw),
         metadata=metadata,
         export_format=body.export_format.value,
+        document=document,
     )
     if isinstance(payload, dict):
         blob = json.dumps(payload).encode("utf-8")
@@ -199,7 +235,11 @@ async def handle_export_html(
     :func:`render_html`, and returns it as an HTML attachment.
     """
     tree = await _load_tree_or_none(
-        store, body.text_artifact_id, body.text_artifact_token
+        store,
+        body.text_artifact_id,
+        body.text_artifact_token,
+        document_artifact_id=body.document_artifact_id,
+        document_artifact_token=body.document_artifact_token,
     )
     if tree is None:
         return envelope(404, "not_found", "text artifact not found")
@@ -221,7 +261,11 @@ async def handle_export_docx_tree(
     map to native Word constructs instead of markdown syntax.
     """
     tree = await _load_tree_or_none(
-        store, body.text_artifact_id, body.text_artifact_token
+        store,
+        body.text_artifact_id,
+        body.text_artifact_token,
+        document_artifact_id=body.document_artifact_id,
+        document_artifact_token=body.document_artifact_token,
     )
     if tree is None:
         return envelope(404, "not_found", "text artifact not found")
@@ -244,7 +288,11 @@ async def handle_export_blocktree(
     client gets structure + provenance in a single round-trip.
     """
     tree = await _load_tree_or_none(
-        store, body.text_artifact_id, body.text_artifact_token
+        store,
+        body.text_artifact_id,
+        body.text_artifact_token,
+        document_artifact_id=body.document_artifact_id,
+        document_artifact_token=body.document_artifact_token,
     )
     if tree is None:
         return envelope(404, "not_found", "text artifact not found")
@@ -271,7 +319,11 @@ async def handle_export_markdown_post(
     downstream consumers can attribute OCR quality findings to sections.
     """
     tree = await _load_tree_or_none(
-        store, body.text_artifact_id, body.text_artifact_token
+        store,
+        body.text_artifact_id,
+        body.text_artifact_token,
+        document_artifact_id=body.document_artifact_id,
+        document_artifact_token=body.document_artifact_token,
     )
     if tree is None:
         return envelope(404, "not_found", "text artifact not found")
@@ -342,7 +394,11 @@ async def handle_export_chunks_post(
     surface here, not as a 500.
     """
     tree = await _load_tree_or_none(
-        store, body.text_artifact_id, body.text_artifact_token
+        store,
+        body.text_artifact_id,
+        body.text_artifact_token,
+        document_artifact_id=body.document_artifact_id,
+        document_artifact_token=body.document_artifact_token,
     )
     if tree is None:
         return envelope(404, "not_found", "text artifact not found")

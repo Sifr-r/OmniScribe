@@ -4,8 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
-import 'package:omniscribe_client/data/providers/repository_providers.dart';
-import 'package:omniscribe_client/presentation/workstation/modals/export_modal.dart';
+import 'package:omniscribe_client/shared/providers/repository_providers.dart';
+import 'package:omniscribe_client/features/documents/export_modal.dart';
 
 import '_test_helpers.dart';
 
@@ -47,7 +47,10 @@ void main() {
         ProviderScope(
           overrides: [
             configRepositoryProvider.overrideWithValue(configRepo),
-            featureRepositoryProvider.overrideWithValue(featureRepo),
+            translationRepositoryProvider.overrideWithValue(featureRepo),
+            transcriptionRepositoryProvider.overrideWithValue(featureRepo),
+            glossaryRepositoryProvider.overrideWithValue(featureRepo),
+            documentRepositoryProvider.overrideWithValue(featureRepo),
           ],
           child: MaterialApp(
             home: Builder(
@@ -99,7 +102,10 @@ void main() {
         ProviderScope(
           overrides: [
             configRepositoryProvider.overrideWithValue(configRepo),
-            featureRepositoryProvider.overrideWithValue(featureRepo),
+            translationRepositoryProvider.overrideWithValue(featureRepo),
+            transcriptionRepositoryProvider.overrideWithValue(featureRepo),
+            glossaryRepositoryProvider.overrideWithValue(featureRepo),
+            documentRepositoryProvider.overrideWithValue(featureRepo),
           ],
           child: MaterialApp(
             home: Builder(

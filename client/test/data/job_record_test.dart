@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:omniscribe_client/data/models/job_record.dart';
+import 'package:omniscribe_client/features/jobs/job_record.dart';
 
 void main() {
   group('JobRecord text artifact fields', () {

@@ -15,7 +15,11 @@ from dataclasses import dataclass
 logger = logging.getLogger(__name__)
 
 
-# Map UI-friendly language names to NLLB language codes.
+# Map UI-friendly language names to NLLB language codes. Keys are
+# lower-cased and stripped before lookup, so the Flutter client's display
+# labels ("Chinese (Simplified)") must appear here verbatim. Every label the
+# client offers in ``_languages`` MUST have an entry — a missing key used to
+# resolve to English and silently mistranslate the whole request.
 LANGUAGE_CODE_MAP: dict[str, str] = {
     "english": "eng_Latn",
     "spanish": "spa_Latn",
@@ -23,7 +27,10 @@ LANGUAGE_CODE_MAP: dict[str, str] = {
     "german": "deu_Latn",
     "arabic": "arb_Arab",
     "chinese": "zho_Hans",
+    "chinese (simplified)": "zho_Hans",
+    "chinese (traditional)": "zho_Hant",
     "japanese": "jpn_Jpan",
+    "korean": "kor_Hang",
     "russian": "rus_Cyrl",
     "portuguese": "por_Latn",
     "italian": "ita_Latn",
@@ -31,16 +38,61 @@ LANGUAGE_CODE_MAP: dict[str, str] = {
     "swedish": "swe_Latn",
 }
 
+#: Canonical target labels the NLLB path accepts: every entry the Flutter
+#: client offers (``client/lib/features/translation/translation_screen.dart``
+#: ``_languages``) plus the API default. Keep in sync with that list — a new
+#: client label without a map entry is a validation error, not a fallback.
+SUPPORTED_LANGUAGES: tuple[str, ...] = (
+    "English",
+    "French",
+    "Spanish",
+    "German",
+    "Italian",
+    "Portuguese",
+    "Japanese",
+    "Chinese (Simplified)",
+    "Korean",
+    "Russian",
+    "Arabic",
+    "Dutch",
+)
+
+#: The NLLB fallback path has no source-language selector (neither the API
+#: nor the client sends one), so the source stays pinned to English. Making it
+#: a named constant documents that as a deliberate scope decision rather than
+#: an accident; adding multilingual source selection is a separate feature.
+DEFAULT_SOURCE_LANGUAGE = "eng_Latn"
+
+
+class UnsupportedLanguageError(ValueError):
+    """Raised when a target language cannot be mapped to an NLLB code.
+
+    Subclasses ``ValueError`` so Pydantic field validators surface it as a
+    regular 422 validation error at the HTTP edge.
+    """
+
+    def __init__(self, language: str) -> None:
+        self.language = language
+        super().__init__(
+            f"Unsupported NLLB target language {language!r}. "
+            f"Supported languages: {', '.join(SUPPORTED_LANGUAGES)}"
+        )
+
 
 def resolve_nllb_code(language: str) -> str:
-    raw = language.strip()
+    """Map a UI language label (or NLLB code) to its NLLB-200 language code.
+
+    Unknown labels raise :class:`UnsupportedLanguageError` instead of falling
+    back to English — silently translating a Korean request into English is a
+    correctness bug, not a graceful default.
+    """
+    raw = (language or "").strip()
     key = raw.lower()
     if key in LANGUAGE_CODE_MAP:
         return LANGUAGE_CODE_MAP[key]
-    # Heuristic: if the language string already looks like a code, use it.
-    if "_" in raw and any(c.isupper() for c in raw):
+    if raw in LANGUAGE_CODE_MAP.values():
         return raw
-    return "eng_Latn"
+    raise UnsupportedLanguageError(language)
 
 
 @dataclass(slots=True)
@@ -103,6 +155,7 @@ class NLLBEngine:
         ``target_language`` may be a UI-friendly name (e.g. ``"French"``) or an
         NLLB code (e.g. ``"fra_Latn"``).
         """
+        target_code = resolve_nllb_code(target_language)
         if not text or not text.strip():
             return NLLBResult(text="", source_lang="auto", target_lang=target_language)
         await asyncio.to_thread(self._ensure_loaded)
@@ -111,8 +164,7 @@ class NLLBEngine:
         # the current running loop, with no fallback path that would
         # spin a new loop on a worker thread.
         loop = asyncio.get_running_loop()
-        target_code = resolve_nllb_code(target_language)
-        source_code = "eng_Latn"  # assume English source for NLLB fallback
+        source_code = DEFAULT_SOURCE_LANGUAGE  # see the constant's note
 
         def _run() -> NLLBResult:
             assert self._pipeline is not None

@@ -5,13 +5,42 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:omniscribe_client/core/constants/api_constants.dart';
 import 'package:omniscribe_client/core/network/api_client.dart';
-import 'package:omniscribe_client/data/repositories/ocr_repository.dart';
+import 'package:omniscribe_client/features/workstation/ocr_repository.dart';
 
 class _MockApiClient extends Mock implements ApiClient {}
 
 void main() {
   setUpAll(() {
     registerFallbackValue(FormData());
+  });
+
+  test('sync and async result downloads preserve rich document handles', () async {
+    final api = _MockApiClient();
+    final repo = OcrRepositoryImpl(api);
+    final response = ApiResponse<Uint8List>(
+      data: Uint8List.fromList([1]), statusCode: 200,
+      headers: const {
+        'x-text-artifact-id': 'text', 'x-text-artifact-token': 'text-token',
+        'x-document-artifact-id': 'rich',
+        'x-document-artifact-token': 'rich-token',
+      },
+    );
+    when(() => api.postMultipartBytes(ApiConstants.processSync,
+      formData: any(named: 'formData'),
+      onSendProgress: any(named: 'onSendProgress'),
+      receiveTimeout: any(named: 'receiveTimeout'),
+    )).thenAnswer((_) async => response);
+    when(() => api.getBytesWithHeaders(ApiConstants.jobResult('job'),
+      headers: any(named: 'headers'),
+    )).thenAnswer((_) async => response);
+    final sync = await repo.processOcrSync(
+      fileBytes: Uint8List.fromList([1]), filename: 'scan.pdf');
+    final downloaded = await repo.downloadProcessedResult('job', token: 'pdf-token');
+    for (final result in [sync, downloaded]) {
+      expect(result.documentArtifactId, 'rich');
+      expect(result.documentArtifactToken, 'rich-token');
+      expect(result.textArtifactId, 'text');
+    }
   });
 
   group('OcrRepositoryImpl.renderDocumentPagePreview', () {
@@ -177,7 +206,8 @@ void main() {
       expect(requests.last.files.any((part) => part.key == 'file'), isTrue);
     });
 
-    test('returns null without network call when both fileBytes and docId are null',
+    test(
+        'returns null without network call when both fileBytes and docId are null',
         () async {
       final result = await repo.renderDocumentPagePreview(
         filename: 'none.pdf',

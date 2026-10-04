@@ -5,18 +5,21 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:omniscribe_client/core/theme/app_theme.dart';
-import 'package:omniscribe_client/data/models/bbox_item.dart';
-import 'package:omniscribe_client/data/models/document_result.dart';
-import 'package:omniscribe_client/data/models/feature_models.dart';
-import 'package:omniscribe_client/data/providers/repository_providers.dart';
-import 'package:omniscribe_client/data/providers/job_orchestration_notifier.dart';
-import 'package:omniscribe_client/data/providers/workstation_notifier.dart';
-import 'package:omniscribe_client/data/repositories/feature_repository.dart';
-import 'package:omniscribe_client/presentation/common/app_button.dart';
-import 'package:omniscribe_client/presentation/common/app_select.dart';
-import 'package:omniscribe_client/presentation/workstation/modals/export_modal.dart';
+import 'package:omniscribe_client/data/models/models.dart';
+import 'package:omniscribe_client/shared/providers/repository_providers.dart';
+import 'package:omniscribe_client/features/jobs/job_orchestration_notifier.dart';
+import 'package:omniscribe_client/features/workstation/workstation_notifier.dart';
+import 'package:omniscribe_client/data/repositories/repositories.dart';
+import 'package:omniscribe_client/shared/widgets/app_button.dart';
+import 'package:omniscribe_client/shared/widgets/app_select.dart';
+import 'package:omniscribe_client/features/documents/export_modal.dart';
 
-class _MockFeatureRepository extends Mock implements FeatureRepository {}
+class _MockFeatureRepository extends Mock
+    implements
+        TranslationRepository,
+        TranscriptionRepository,
+        GlossaryRepository,
+        DocumentRepository {}
 
 void main() {
   late _MockFeatureRepository mockRepo;
@@ -50,14 +53,18 @@ void main() {
   }
 
   group('ExportModal Tests', () {
-    testWidgets('ExportFormat.docxTree exports successfully when artifacts present',
+    testWidgets(
+        'ExportFormat.docxTree exports successfully when artifacts present',
         (tester) async {
       when(() => mockRepo.exportDocxTree(any()))
           .thenAnswer((_) async => Uint8List.fromList([1, 2, 3, 4, 5]));
 
       final container = ProviderContainer(
         overrides: [
-          featureRepositoryProvider.overrideWithValue(mockRepo),
+          translationRepositoryProvider.overrideWithValue(mockRepo),
+          transcriptionRepositoryProvider.overrideWithValue(mockRepo),
+          glossaryRepositoryProvider.overrideWithValue(mockRepo),
+          documentRepositoryProvider.overrideWithValue(mockRepo),
         ],
       );
       addTearDown(container.dispose);
@@ -96,7 +103,8 @@ void main() {
       verify(() => mockRepo.exportDocxTree(any(
             that: isA<ExportBlockTreeRequest>()
                 .having((r) => r.textArtifactId, 'textArtifactId', 'art-123')
-                .having((r) => r.textArtifactToken, 'textArtifactToken', 'tok-abc'),
+                .having(
+                    (r) => r.textArtifactToken, 'textArtifactToken', 'tok-abc'),
           ))).called(1);
 
       expect(
@@ -105,11 +113,15 @@ void main() {
       );
     });
 
-    testWidgets('ExportFormat.docxTree shows error when text artifact is missing',
+    testWidgets(
+        'ExportFormat.docxTree shows error when text artifact is missing',
         (tester) async {
       final container = ProviderContainer(
         overrides: [
-          featureRepositoryProvider.overrideWithValue(mockRepo),
+          translationRepositoryProvider.overrideWithValue(mockRepo),
+          transcriptionRepositoryProvider.overrideWithValue(mockRepo),
+          glossaryRepositoryProvider.overrideWithValue(mockRepo),
+          documentRepositoryProvider.overrideWithValue(mockRepo),
         ],
       );
       addTearDown(container.dispose);
@@ -137,16 +149,21 @@ void main() {
 
       verifyNever(() => mockRepo.exportDocxTree(any()));
       expect(
-        find.text('Text artifact not available. Please run OCR processing first.'),
+        find.text(
+            'Text artifact not available. Please run OCR processing first.'),
         findsOneWidget,
       );
     });
 
-    testWidgets('ExportFormat.searchablePdf shows ready message when loadedBytes present',
+    testWidgets(
+        'ExportFormat.searchablePdf rejects an unprocessed source PDF',
         (tester) async {
       final container = ProviderContainer(
         overrides: [
-          featureRepositoryProvider.overrideWithValue(mockRepo),
+          translationRepositoryProvider.overrideWithValue(mockRepo),
+          transcriptionRepositoryProvider.overrideWithValue(mockRepo),
+          glossaryRepositoryProvider.overrideWithValue(mockRepo),
+          documentRepositoryProvider.overrideWithValue(mockRepo),
         ],
       );
       addTearDown(container.dispose);
@@ -163,17 +180,19 @@ void main() {
       await tester.tap(find.widgetWithText(AppButton, 'Export Document'));
       await tester.pumpAndSettle();
 
-      expect(
-        find.textContaining('Searchable PDF'),
-        findsWidgets,
-      );
+      expect(find.text('NO DATA'), findsOneWidget);
+      expect(find.text('PDF not available. Please run OCR processing first.'),
+          findsOneWidget);
     });
 
     testWidgets('shows flagged-block count when trust summary reports flags',
         (tester) async {
       final container = ProviderContainer(
         overrides: [
-          featureRepositoryProvider.overrideWithValue(mockRepo),
+          translationRepositoryProvider.overrideWithValue(mockRepo),
+          transcriptionRepositoryProvider.overrideWithValue(mockRepo),
+          glossaryRepositoryProvider.overrideWithValue(mockRepo),
+          documentRepositoryProvider.overrideWithValue(mockRepo),
         ],
       );
       addTearDown(container.dispose);
@@ -201,7 +220,10 @@ void main() {
         (tester) async {
       final container = ProviderContainer(
         overrides: [
-          featureRepositoryProvider.overrideWithValue(mockRepo),
+          translationRepositoryProvider.overrideWithValue(mockRepo),
+          transcriptionRepositoryProvider.overrideWithValue(mockRepo),
+          glossaryRepositoryProvider.overrideWithValue(mockRepo),
+          documentRepositoryProvider.overrideWithValue(mockRepo),
         ],
       );
       addTearDown(container.dispose);
@@ -226,19 +248,19 @@ void main() {
     });
 
     testWidgets(
-        'ExportFormat.docx falls back to filename when bboxes are whitespace-only',
+        'ExportFormat.docx rejects whitespace-only text before API calls',
         (tester) async {
-      // Regression guard for the blank-DOCX bug: when every OCR bbox is
-      // whitespace-only, ``docText`` must not be sent verbatim (the server's
-      // markdown parser would skip every line and emit a content-free DOCX).
-      // The modal should swap in the filename as a visible fallback.
+      // A filename is not recognized document content.
       when(() => mockRepo.exportDocx(any())).thenAnswer(
         (_) async => Uint8List.fromList([1, 2, 3, 4]),
       );
 
       final container = ProviderContainer(
         overrides: [
-          featureRepositoryProvider.overrideWithValue(mockRepo),
+          translationRepositoryProvider.overrideWithValue(mockRepo),
+          transcriptionRepositoryProvider.overrideWithValue(mockRepo),
+          glossaryRepositoryProvider.overrideWithValue(mockRepo),
+          documentRepositoryProvider.overrideWithValue(mockRepo),
         ],
       );
       addTearDown(container.dispose);
@@ -281,10 +303,11 @@ void main() {
       await tester.tap(find.widgetWithText(AppButton, 'Export Document'));
       await tester.pumpAndSettle();
 
-      verify(() => mockRepo.exportDocx(any(
-            that: isA<ExportDocxRequest>()
-                .having((r) => r.text, 'text', 'scan.pdf'),
-          ))).called(1);
+      verifyNever(() => mockRepo.exportDocx(any()));
+      expect(
+        find.text('Recognized text not available. Please run OCR processing first.'),
+        findsOneWidget,
+      );
     });
   });
 }

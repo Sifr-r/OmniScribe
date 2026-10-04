@@ -213,3 +213,136 @@ def test_embed_structured_text_unicode_fast_path(
     finally:
         doc.close()
 
+
+#: Scripts whose logical form must survive embed→extract byte-for-byte.
+_ROUND_TRIP_CASES: list[tuple[str, str]] = [
+    ("latin", "Quarterly Revenue Report"),
+    ("cjk", "你好世界"),
+    ("cyrillic", "Привет мир"),
+    ("mixed_supported", "Report Привет 你好 2026"),
+]
+
+
+@pytest.mark.parametrize("script, text", _ROUND_TRIP_CASES)
+def test_supported_scripts_round_trip_exactly(
+    sample_pdf: Path, tmp_path: Path, script: str, text: str
+) -> None:
+    """Every advertised script must extract back as the exact source string.
+
+    The previous test only asserted CJK/Cyrillic and merely checked Arabic
+    was not turned into "???" -- it never proved the characters survived.
+    A successful PDF write is not proof of a searchable text layer.
+    """
+    output_pdf = tmp_path / f"roundtrip_{script}.pdf"
+    embed_structured_text(
+        sample_pdf,
+        output_pdf,
+        {0: [((0.05, 0.05, 0.95, 0.15), text)]},
+        dpi=72,
+        page_nums=[0],
+    )
+    doc = fitz.open(str(output_pdf))
+    try:
+        extracted = doc[0].get_text()
+    finally:
+        doc.close()
+    # Normalise the non-breaking spaces PyMuPDF inserts between runs.
+    normalised = extracted.replace("\xa0", " ")
+    assert text in normalised, (
+        f"{script}: expected {text!r} in the extracted text layer, got {normalised!r}"
+    )
+
+
+def test_arabic_logical_form_round_trips(sample_pdf: Path, tmp_path: Path) -> None:
+    output_pdf = tmp_path / "arabic_roundtrip.pdf"
+    embed_structured_text(
+        sample_pdf,
+        output_pdf,
+        {0: [((0.05, 0.05, 0.95, 0.15), "مرحبا بك")]},
+        dpi=72,
+        page_nums=[0],
+    )
+    doc = fitz.open(str(output_pdf))
+    try:
+        extracted = doc[0].get_text()
+        assert doc[0].search_for("مرحبا بك")
+    finally:
+        doc.close()
+    assert "مرحبا بك" in extracted.replace("\xa0", " ")
+
+
+def test_mixed_script_with_arabic_round_trips(sample_pdf: Path, tmp_path: Path) -> None:
+    output_pdf = tmp_path / "mixed_arabic_roundtrip.pdf"
+    embed_structured_text(
+        sample_pdf,
+        output_pdf,
+        {0: [((0.05, 0.05, 0.95, 0.15), "Report مرحبا 2026")]},
+        dpi=72,
+        page_nums=[0],
+    )
+    doc = fitz.open(str(output_pdf))
+    try:
+        extracted = doc[0].get_text()
+    finally:
+        doc.close()
+    assert "Report مرحبا 2026" in extracted.replace("\xa0", " ")
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["Report مرحبا 你好 Привет 2026", "مرحبا <tag> & بك", "مرحبا\nبك"],
+)
+def test_shaped_layer_preserves_text_and_raster(
+    sample_pdf: Path, tmp_path: Path, text: str
+) -> None:
+    """Escaped source stays searchable without changing the scanned image."""
+    output_pdf = tmp_path / "shaped.pdf"
+    background_pdf = tmp_path / "background.pdf"
+    embed_structured_text(sample_pdf, background_pdf, {}, dpi=72, page_nums=[0])
+    embed_structured_text(
+        sample_pdf,
+        output_pdf,
+        {0: [((0.05, 0.05, 0.95, 0.2), text)]},
+        dpi=72,
+        page_nums=[0],
+    )
+    with fitz.open(output_pdf) as shaped, fitz.open(background_pdf) as background:
+        assert text in shaped[0].get_text().replace("\xa0", " ")
+        assert shaped[0].search_for(text)
+        assert shaped[0].get_pixmap().samples == background[0].get_pixmap().samples
+
+
+def test_arabic_multiline_search_preserves_line_geometry(
+    sample_pdf: Path, tmp_path: Path
+) -> None:
+    output_pdf = tmp_path / "arabic_lines.pdf"
+    embed_structured_text(
+        sample_pdf,
+        output_pdf,
+        {0: [((0.1, 0.1, 0.9, 0.7), "مرحبا\nبك")]},
+        dpi=72,
+        page_nums=[0],
+    )
+    with fitz.open(output_pdf) as doc:
+        first = doc[0].search_for("مرحبا")
+        second = doc[0].search_for("بك")
+        assert first and second
+        assert max(rect.y1 for rect in first) <= min(rect.y0 for rect in second)
+
+
+def test_latin_only_run_does_not_warn(
+    sample_pdf: Path, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    from omniscribe.core.pdf import embedder_helpers
+
+    embedder_helpers._LOGGED_ONCE_KEYS.discard("shaping_gap")
+    output_pdf = tmp_path / "latin_nowarn.pdf"
+    with caplog.at_level("WARNING"):
+        embed_structured_text(
+            sample_pdf,
+            output_pdf,
+            {0: [((0.05, 0.05, 0.95, 0.15), "Plain ASCII report")]},
+            dpi=72,
+            page_nums=[0],
+        )
+    assert not any("shaping-dependent" in r.message for r in caplog.records)

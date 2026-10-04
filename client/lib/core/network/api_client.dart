@@ -4,7 +4,7 @@ import 'dart:typed_data';
 import 'package:dio/dio.dart';
 
 import 'package:omniscribe_client/core/constants/api_constants.dart';
-import 'api_exceptions.dart';
+import 'package:omniscribe_client/core/network/api_exceptions.dart';
 
 /// Typed wrapper for API responses carrying data, status code, and headers.
 class ApiResponse<T> {

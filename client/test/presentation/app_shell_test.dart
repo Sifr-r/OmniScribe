@@ -6,21 +6,21 @@ import 'package:mocktail/mocktail.dart';
 import 'package:omniscribe_client/core/enums/app_tab.dart';
 import 'package:omniscribe_client/core/enums/server_health.dart';
 import 'package:omniscribe_client/core/theme/app_theme.dart';
-import 'package:omniscribe_client/data/models/document_result.dart';
-import 'package:omniscribe_client/data/models/process_settings.dart';
-import 'package:omniscribe_client/data/providers/repository_providers.dart';
-import 'package:omniscribe_client/data/providers/workstation_notifier.dart';
-import 'package:omniscribe_client/data/repositories/ocr_repository.dart';
+import 'package:omniscribe_client/features/workstation/document_result.dart';
+import 'package:omniscribe_client/features/workstation/process_settings.dart';
+import 'package:omniscribe_client/shared/providers/repository_providers.dart';
+import 'package:omniscribe_client/features/workstation/workstation_notifier.dart';
+import 'package:omniscribe_client/features/workstation/ocr_repository.dart';
 import 'package:omniscribe_client/core/websocket/ws_client.dart';
-import 'package:omniscribe_client/presentation/features/extraction_screen.dart';
-import 'package:omniscribe_client/presentation/features/glossary_screen.dart';
-import 'package:omniscribe_client/presentation/features/transcription_screen.dart';
-import 'package:omniscribe_client/presentation/features/translation_screen.dart';
-import 'package:omniscribe_client/presentation/jobs/job_history_screen.dart';
-import 'package:omniscribe_client/presentation/settings/settings_screen.dart';
-import 'package:omniscribe_client/presentation/shell/app_shell.dart';
-import 'package:omniscribe_client/presentation/shell/shell_state.dart';
-import 'package:omniscribe_client/presentation/workstation/workstation_screen.dart';
+import 'package:omniscribe_client/features/documents/extraction_screen.dart';
+import 'package:omniscribe_client/features/glossary/glossary_screen.dart';
+import 'package:omniscribe_client/features/transcription/transcription_screen.dart';
+import 'package:omniscribe_client/features/translation/translation_screen.dart';
+import 'package:omniscribe_client/features/jobs/job_history_screen.dart';
+import 'package:omniscribe_client/features/settings/settings_screen.dart';
+import 'package:omniscribe_client/app/app_shell.dart';
+import 'package:omniscribe_client/app/shell_state.dart';
+import 'package:omniscribe_client/features/workstation/workstation_screen.dart';
 
 class _MockOcrRepository extends Mock implements OcrRepository {}
 

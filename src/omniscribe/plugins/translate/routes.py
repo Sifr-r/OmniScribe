@@ -13,10 +13,7 @@ from omniscribe.plugins.translate.schemas import (
     NllbRequest,
     TranslationRequest,
 )
-from omniscribe.plugins.translate.service import (
-    TranslateError,
-    TranslationService,
-)
+from omniscribe.plugins.translate.service import TranslationService
 
 
 def build_translate_router(service: TranslationService) -> APIRouter:
@@ -55,10 +52,7 @@ def build_translate_router(service: TranslationService) -> APIRouter:
                 "bad_request",
                 "'text' or 'text_artifact_id'/'text_artifact_token' is required",
             )
-        try:
-            translated = await service.translate_sync(body)
-        except TranslateError:
-            raise
+        translated = await service.translate_sync(body)
         return {"translated_text": translated}
 
     @router.post("/api/translate/async", response_model=None)
@@ -82,10 +76,7 @@ def build_translate_router(service: TranslationService) -> APIRouter:
                 "bad_request",
                 "'text' or 'text_artifact_id'/'text_artifact_token' is required",
             )
-        try:
-            return await service.submit(body)
-        except TranslateError:
-            raise
+        return await service.submit(body)
 
     @router.get("/api/translate/status/{job_id}", response_model=None)
     async def translation_status(
@@ -130,9 +121,6 @@ def build_translate_router(service: TranslationService) -> APIRouter:
         specifically want raw NLLB behaviour without tree-aware
         postprocessing.
         """
-        try:
-            return await service.translate_nllb(body.text, body.target_language)
-        except TranslateError:
-            raise
+        return await service.translate_nllb(body.text, body.target_language)
 
     return router

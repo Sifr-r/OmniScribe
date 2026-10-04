@@ -72,9 +72,10 @@ void main() {
           SmartPreset.receipt);
     });
 
-    test('Suggests handwriting preset for note/handwritten/letter keywords', () {
-      expect(
-          SmartPreset.suggestForFilename('meeting_notes.pdf'), SmartPreset.handwriting);
+    test('Suggests handwriting preset for note/handwritten/letter keywords',
+        () {
+      expect(SmartPreset.suggestForFilename('meeting_notes.pdf'),
+          SmartPreset.handwriting);
       expect(SmartPreset.suggestForFilename('handwritten_journal.png'),
           SmartPreset.handwriting);
       expect(SmartPreset.suggestForFilename('archival_letter.tif'),
@@ -83,13 +84,14 @@ void main() {
           SmartPreset.handwriting);
     });
 
-    test('Suggests historical preset for archive/old/scan/history keywords', () {
+    test('Suggests historical preset for archive/old/scan/history keywords',
+        () {
       expect(SmartPreset.suggestForFilename('archive_deed_1920.pdf'),
           SmartPreset.historical);
       expect(SmartPreset.suggestForFilename('old_manuscript.tif'),
           SmartPreset.historical);
-      expect(
-          SmartPreset.suggestForFilename('scan_page_01.png'), SmartPreset.historical);
+      expect(SmartPreset.suggestForFilename('scan_page_01.png'),
+          SmartPreset.historical);
       expect(SmartPreset.suggestForFilename('history_census.pdf'),
           SmartPreset.historical);
       expect(SmartPreset.suggestForFilename('OLD_SCAN.JPG'),
@@ -97,8 +99,8 @@ void main() {
     });
 
     test('Suggests standard preset for generic or unmatched filenames', () {
-      expect(SmartPreset.suggestForFilename('document.pdf'),
-          SmartPreset.standard);
+      expect(
+          SmartPreset.suggestForFilename('document.pdf'), SmartPreset.standard);
       expect(SmartPreset.suggestForFilename('annual_report_2025.pdf'),
           SmartPreset.standard);
       expect(SmartPreset.suggestForFilename('research_paper.pdf'),
@@ -119,7 +121,8 @@ void main() {
       useAsync: true,
     );
 
-    test('Preserves host, model, and non-preset settings when applying preset', () {
+    test('Preserves host, model, and non-preset settings when applying preset',
+        () {
       final applied = SmartPreset.standard.applyToSettings(baseSettings);
       expect(applied.apiBase, 'http://custom-ocr.local:8000/v1');
       expect(applied.apiKey, 'secret_key_123');
@@ -265,7 +268,8 @@ void main() {
     });
 
     test('Returns null when settings have custom modifications', () {
-      final applied = SmartPreset.receipt.applyToSettings(const ProcessSettings());
+      final applied =
+          SmartPreset.receipt.applyToSettings(const ProcessSettings());
 
       // Changing deskew to false breaks receipt preset match
       final custom1 = applied.copyWith(deskew: false);

@@ -3,8 +3,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:omniscribe_client/core/theme/app_colors.dart';
 import 'package:omniscribe_client/data/models/models.dart';
-import 'package:omniscribe_client/presentation/providers/ai_setup_wizard_modal.dart';
-import 'package:omniscribe_client/presentation/workstation/controls/smart_preset_selector.dart';
+import 'package:omniscribe_client/features/providers/ai_setup_wizard_modal.dart';
+import 'package:omniscribe_client/features/workstation/controls/smart_preset_selector.dart';
 
 Widget _wrapWithTheme(Widget child) {
   return ProviderScope(
@@ -76,7 +76,8 @@ void main() {
       expect(find.text('Custom Settings'), findsOneWidget);
     });
 
-    testWidgets('Shows auto-detect banner when specialized filename is detected',
+    testWidgets(
+        'Shows auto-detect banner when specialized filename is detected',
         (tester) async {
       SmartPreset? appliedPreset;
 
@@ -128,7 +129,8 @@ void main() {
       expect(find.text('Use Cloud AI (Fast & Accurate)'), findsOneWidget);
     });
 
-    testWidgets('Navigates to Offline Setup (Step 2A) and back', (tester) async {
+    testWidgets('Navigates to Offline Setup (Step 2A) and back',
+        (tester) async {
       await tester.pumpWidget(
         _wrapWithTheme(
           Builder(
@@ -159,7 +161,8 @@ void main() {
       await tester.pumpAndSettle();
 
       // Returned to Step 1
-      expect(find.text('How would you like to run the AI engine?'), findsOneWidget);
+      expect(find.text('How would you like to run the AI engine?'),
+          findsOneWidget);
     });
 
     testWidgets('Navigates to Cloud Setup (Step 2B) and shows provider options',

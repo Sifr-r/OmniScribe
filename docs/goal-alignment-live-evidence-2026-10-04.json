@@ -1,0 +1,328 @@
+{
+  "benchmark": {
+    "schema": "omniscribe.confidence_eval_report.v1",
+    "harness_version": "2026-10-03.v1",
+    "status": "complete",
+    "exit_code": 0,
+    "allow_partial": false,
+    "requested": {
+      "paths": [
+        "grounded"
+      ],
+      "fixtures": [
+        "ground_truth_digital.json",
+        "ground_truth_hybrid.json",
+        "ground_truth_handwritten.json"
+      ]
+    },
+    "records": [
+      {
+        "path": "grounded",
+        "fixture": "ground_truth_digital.json",
+        "status": "scored",
+        "export_source": "omniscribe.plugins.documents.service.build_document_export(export_format='markdown', document=DocumentResult) -> omniscribe.core.writers.markdown.render_markdown",
+        "export_path": ".assessment-tmp\\live-grounded-20261004\\grounded\\digital\\export.md",
+        "document_artifact_path": ".assessment-tmp\\live-grounded-20261004\\grounded\\digital\\document.json",
+        "ground_truth_markdown_source": "ground_truth_blocks",
+        "latency_seconds": 46.65219380008057,
+        "confidence": {
+          "iou_threshold": 0.3,
+          "gt_blocks": 16,
+          "pipeline_blocks": 8,
+          "matched_blocks": 2,
+          "block_recall": 0.125,
+          "avg_iou": 0.3453663492315749,
+          "avg_text_similarity": 1.0
+        },
+        "markdown": {
+          "cer": 0.8964235949837436,
+          "wer": 0.9409937888198758,
+          "bleu": 0.6910109078521086,
+          "chrf": 10.191397814784692,
+          "heading_f1": 1.0,
+          "table_similarity": 0.0
+        },
+        "failure": null
+      },
+      {
+        "path": "grounded",
+        "fixture": "ground_truth_hybrid.json",
+        "status": "scored",
+        "export_source": "omniscribe.plugins.documents.service.build_document_export(export_format='markdown', document=DocumentResult) -> omniscribe.core.writers.markdown.render_markdown",
+        "export_path": ".assessment-tmp\\live-grounded-20261004\\grounded\\hybrid\\export.md",
+        "document_artifact_path": ".assessment-tmp\\live-grounded-20261004\\grounded\\hybrid\\document.json",
+        "ground_truth_markdown_source": "ground_truth_blocks",
+        "latency_seconds": 28.518556299852207,
+        "confidence": {
+          "iou_threshold": 0.3,
+          "gt_blocks": 38,
+          "pipeline_blocks": 22,
+          "matched_blocks": 15,
+          "block_recall": 0.39473684210526316,
+          "avg_iou": 0.5534762894157496,
+          "avg_text_similarity": 0.7463514157795452
+        },
+        "markdown": {
+          "cer": 0.6178428761651131,
+          "wer": 0.9215686274509803,
+          "bleu": 56.435495353897245,
+          "chrf": 85.93207812643149,
+          "heading_f1": 1.0,
+          "table_similarity": 0.0
+        },
+        "failure": null
+      },
+      {
+        "path": "grounded",
+        "fixture": "ground_truth_handwritten.json",
+        "status": "scored",
+        "export_source": "omniscribe.plugins.documents.service.build_document_export(export_format='markdown', document=DocumentResult) -> omniscribe.core.writers.markdown.render_markdown",
+        "export_path": ".assessment-tmp\\live-grounded-20261004\\grounded\\handwritten\\export.md",
+        "document_artifact_path": ".assessment-tmp\\live-grounded-20261004\\grounded\\handwritten\\document.json",
+        "ground_truth_markdown_source": "ground_truth_blocks",
+        "latency_seconds": 22.757072099950165,
+        "confidence": {
+          "iou_threshold": 0.3,
+          "gt_blocks": 14,
+          "pipeline_blocks": 17,
+          "matched_blocks": 9,
+          "block_recall": 0.6428571428571429,
+          "avg_iou": 0.5351845085643127,
+          "avg_text_similarity": 1.0
+        },
+        "markdown": {
+          "cer": 1.3703703703703705,
+          "wer": 1.6375,
+          "bleu": 27.503769866440503,
+          "chrf": 69.35926287595481,
+          "heading_f1": 1.0,
+          "table_similarity": 0.0
+        },
+        "failure": null
+      }
+    ],
+    "failures": [],
+    "missing": [],
+    "provenance": {
+      "harness": {
+        "script": "scripts/confidence_eval.py",
+        "version": "2026-10-03.v1",
+        "report_schema": "omniscribe.confidence_eval_report.v1",
+        "scored_artifact": "omniscribe.plugins.documents.service.build_document_export(export_format='markdown', document=DocumentResult) -> omniscribe.core.writers.markdown.render_markdown"
+      },
+      "run": {
+        "started_at": "2026-10-03T23:22:29.035600+00:00",
+        "finished_at": "2026-10-03T23:24:07.984169+00:00",
+        "wall_seconds": 98.948569
+      },
+      "endpoint": {
+        "api_base": "http://localhost:1234/v1",
+        "models": {
+          "grounded": "allenai/olmocr-2-7b"
+        }
+      },
+      "settings": {
+        "paths": [
+          "grounded"
+        ],
+        "document_processors": [
+          "reading_order",
+          "quality_analysis",
+          "structure_analysis",
+          "section_analysis",
+          "layout_enrichment",
+          "table_extraction",
+          "table_fallback"
+        ],
+        "max_image_dim": 1024,
+        "dpi": 200,
+        "concurrency": 1,
+        "iou_threshold": 0.3,
+        "score_markdown": true,
+        "allow_partial": false
+      },
+      "prompts": {
+        "grounded": {
+          "version": "2026-08-15.v1",
+          "module": "omniscribe.core.grounded.prompted",
+          "sha256": "9efda1cf69a51c652285a0869a57afc53fbfbc0e97360adfb8b0de80ed01c683"
+        },
+        "hybrid_ocr": {
+          "version": "2026-08-15.v1",
+          "module": "omniscribe.core.ocr.prompts"
+        }
+      },
+      "hardware": {
+        "platform": "Windows-11-10.0.26200-SP0",
+        "machine": "AMD64",
+        "processor": "Intel64 Family 6 Model 151 Stepping 2, GenuineIntel",
+        "python": "3.13.9",
+        "cpu_count": 20,
+        "torch": "2.14.0+cpu",
+        "cuda_available": false
+      },
+      "corpus": {
+        "corpus_id": "654927e3a1454f32",
+        "fixtures": [
+          {
+            "document": "digital.pdf",
+            "pdf": {
+              "path": "examples\\digital.pdf",
+              "exists": true,
+              "bytes": 126096,
+              "sha256": "a1441b8ebc564a3d25c56ed9642ed67dfb767a25bf18dfc3e24b70e321bd5e5a"
+            },
+            "ground_truth": {
+              "path": "tests\\fixtures\\ground_truth_digital.json",
+              "exists": true,
+              "bytes": 4763,
+              "sha256": "91203ed7ebed5633b05f597b9ce27c59e8f504a396e899fd98b9475d21107e94"
+            },
+            "ground_truth_markdown": {
+              "path": "tests\\fixtures\\ground_truth_digital.md",
+              "exists": false
+            },
+            "gt_blocks": 16,
+            "gt_page_size": [
+              1700,
+              2200
+            ]
+          },
+          {
+            "document": "hybrid.pdf",
+            "pdf": {
+              "path": "examples\\hybrid.pdf",
+              "exists": true,
+              "bytes": 102917,
+              "sha256": "57e8087e3e2e0c0937a2f911edd30eff9011b463fc4c8295cb4489c9f7ba860c"
+            },
+            "ground_truth": {
+              "path": "tests\\fixtures\\ground_truth_hybrid.json",
+              "exists": true,
+              "bytes": 7681,
+              "sha256": "20200a79bdd2d356b40905e62f400c5826f0ee6c4d9e3ca0a9efce60cbe166cd"
+            },
+            "ground_truth_markdown": {
+              "path": "tests\\fixtures\\ground_truth_hybrid.md",
+              "exists": false
+            },
+            "gt_blocks": 38,
+            "gt_page_size": [
+              1654,
+              1962
+            ]
+          },
+          {
+            "document": "handwritten.pdf",
+            "pdf": {
+              "path": "examples\\handwritten.pdf",
+              "exists": true,
+              "bytes": 145548,
+              "sha256": "d2183248339fbc4ca9fede5ab20ad5a6a4cf55684dac9ee1f82e6c73f2230c92"
+            },
+            "ground_truth": {
+              "path": "tests\\fixtures\\ground_truth_handwritten.json",
+              "exists": true,
+              "bytes": 2733,
+              "sha256": "f18af787b95a048de16c2c751f1394dff34abdee3b906d805a183c57f9ab569e"
+            },
+            "ground_truth_markdown": {
+              "path": "tests\\fixtures\\ground_truth_handwritten.md",
+              "exists": false
+            },
+            "gt_blocks": 14,
+            "gt_page_size": [
+              1654,
+              2170
+            ]
+          }
+        ],
+        "note": "dense.pdf / notes.pdf ground truth was bootstrapped from this pipeline's own output, so their absolute scores are not an independent accuracy measurement."
+      },
+      "raw_outputs": {
+        "directory": ".assessment-tmp\\live-grounded-20261004",
+        "per_run": [
+          "export.md (the scored canonical Markdown)",
+          "document.json (the rich DocumentResult the export was built from)",
+          "output.pdf (the pipeline's searchable-PDF output)"
+        ],
+        "report": ".assessment-tmp\\live-grounded-20261004\\report.json"
+      },
+      "datasets": {
+        "status": "unavailable",
+        "reason": "scripts/fetch_datasets.py is a license-gated stub; no external benchmark corpus has been downloaded or measured in this run.",
+        "datasets": [
+          "OmniDocBench",
+          "OCR-Quality",
+          "KIE-HVQA"
+        ]
+      },
+      "competitor_comparison": {
+        "measured": false,
+        "rows": [
+          {
+            "system": "Marker",
+            "cer": 0.042,
+            "wer": 0.078,
+            "heading_f1": 0.89,
+            "table_similarity": 0.84,
+            "measured": false,
+            "status": "illustrative",
+            "protocol": "not run with this harness on this corpus",
+            "source": "docs/rfcs/2026-09-competitive-gap-remediation.md",
+            "caveat": "Illustrative positioning only. Each system must be re-measured with this protocol on this corpus before these rows are treated as published results."
+          },
+          {
+            "system": "Docling",
+            "cer": 0.038,
+            "wer": 0.069,
+            "heading_f1": 0.91,
+            "table_similarity": 0.88,
+            "measured": false,
+            "status": "illustrative",
+            "protocol": "not run with this harness on this corpus",
+            "source": "docs/rfcs/2026-09-competitive-gap-remediation.md",
+            "caveat": "Illustrative positioning only. Each system must be re-measured with this protocol on this corpus before these rows are treated as published results."
+          },
+          {
+            "system": "MinerU",
+            "cer": 0.039,
+            "wer": 0.071,
+            "heading_f1": 0.9,
+            "table_similarity": 0.87,
+            "measured": false,
+            "status": "illustrative",
+            "protocol": "not run with this harness on this corpus",
+            "source": "docs/rfcs/2026-09-competitive-gap-remediation.md",
+            "caveat": "Illustrative positioning only. Each system must be re-measured with this protocol on this corpus before these rows are treated as published results."
+          },
+          {
+            "system": "Unstructured.io (OSS local)",
+            "cer": 0.065,
+            "wer": 0.118,
+            "heading_f1": 0.82,
+            "table_similarity": 0.78,
+            "measured": false,
+            "status": "illustrative",
+            "protocol": "not run with this harness on this corpus",
+            "source": "docs/rfcs/2026-09-competitive-gap-remediation.md",
+            "caveat": "Illustrative positioning only. Each system must be re-measured with this protocol on this corpus before these rows are treated as published results."
+          }
+        ]
+      }
+    }
+  },
+  "backend_http": {
+    "upload_status": 200,
+    "markdown_status": 200,
+    "structure_status": 200,
+    "pdf_pages": 1,
+    "searchable_text_length": 474,
+    "markdown_length": 568,
+    "failed_pages": null,
+    "model": "allenai/olmocr-2-7b",
+    "fixture": "handwritten.pdf",
+    "scope": "backend HTTP with live local model; client/device and fidelity not established"
+  },
+  "acceptance": "Executed requested grounded fixtures and backend HTTP journey; this is not quality, competitor, multilingual corpus, Flutter device or Redis acceptance."
+}

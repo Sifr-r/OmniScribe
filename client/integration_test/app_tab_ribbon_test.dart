@@ -5,9 +5,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:omniscribe_client/core/enums/app_tab.dart';
 import 'package:omniscribe_client/core/enums/server_health.dart';
-import 'package:omniscribe_client/data/providers/settings_notifier.dart';
-import 'package:omniscribe_client/presentation/shell/shell_state.dart';
-import 'package:omniscribe_client/presentation/workstation/workstation_screen.dart';
+import 'package:omniscribe_client/features/settings/settings_notifier.dart';
+import 'package:omniscribe_client/app/shell_state.dart';
+import 'package:omniscribe_client/features/workstation/workstation_screen.dart';
 
 import '_test_helpers.dart';
 import 'stub_omniscribe_server.dart';

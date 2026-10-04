@@ -239,6 +239,51 @@ def test_translate_status_unknown_job_404(api_client: TestClient) -> None:
     assert response.json()["error"] == "not_found"
 
 
+def test_translate_nllb_unknown_target_rejected(api_client: TestClient) -> None:
+    """An unmappable target is an explicit 422, not a silent English fallback.
+
+    Assessment finding 4: the NLLB route used to accept any string and
+    resolve unrecognised labels to ``eng_Latn``.
+    """
+    response = api_client.post(
+        "/api/translate/nllb",
+        json={"text": "hello", "target_language": "Klingon"},
+    )
+    assert response.status_code == 422
+    assert "Klingon" in response.text
+
+
+def test_translate_nllb_client_targets_accepted(
+    api_client: TestClient, monkeypatch: Any
+) -> None:
+    """Korean and Chinese (Simplified) used to resolve to English."""
+    from omniscribe.core.translate.nllb import NLLBResult, resolve_nllb_code
+    from omniscribe.plugins.translate import service
+
+    class _FakeEngine:
+        def is_available(self) -> bool:
+            return True
+
+        async def translate(self, text: str, target_language: str) -> NLLBResult:
+            return NLLBResult(
+                text="translated",
+                source_lang="eng_Latn",
+                target_lang=resolve_nllb_code(target_language),
+            )
+
+    monkeypatch.setattr(service, "_get_nllb_engine", lambda: _FakeEngine())
+    for label, expected in (
+        ("Korean", "kor_Hang"),
+        ("Chinese (Simplified)", "zho_Hans"),
+    ):
+        response = api_client.post(
+            "/api/translate/nllb",
+            json={"text": "hello", "target_language": label},
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["target_lang"] == expected
+
+
 def test_translate_nllb_happy_path(api_client: TestClient, monkeypatch: Any) -> None:
     from omniscribe.core.translate.nllb import NLLBResult
     from omniscribe.plugins.translate import service

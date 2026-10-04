@@ -53,6 +53,18 @@ _EMBED_FONT_DESCENDER: float = -0.299
 _UNICODE_CHAIN: tuple[fitz.Font, ...] | None = None
 _LOGGED_ONCE_KEYS: set[str] = set()
 
+#: Unicode blocks whose correct rendering depends on contextual shaping.
+#: Invisible runs use PDF ActualText to avoid glyph shaping/cmap ambiguity.
+_SHAPING_REQUIRED_RANGES: tuple[tuple[int, int], ...] = (
+    (0x0590, 0x05FF),  # Hebrew
+    (0x0600, 0x06FF),  # Arabic
+    (0x0750, 0x077F),  # Arabic Supplement
+    (0x08A0, 0x08FF),  # Arabic Extended-A
+    (0x0900, 0x097F),  # Devanagari
+    (0xFB50, 0xFDFF),  # Arabic Presentation Forms-A
+    (0xFE70, 0xFEFF),  # Arabic Presentation Forms-B
+)
+
 
 def _log_once(
     msg: str,
@@ -253,6 +265,11 @@ def _ensure_font_registered(page: fitz.Page, alias: str, font: fitz.Font) -> Non
     page.insert_font(fontname=alias, fontbuffer=font.buffer)
     registered.add(alias)
     page._omni_registered_fonts = registered  # type: ignore[attr-defined]
+
+
+def _needs_shaping(char: str) -> bool:
+    cp = ord(char)
+    return any(lo <= cp <= hi for lo, hi in _SHAPING_REQUIRED_RANGES)
 
 
 def _filter_uncovered_chars(text: str, font: fitz.Font) -> str:
@@ -460,6 +477,36 @@ def _draw_invisible_text(
     """
     text = (text or "").strip()
     if not text:
+        return
+
+    if any(_needs_shaping(char) for char in text):
+        if "\n" in text and _split_and_draw_lines(
+            page, rect_coords, text, page_width, page_height
+        ):
+            return
+        rect = fitz.Rect(
+            rect_coords[0] * page_width,
+            rect_coords[1] * page_height,
+            rect_coords[2] * page_width,
+            rect_coords[3] * page_height,
+        )
+        if rect.is_empty:
+            return
+        # The scan supplies the visible glyphs. A uniform invisible carrier
+        # spans the OCR box; PDF ActualText supplies the logical source for
+        # search/copy, independent of host fonts and RTL cmap aliases.
+        _draw_single_line_text(
+            page, rect_coords, "x" * len(text), page_width, page_height
+        )
+        stream_xref = page.get_contents()[-1]
+        document = page.parent
+        actual_text = text.encode("utf-16-be").hex()
+        document.update_stream(
+            stream_xref,
+            f"/Span << /ActualText <FEFF{actual_text}> >> BDC\n".encode("ascii")
+            + document.xref_stream(stream_xref)
+            + b"\nEMC",
+        )
         return
 
     # Phase 1: Handle full-page fallback detection

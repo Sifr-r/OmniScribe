@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import sys
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -47,6 +48,40 @@ class _CustomEnvSettingsSource(_DecodeLenientComplexMixin, EnvSettingsSource):
 
 class _CustomDotEnvSettingsSource(_DecodeLenientComplexMixin, DotEnvSettingsSource):
     pass
+
+
+def _default_artifact_base_dir() -> Path:
+    """Durable per-user root for state, artifacts and the patch file.
+
+    This used to be ``tempfile.gettempdir()``, which meant job history,
+    result handles and the SQLite state database were destroyed by ordinary
+    system temp cleanup while the UI still listed them as available. Use the
+    platform's per-user data location instead.
+
+    ``OMNISCRIBE_ARTIFACT_DIR`` still wins (it is this field's
+    ``validation_alias``), so containers and ephemeral deployments can keep
+    pointing at a disposable directory. Note this is a *location* change, not
+    a migration: state written by an older build under the system temp
+    directory is left untouched on disk and is not carried over.
+
+    If no per-user location can be determined at all (a scrubbed environment
+    with no ``HOME``/``USERPROFILE`` and no XDG var), this degrades to the
+    system temp directory rather than raising: settings must stay loadable in
+    a sanitised environment, which is exactly the old behaviour.
+    """
+    try:
+        if sys.platform == "win32":
+            local_app_data = os.environ.get("LOCALAPPDATA", "").strip()
+            if local_app_data:
+                return Path(local_app_data) / "OmniScribe"
+        elif sys.platform == "darwin":
+            return Path.home() / "Library" / "Application Support" / "OmniScribe"
+        xdg_data_home = os.environ.get("XDG_DATA_HOME", "").strip()
+        if xdg_data_home:
+            return Path(xdg_data_home) / "omniscribe"
+        return Path.home() / ".local" / "share" / "omniscribe"
+    except (RuntimeError, OSError):
+        return Path(tempfile.gettempdir())
 
 
 class RuntimeSettings(BaseSettings):
@@ -135,7 +170,7 @@ class RuntimeSettings(BaseSettings):
     )
 
     artifact_base_dir: Path = Field(
-        default_factory=lambda: Path(tempfile.gettempdir()),
+        default_factory=_default_artifact_base_dir,
         validation_alias="OMNISCRIBE_ARTIFACT_DIR",
     )
 
