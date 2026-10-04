@@ -48,7 +48,7 @@ merge:
 | `pytest (py3.13 on ubuntu-latest)` | ubuntu-latest | 3.13 | Current Ubuntu application path |
 | `pytest (py3.14 on ubuntu-latest)` | ubuntu-latest | 3.14 | Docker runtime version |
 | `pytest (py3.11 on windows-latest)` | windows-latest | 3.11 | Windows path at the supported floor |
-| `flutter (analyze + test)` | ubuntu-latest | n/a | Flutter static analysis and unit/widget tests |
+| `flutter (analyze + test + boundary gates)` | ubuntu-latest | n/a | Flutter static analysis, unit/widget tests, feature-ownership layout check and feature JSON contract check |
 | `container scan (trivy OSS)` | ubuntu-latest | n/a | High/critical CVE scan of the production image |
 
 The nightly workflow (`.github/workflows/nightly.yml`) is **not** a

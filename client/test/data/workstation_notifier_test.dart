@@ -88,7 +88,8 @@ void main() {
   });
 
   group('Document & Viewport Operations', () {
-    test('late progress attachment failure cannot submit cleared document', () async {
+    test('late progress attachment failure cannot submit cleared document',
+        () async {
       final container = makeContainer();
       addTearDown(container.dispose);
       final notifier = container.read(workstationProvider.notifier);
@@ -115,38 +116,47 @@ void main() {
       expect(_job(container).stage, 'Idle');
     });
 
-    test('replacement preloads its pages while an old generation is pending', () async {
+    test('replacement preloads its pages while an old generation is pending',
+        () async {
       final container = makeContainer();
       addTearDown(container.dispose);
       final notifier = container.read(workstationProvider.notifier);
       final oldPage = Completer<PagePreviewResult?>();
       when(() => ocrRepo.renderDocumentPagePreview(
-            fileBytes: any(named: 'fileBytes'),
-            filename: 'old.pdf',
-            pageIndex: any(named: 'pageIndex'),
-            docId: any(named: 'docId'),
-          )).thenAnswer((invocation) => invocation.namedArguments[#pageIndex] == 0
+                fileBytes: any(named: 'fileBytes'),
+                filename: 'old.pdf',
+                pageIndex: any(named: 'pageIndex'),
+                docId: any(named: 'docId'),
+              ))
+          .thenAnswer((invocation) => invocation.namedArguments[#pageIndex] == 0
               ? Future.value(PagePreviewResult(
-                  bytes: Uint8List.fromList([1]), totalPages: 2, docId: 'old-doc'))
+                  bytes: Uint8List.fromList([1]),
+                  totalPages: 2,
+                  docId: 'old-doc'))
               : oldPage.future);
       final newPreview = Uint8List.fromList([2]);
       when(() => ocrRepo.renderDocumentPagePreview(
-            fileBytes: any(named: 'fileBytes'),
-            filename: 'new.pdf',
-            pageIndex: any(named: 'pageIndex'),
-            docId: any(named: 'docId'),
-          )).thenAnswer((_) async => PagePreviewResult(
-                bytes: newPreview, totalPages: 2, docId: 'new-doc'));
+                fileBytes: any(named: 'fileBytes'),
+                filename: 'new.pdf',
+                pageIndex: any(named: 'pageIndex'),
+                docId: any(named: 'docId'),
+              ))
+          .thenAnswer((_) async => PagePreviewResult(
+              bytes: newPreview, totalPages: 2, docId: 'new-doc'));
 
       notifier.loadDocument(Uint8List.fromList([1]), 'old.pdf');
       await untilCalled(() => ocrRepo.renderDocumentPagePreview(
-            fileBytes: any(named: 'fileBytes'), filename: 'old.pdf',
-            pageIndex: 1, docId: any(named: 'docId'),
+            fileBytes: any(named: 'fileBytes'),
+            filename: 'old.pdf',
+            pageIndex: 1,
+            docId: any(named: 'docId'),
           ));
       notifier.loadDocument(Uint8List.fromList([2]), 'new.pdf');
       await untilCalled(() => ocrRepo.renderDocumentPagePreview(
-            fileBytes: any(named: 'fileBytes'), filename: 'new.pdf',
-            pageIndex: 1, docId: any(named: 'docId'),
+            fileBytes: any(named: 'fileBytes'),
+            filename: 'new.pdf',
+            pageIndex: 1,
+            docId: any(named: 'docId'),
           )).timeout(const Duration(seconds: 2));
       oldPage.complete(PagePreviewResult(bytes: Uint8List.fromList([9])));
       await Future<void>.delayed(Duration.zero);
@@ -169,7 +179,8 @@ void main() {
           throwsArgumentError);
     });
 
-    test('path-only or empty-buffer sources cannot dispatch OCR uploads', () async {
+    test('path-only or empty-buffer sources cannot dispatch OCR uploads',
+        () async {
       final container = makeContainer();
       addTearDown(container.dispose);
       final notifier = container.read(workstationProvider.notifier);
@@ -180,11 +191,13 @@ void main() {
         await notifier.processOcrAsync();
         expect(_job(container).error, 'Document file bytes unavailable');
       }
-      verifyNever(() => ocrRepo.openProgressSession(
-          clientId: any(named: 'clientId')));
+      verifyNever(
+          () => ocrRepo.openProgressSession(clientId: any(named: 'clientId')));
     });
 
-    test('adoption marks PDF readiness and rerun clears content, retaining previews', () {
+    test(
+        'adoption marks PDF readiness and rerun clears content, retaining previews',
+        () {
       final container = makeContainer();
       addTearDown(container.dispose);
       final notifier = container.read(workstationProvider.notifier);
@@ -193,7 +206,8 @@ void main() {
       notifier.hydratePagesFromTextArtifact({'0': 'Old recognition'});
       final processed = Uint8List.fromList([3, 4]);
       notifier.adoptProcessedDocument(processed);
-      expect(container.read(workstationProvider).processedPdfBytes, same(processed));
+      expect(container.read(workstationProvider).processedPdfBytes,
+          same(processed));
       expect(container.read(workstationProvider).filePath, isNull);
       expect(container.read(workstationProvider).filename, 'scan.pdf');
 
@@ -206,7 +220,8 @@ void main() {
       expect(state.loadedBytes, same(processed));
     });
 
-    test('clearing invalidates an OCR reply while cleanup is pending', () async {
+    test('clearing invalidates an OCR reply while cleanup is pending',
+        () async {
       final container = makeContainer();
       addTearDown(container.dispose);
       final notifier = container.read(workstationProvider.notifier);
@@ -215,10 +230,9 @@ void main() {
       final result = Completer<ProcessOcrResult>();
       when(() => ocrRepo.openProgressSession(clientId: any(named: 'clientId')))
           .thenAnswer((_) async => const ProgressSessionHandle(
-                channelId: 'clear-channel', sessionToken: 'clear-token'));
+              channelId: 'clear-channel', sessionToken: 'clear-token'));
       when(() => ocrRepo.cancelProgressChannel('clear-channel',
-              sessionToken: 'clear-token'))
-          .thenAnswer((_) => cleanup.future);
+          sessionToken: 'clear-token')).thenAnswer((_) => cleanup.future);
       when(() => ocrRepo.processOcrSync(
             fileBytes: any(named: 'fileBytes'),
             filename: any(named: 'filename'),
@@ -242,14 +256,17 @@ void main() {
       await notifier.clearDocument();
       expect(container.read(workstationProvider).hasDocument, isFalse);
       expect(_job(container).stage, 'Idle');
-      result.complete(ProcessOcrResult(pdfBytes: Uint8List.fromList([9]), headers: const {}));
+      result.complete(ProcessOcrResult(
+          pdfBytes: Uint8List.fromList([9]), headers: const {}));
       cleanup.complete(true);
       await processing;
       expect(container.read(workstationProvider).hasDocument, isFalse);
       expect(_job(container).stage, 'Idle');
     });
 
-    test('late async submission failure cannot overwrite replacement during cleanup', () async {
+    test(
+        'late async submission failure cannot overwrite replacement during cleanup',
+        () async {
       final container = makeContainer();
       addTearDown(container.dispose);
       final notifier = container.read(workstationProvider.notifier);
@@ -257,10 +274,9 @@ void main() {
       final cleanup = Completer<bool>();
       when(() => ocrRepo.openProgressSession(clientId: any(named: 'clientId')))
           .thenAnswer((_) async => const ProgressSessionHandle(
-                channelId: 'failed-channel', sessionToken: 'failed-token'));
+              channelId: 'failed-channel', sessionToken: 'failed-token'));
       when(() => ocrRepo.cancelProgressChannel('failed-channel',
-              sessionToken: 'failed-token'))
-          .thenAnswer((_) => cleanup.future);
+          sessionToken: 'failed-token')).thenAnswer((_) => cleanup.future);
       when(() => ocrRepo.processOcrAsync(
             fileBytes: any(named: 'fileBytes'),
             filename: any(named: 'filename'),
@@ -270,7 +286,8 @@ void main() {
             onSendProgress: any(named: 'onSendProgress'),
           )).thenThrow(StateError('old submission failed'));
 
-      final processing = expectLater(notifier.processOcrAsync(), throwsStateError);
+      final processing =
+          expectLater(notifier.processOcrAsync(), throwsStateError);
       await untilCalled(() => ocrRepo.cancelProgressChannel('failed-channel',
           sessionToken: 'failed-token'));
       final replacement = Uint8List.fromList([2]);
@@ -278,12 +295,15 @@ void main() {
       cleanup.complete(true);
       await processing;
 
-      expect(container.read(workstationProvider).loadedBytes, same(replacement));
+      expect(
+          container.read(workstationProvider).loadedBytes, same(replacement));
       expect(_job(container).stage, 'Idle');
       expect(_job(container).error, isNull);
     });
 
-    test('rerun without live blocks hydrates the new artifact instead of old text', () async {
+    test(
+        'rerun without live blocks hydrates the new artifact instead of old text',
+        () async {
       final container = makeContainer();
       addTearDown(container.dispose);
       final notifier = container.read(workstationProvider.notifier);
@@ -301,11 +321,11 @@ void main() {
             onSendProgress: any(named: 'onSendProgress'),
             receiveTimeout: any(named: 'receiveTimeout'),
           )).thenAnswer((_) async => ProcessOcrResult(
-                pdfBytes: Uint8List.fromList([3]),
-                headers: const {},
-                textArtifactId: 'new-artifact',
-                textArtifactToken: 'new-token',
-              ));
+            pdfBytes: Uint8List.fromList([3]),
+            headers: const {},
+            textArtifactId: 'new-artifact',
+            textArtifactToken: 'new-token',
+          ));
       when(() => ocrRepo.getTextArtifact('new-artifact', 'new-token'))
           .thenAnswer((_) async => '{"0":"New recognition"}');
 
@@ -348,7 +368,8 @@ void main() {
       final notifier = container.read(workstationProvider.notifier);
       final selection = container.read(documentSelectionProvider.notifier);
 
-      notifier.loadDocument(null, 'sample.pdf', filePath: 'sample.pdf', pageCount: 3);
+      notifier.loadDocument(null, 'sample.pdf',
+          filePath: 'sample.pdf', pageCount: 3);
       selection.select(const BBoxItem(
         blockId: 'b1',
         page: 0,
@@ -378,7 +399,8 @@ void main() {
       addTearDown(container.dispose);
       final notifier = container.read(workstationProvider.notifier);
 
-      notifier.loadDocument(null, 'sample.pdf', filePath: 'sample.pdf', pageCount: 2);
+      notifier.loadDocument(null, 'sample.pdf',
+          filePath: 'sample.pdf', pageCount: 2);
 
       const box1 = BBoxItem(
         blockId: 'p0_b0',
@@ -440,7 +462,8 @@ void main() {
       addTearDown(container.dispose);
       final notifier = container.read(workstationProvider.notifier);
 
-      notifier.loadDocument(null, 'sample.pdf', filePath: 'sample.pdf', pageCount: 2);
+      notifier.loadDocument(null, 'sample.pdf',
+          filePath: 'sample.pdf', pageCount: 2);
       expect(container.read(workstationProvider).hasDocument, isTrue);
 
       await notifier.clearDocument();
@@ -452,7 +475,8 @@ void main() {
       addTearDown(container.dispose);
       final notifier = container.read(workstationProvider.notifier);
 
-      notifier.loadDocument(null, 'sample.pdf', filePath: 'sample.pdf', pageCount: 2);
+      notifier.loadDocument(null, 'sample.pdf',
+          filePath: 'sample.pdf', pageCount: 2);
 
       // Seed a known-good bbox on page 0
       const seed = BBoxItem(
@@ -491,7 +515,8 @@ void main() {
       addTearDown(container.dispose);
       final notifier = container.read(workstationProvider.notifier);
 
-      notifier.loadDocument(null, 'sample.pdf', filePath: 'sample.pdf', pageCount: 2);
+      notifier.loadDocument(null, 'sample.pdf',
+          filePath: 'sample.pdf', pageCount: 2);
       final before = container.read(workstationProvider);
 
       // Negative page index must not throw and must not change state
@@ -577,7 +602,8 @@ void main() {
       addTearDown(container.dispose);
       final notifier = container.read(workstationProvider.notifier);
 
-      notifier.loadDocument(null, 'sample.pdf', filePath: 'sample.pdf', pageCount: 1);
+      notifier.loadDocument(null, 'sample.pdf',
+          filePath: 'sample.pdf', pageCount: 1);
 
       // 1. Block complete
       notifier.handleWsFrame(const BlockCompleteFrame(
@@ -656,7 +682,8 @@ void main() {
       addTearDown(container.dispose);
       final notifier = container.read(workstationProvider.notifier);
 
-      notifier.loadDocument(null, 'sample.pdf', filePath: 'sample.pdf', pageCount: 1);
+      notifier.loadDocument(null, 'sample.pdf',
+          filePath: 'sample.pdf', pageCount: 1);
 
       // Block 0: confidence = 1.0 -> avg = 1.0
       notifier.handleWsFrame(const BlockCompleteFrame(
@@ -706,7 +733,8 @@ void main() {
       addTearDown(container.dispose);
       final notifier = container.read(workstationProvider.notifier);
 
-      notifier.loadDocument(null, 'sample.pdf', filePath: 'sample.pdf', pageCount: 1);
+      notifier.loadDocument(null, 'sample.pdf',
+          filePath: 'sample.pdf', pageCount: 1);
 
       // Sequence: 0.8, null, 0.6, null, null
       // Scored values: 0.8, 0.6 -> avg should be 0.7
@@ -1659,7 +1687,8 @@ void main() {
   });
 
   group('Sprint 3 (RFC 002 §4 Option b, audit U12) — tryWithSamplePdf', () {
-    test('late sample success or failure cannot replace a newer upload', () async {
+    test('late sample success or failure cannot replace a newer upload',
+        () async {
       for (final fails in [false, true]) {
         final download = Completer<Uint8List>();
         when(() => samplePdfRepo.fetchSamplePdf('digital.pdf'))
@@ -1683,7 +1712,8 @@ void main() {
       }
     });
 
-    test('sample replacement clears old pages, selection and artifacts', () async {
+    test('sample replacement clears old pages, selection and artifacts',
+        () async {
       final container = makeContainer();
       addTearDown(container.dispose);
       final notifier = container.read(workstationProvider.notifier);

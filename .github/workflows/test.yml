@@ -254,7 +254,7 @@ jobs:
           category: trivy
 
   client-tests:
-    name: flutter (analyze + test)
+    name: flutter (analyze + test + boundary gates)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -266,6 +266,19 @@ jobs:
 
       - name: Install client dependencies
         run: cd client && flutter pub get
+
+      # Feature ownership and JSON contracts were documentation-only checks:
+      # nothing ran them, so a feature could start importing another feature's
+      # internals or drift from the server contract without failing any job.
+      # The layout check is stdlib-only, so the runner's python3 is enough.
+      - name: Check client feature ownership and import boundaries
+        run: python3 client/tool/check_feature_layout.py
+
+      # --enable-asserts is required, not optional: the contract tool asserts,
+      # and without the flag every assertion is compiled out so the script
+      # prints "passed" and exits 0 even when a contract is violated.
+      - name: Check client feature JSON contracts
+        run: cd client && dart --enable-asserts tool/check_feature_contracts.dart
 
       - name: Analyze client code
         run: cd client && flutter analyze --fatal-infos

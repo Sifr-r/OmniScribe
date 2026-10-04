@@ -188,6 +188,43 @@ analyses. The build orchestration at `scripts/build_windows.py`
 wraps the spec + the smoke test (boots the binary, hits
 `/api/health`, kills the process). See the source for details.
 
+Both build-time and existing-bundle smoke use the same gate. It refuses an
+occupied loopback port, polls without waiting for stdout, validates health and
+the bundled digital sample, and stops only the process tree it launched.
+Artifacts, SQLite state, spool files, extraction and logs are isolated under
+`build/bundle-smoke-*`; the printed evidence directory is retained for review.
+Retaining it also avoids Windows extraction-file locks masking the probe result.
+
+### Exclusion audit (2026-10-04)
+
+The installed Transformers 5.16.1 import tree was checked against every
+`EXCLUDES` entry. OmniScribe and Surya contain no direct import of an excluded
+module. The development/tool exclusions are `pytest`, `pytest_asyncio`,
+`pytest_cov`, `hypothesis`, `mypy`, `ruff`, `pip`, `setuptools`, `wheel`, `twine`,
+`_pytest`, `tests`, `IPython`, `jupyter`, `notebook`, `sphinx`, and `PyInstaller`.
+Transformers' pytest imports occur in its test helper, rather than its runtime
+processing/modeling import chain.
+
+The seven excluded model packages are `deepseek_ocr2`, `glm_ocr`, `got_ocr2`,
+`lighton_ocr`, `paddleocr_vl`, `pp_ocrv5_mobile_det`, and `pp_ocrv5_mobile_rec`.
+References outside those packages occur in the models `TYPE_CHECKING` branch
+and modular model-generation sources; the server/Surya runtime does not select
+those models. The redundant `pp_ocrv5_mobile_*` entry was removed because
+PyInstaller exclusions are explicit module names. `transformers.quantizers`
+remains included: `finegrained_fp8` imports it during runtime model initialization.
+
+`tests/scripts/test_bundle_imports.py` makes every excluded module unavailable
+in a fresh interpreter, then imports the server, Surya detection, and Transformers
+processing/modeling. This guards the observed runtime chain when dependencies
+change; it does not prove every optional Transformers model can load.
+`tests/scripts/test_bundle_smoke.py` checks occupied-port rejection, silent-log
+deadline behavior, isolated state, response validation, and owned-process cleanup.
+
+The existing 482,629,422-byte Windows binary served `/api/health` and
+`/api/sample-pdf/digital.pdf` with HTTP 200 on 2026-10-04. It mounted all 14
+plugins with isolated SQLite storage. This proves that existing artifact boots;
+a release of newer source still requires a fresh build and its own smoke result.
+
 ### Known build issue: anyio + PyInstaller static analysis
 
 **Status (2026-09-06): RESOLVED.** The 14-attempt failure record

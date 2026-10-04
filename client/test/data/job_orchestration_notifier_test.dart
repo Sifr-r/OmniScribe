@@ -107,7 +107,8 @@ void main() {
       await notifier.handleWsClosed();
 
       expect(container.read(jobOrchestrationProvider).stage, 'Complete');
-      expect(container.read(jobOrchestrationProvider).documentArtifactId, 'rich-1');
+      expect(container.read(jobOrchestrationProvider).documentArtifactId,
+          'rich-1');
       expect(container.read(jobOrchestrationProvider).documentArtifactToken,
           'rich-token-1');
       expect(container.read(jobOrchestrationProvider).statusMessage,
@@ -343,7 +344,8 @@ void main() {
       expect(stateA == stateA2, isTrue);
     });
 
-    test('same buffer retains a consistent hash without deep byte scanning', () {
+    test('same buffer retains a consistent hash without deep byte scanning',
+        () {
       final multiMb1 = Uint8List(1024 * 1024);
 
       final state1 = WorkstationState(loadedBytes: multiMb1);

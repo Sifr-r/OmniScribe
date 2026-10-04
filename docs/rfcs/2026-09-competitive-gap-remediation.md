@@ -125,10 +125,10 @@ new runtime tests.
 
 | Original closeout action | Current disposition |
 | --- | --- |
-| Real Redis, 2 workers × 10 concurrent jobs, recovery | Open. `scripts/dev_redis_smoke.py` is only a health/keyspace probe; extend it to assert dispatch, terminal results and recovery, then measure the chosen deployment. |
+| Real Redis, 2 workers × 10 concurrent jobs, recovery | Live completion/recovery remains open. `scripts/dev_redis_smoke.py` already supports concurrent jobs, token-bound results and operator-triggered worker recovery; measure it against the chosen deployment with a reachable inference endpoint. The 2026-10-04 local run proved broker/state/dispatch, but inference failed. |
 | README benchmark command and table provenance | Closed in docs: the README has the benchmark command and [benchmarks.md](../benchmarks.md#provenance) separates internal baselines from illustrative competitor numbers. |
 | Add `--score-markdown` to nightly | Superseded by the documented manual-run decision. CI has no live VLM endpoint, and the evaluator can fail soft with empty tables; a green step would not prove OCR quality. |
-| Public OmniDocBench evaluation/publication | Open after license approval and downloader/conversion implementation. `scripts/fetch_datasets.py` has gated OCR-Quality/KIE-HVQA stubs and no OmniDocBench downloader. |
+| Public OmniDocBench evaluation/publication | Model-backed scoring/publication remains open. The 2026-10-04 dataset tool supports pinned research-only OmniDocBench acquisition/page conversion and preserved OCR-Quality/KIE-HVQA sources. One OmniDocBench page and KIE annotations were acquired; missing calibration/regional annotations remain explicit gates. See [dataset terms/evidence](../benchmarks.md#5-dataset-ingestion--license-review-status). |
 | Table fallback regression tests | Implemented in `tests/core/processors/test_table_fallback.py`; the original review recorded seven tests. |
 | One-time full fast gate from the 2026-09-07 plan | Superseded by later dated verification, including the [2026-09-29 review](../modularity-review-2026-09-29.md#verification). Every new code change still requires the relevant gate; historical counts do not prove today's tree. |
 

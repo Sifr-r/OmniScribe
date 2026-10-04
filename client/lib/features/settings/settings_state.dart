@@ -1,6 +1,5 @@
 import 'package:flutter/foundation.dart';
 import 'package:omniscribe_client/features/settings/runtime_config.dart';
-import 'package:omniscribe_client/features/workstation/process_settings.dart';
 
 @immutable
 class SettingsState {

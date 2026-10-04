@@ -5,7 +5,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:omniscribe_client/core/enums/app_tab.dart';
 import 'package:omniscribe_client/core/enums/server_health.dart';
-import 'package:omniscribe_client/features/workstation/process_settings.dart';
 import 'package:omniscribe_client/features/providers/provider_browser_state.dart';
 import 'package:omniscribe_client/features/providers/provider_notifier.dart';
 import 'package:omniscribe_client/shared/providers/repository_providers.dart';

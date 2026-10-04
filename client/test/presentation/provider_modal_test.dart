@@ -4,11 +4,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:omniscribe_client/core/theme/app_colors.dart';
-import 'package:omniscribe_client/features/workstation/process_settings.dart';
 import 'package:omniscribe_client/features/providers/provider_preset.dart';
 import 'package:omniscribe_client/shared/providers/repository_providers.dart';
-import 'package:omniscribe_client/features/settings/config_repository.dart';
-import 'package:omniscribe_client/features/providers/provider_repository.dart';
 import 'package:omniscribe_client/features/providers/provider_modal.dart';
 
 class _MockProviderRepository extends Mock implements ProviderRepository {}

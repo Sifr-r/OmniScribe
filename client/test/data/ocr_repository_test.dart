@@ -14,28 +14,34 @@ void main() {
     registerFallbackValue(FormData());
   });
 
-  test('sync and async result downloads preserve rich document handles', () async {
+  test('sync and async result downloads preserve rich document handles',
+      () async {
     final api = _MockApiClient();
     final repo = OcrRepositoryImpl(api);
     final response = ApiResponse<Uint8List>(
-      data: Uint8List.fromList([1]), statusCode: 200,
+      data: Uint8List.fromList([1]),
+      statusCode: 200,
       headers: const {
-        'x-text-artifact-id': 'text', 'x-text-artifact-token': 'text-token',
+        'x-text-artifact-id': 'text',
+        'x-text-artifact-token': 'text-token',
         'x-document-artifact-id': 'rich',
         'x-document-artifact-token': 'rich-token',
       },
     );
-    when(() => api.postMultipartBytes(ApiConstants.processSync,
-      formData: any(named: 'formData'),
-      onSendProgress: any(named: 'onSendProgress'),
-      receiveTimeout: any(named: 'receiveTimeout'),
-    )).thenAnswer((_) async => response);
-    when(() => api.getBytesWithHeaders(ApiConstants.jobResult('job'),
-      headers: any(named: 'headers'),
-    )).thenAnswer((_) async => response);
+    when(() => api.postMultipartBytes(
+          ApiConstants.processSync,
+          formData: any(named: 'formData'),
+          onSendProgress: any(named: 'onSendProgress'),
+          receiveTimeout: any(named: 'receiveTimeout'),
+        )).thenAnswer((_) async => response);
+    when(() => api.getBytesWithHeaders(
+          ApiConstants.jobResult('job'),
+          headers: any(named: 'headers'),
+        )).thenAnswer((_) async => response);
     final sync = await repo.processOcrSync(
-      fileBytes: Uint8List.fromList([1]), filename: 'scan.pdf');
-    final downloaded = await repo.downloadProcessedResult('job', token: 'pdf-token');
+        fileBytes: Uint8List.fromList([1]), filename: 'scan.pdf');
+    final downloaded =
+        await repo.downloadProcessedResult('job', token: 'pdf-token');
     for (final result in [sync, downloaded]) {
       expect(result.documentArtifactId, 'rich');
       expect(result.documentArtifactToken, 'rich-token');

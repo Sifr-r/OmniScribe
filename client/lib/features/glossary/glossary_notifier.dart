@@ -248,7 +248,8 @@ class GlossaryNotifier extends Notifier<GlossaryState> {
         if (ref.mounted) {
           state = state.copyWith(
             isLoading: false,
-            error: 'Could not read glossary import $jobId status; it may still be running: $e',
+            error:
+                'Could not read glossary import $jobId status; it may still be running: $e',
           );
         }
         return res;

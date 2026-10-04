@@ -5,8 +5,6 @@ import 'package:omniscribe_client/features/providers/provider_preset.dart';
 import 'package:omniscribe_client/features/providers/provider_notifier.dart';
 import 'package:omniscribe_client/shared/providers/repository_providers.dart';
 import 'package:omniscribe_client/features/settings/settings_notifier.dart';
-import 'package:omniscribe_client/features/settings/config_repository.dart';
-import 'package:omniscribe_client/features/providers/provider_repository.dart';
 
 class _MockProviderRepository extends Mock implements ProviderRepository {}
 

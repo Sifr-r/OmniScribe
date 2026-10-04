@@ -31,7 +31,6 @@ import argparse
 import shutil
 import subprocess
 import sys
-import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -99,73 +98,18 @@ def build() -> None:
 
 
 def smoke() -> None:
-    """Boot the bundle, hit /api/health, kill it. End-to-end verification."""
-    if not BINARY.exists():
-        raise SystemExit(f"binary not found at {BINARY} — did the build step run?")
-    size_mb = BINARY.stat().st_size / 1024 / 1024
-    print(f"\nbinary: {BINARY}")
-    print(f"size:   {size_mb:.1f} MB")
+    """Use the bounded, isolated gate for existing and freshly built bundles."""
+    if __package__:
+        from .smoke_existing import smoke as package_smoke
 
-    # Launch the binary on a fixed port, give it a few seconds to extract
-    # + boot (cold first-run, no VLM endpoint — expect OCR endpoints to
-    # 503 but the health probe must return 200).
-    port = 18765
-    print(f"\nlaunching: {BINARY.name} --port {port}")
-    proc = subprocess.Popen(
-        [str(BINARY), "--port", str(port)],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        bufsize=1,
-    )
+        result = package_smoke(BINARY, port=18765, deadline_s=90)
+    else:
+        from smoke_existing import smoke as standalone_smoke
 
-    deadline = time.time() + 60
-    health_ok = False
-    health_body = ""
-    boot_log = []
-    try:
-        while time.time() < deadline:
-            line = proc.stdout.readline() if proc.stdout else ""
-            if line:
-                boot_log.append(line.rstrip())
-                if "Uvicorn running on" in line or "Application startup" in line:
-                    print(line.rstrip())
-            if proc.poll() is not None:
-                # Process exited prematurely — surface the tail of the log
-                tail = "\n".join(boot_log[-30:])
-                raise SystemExit(
-                    f"binary exited with rc={proc.returncode} before health check.\n"
-                    f"--- last 30 lines of boot log ---\n{tail}"
-                )
-            if health_ok:
-                continue
-            try:
-                import urllib.request
+        result = standalone_smoke(BINARY, port=18765, deadline_s=90)
 
-                with urllib.request.urlopen(
-                    f"http://127.0.0.1:{port}/api/health", timeout=2
-                ) as resp:
-                    health_body = resp.read().decode("utf-8", errors="replace")
-                    if resp.status == 200:
-                        health_ok = True
-                        break
-            except Exception:
-                # Not up yet — keep polling.
-                time.sleep(0.5)
-    finally:
-        proc.terminate()
-        try:
-            proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-
-    if not health_ok:
-        tail = "\n".join(boot_log[-30:])
-        raise SystemExit(
-            f"health check did not return 200 within 60s.\n"
-            f"--- last 30 lines of boot log ---\n{tail}"
-        )
-    print(f"\nhealth check OK: /api/health -> 200 {health_body.strip()[:200]}")
+    if result != 0:
+        raise SystemExit("Windows bundle smoke failed")
 
 
 def main() -> int:

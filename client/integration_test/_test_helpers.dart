@@ -7,10 +7,6 @@ import 'package:integration_test/integration_test.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:omniscribe_client/data/models/models.dart';
 import 'package:omniscribe_client/shared/providers/repository_providers.dart';
-// ConfigUpdate is a transitive type used by ConfigRepository.updateConfig
-// when mocktail matchers are applied with `any()`; without registering a
-// fallback the matcher library raises a `Bad state: registerFallbackValue`.
-import 'package:omniscribe_client/data/repositories/repositories.dart';
 import 'package:omniscribe_client/main.dart';
 import 'package:riverpod/misc.dart' show Override;
 
@@ -33,6 +29,10 @@ const String kPlatformDesktop = 'desktop';
 /// mocked repositories.
 void registerOmniscribeFallbacks() {
   registerFallbackValue(const ProcessSettings());
+  // `ConfigRepository.updateConfig` takes this non-primitive DTO and the
+  // integration tests match it with `any()`. Without a registered fallback
+  // mocktail raises `Bad state: registerFallbackValue` at the call site.
+  // Reached through the `data/models/models.dart` barrel, which re-exports it.
   registerFallbackValue(const ConfigUpdate());
   registerFallbackValue(Uint8List(0));
   registerFallbackValue(_FakeExportDocxRequest());

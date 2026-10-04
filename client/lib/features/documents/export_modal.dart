@@ -113,214 +113,219 @@ class _ExportModalState extends ConsumerState<ExportModal> {
       child: AppCard(
         variant: AppCardVariant.defaultCard,
         padding: AppCardPadding.lg,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            // Modal Header
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Expanded(
+        // The body column is taller than the height the dialog is given, so it
+        // scrolls instead of overflowing: without this the status banner and
+        // the action buttons at the bottom could not be seen or reached.
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              // Modal Header
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Expanded(
+                    child: Row(
+                      children: [
+                        Container(
+                          width: 32,
+                          height: 32,
+                          decoration: BoxDecoration(
+                            color: colors.brand.withValues(alpha: 0.15),
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Center(
+                            child: Icon(Icons.file_download_outlined,
+                                size: 18, color: colors.brand),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Export Document',
+                                style: AppTypography.titleMedium(
+                                  color: colors.textPrimary,
+                                ),
+                              ),
+                              Text(
+                                'Convert and download recognized document data',
+                                style: AppTypography.bodySmall(
+                                  color: colors.textMuted,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: 'Close',
+                    icon: Icon(Icons.close_rounded,
+                        size: 20, color: colors.textMuted),
+                    onPressed: () => Navigator.of(context).pop(),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              Divider(height: 1, color: colors.border),
+              const SizedBox(height: 16),
+
+              // Document Summary Banner
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: colors.cardRaised,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: colors.border),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.description_outlined,
+                        size: 20, color: colors.brand),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            wsState.filename ?? 'Untitled Document',
+                            style: AppTypography.bodySmall(
+                              color: colors.textPrimary,
+                            ).copyWith(fontWeight: FontWeight.w600),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          Text(
+                            '${wsState.pageCount} page${wsState.pageCount == 1 ? "" : "s"} • ${wsState.allBBoxes.length} extracted bounding boxes',
+                            style: AppTypography.micro(
+                              color: colors.textMuted,
+                            ),
+                          ),
+                          if ((jobState.trustSummary?.flaggedCount ?? 0) > 0)
+                            Text(
+                              '${jobState.trustSummary!.flaggedCount} block${jobState.trustSummary!.flaggedCount == 1 ? "" : "s"} flagged for review',
+                              style: AppTypography.micro(
+                                color: colors.warning,
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                    AppBadge(
+                      label: jobState.isProcessing
+                          ? 'PROCESSING'
+                          : isReady
+                              ? 'READY'
+                              : 'NO DATA',
+                      variant: isReady
+                          ? AppBadgeVariant.success
+                          : AppBadgeVariant.warning,
+                      size: AppBadgeSize.sm,
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 20),
+
+              // Export Format Selection
+              const SectionHeader(title: 'Export Format'),
+              const SizedBox(height: 8),
+              AppSelect<ExportFormat>(
+                label: 'Target File Format',
+                value: _selectedFormat,
+                items: ExportFormat.values
+                    .map(
+                      (f) => AppSelectItem<ExportFormat>(
+                        value: f,
+                        label: '${f.label} (.${f.extension})',
+                      ),
+                    )
+                    .toList(),
+                onChanged: (val) {
+                  if (val != null) {
+                    setState(() {
+                      _selectedFormat = val;
+                      _statusMessage = null;
+                    });
+                  }
+                },
+              ),
+              const SizedBox(height: 6),
+              Text(
+                _selectedFormat.description,
+                style: AppTypography.micro(color: colors.textMuted),
+              ),
+              const SizedBox(height: 16),
+
+              // Status message
+              if (_statusMessage != null) ...[
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: _isSuccess
+                        ? colors.success.withValues(alpha: 0.1)
+                        : colors.error.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(
+                      color: _isSuccess
+                          ? colors.success.withValues(alpha: 0.3)
+                          : colors.error.withValues(alpha: 0.3),
+                    ),
+                  ),
                   child: Row(
                     children: [
-                      Container(
-                        width: 32,
-                        height: 32,
-                        decoration: BoxDecoration(
-                          color: colors.brand.withValues(alpha: 0.15),
-                          borderRadius: BorderRadius.circular(6),
-                        ),
-                        child: Center(
-                          child: Icon(Icons.file_download_outlined,
-                              size: 18, color: colors.brand),
-                        ),
+                      Icon(
+                        _isSuccess
+                            ? Icons.check_circle_outline
+                            : Icons.error_outline,
+                        size: 16,
+                        color: _isSuccess ? colors.success : colors.error,
                       ),
-                      const SizedBox(width: 12),
+                      const SizedBox(width: 8),
                       Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'Export Document',
-                              style: AppTypography.titleMedium(
-                                color: colors.textPrimary,
-                              ),
-                            ),
-                            Text(
-                              'Convert and download recognized document data',
-                              style: AppTypography.bodySmall(
-                                color: colors.textMuted,
-                              ),
-                            ),
-                          ],
+                        child: Text(
+                          _statusMessage!,
+                          style: AppTypography.bodySmall(
+                            color: _isSuccess ? colors.success : colors.error,
+                          ),
                         ),
                       ),
                     ],
                   ),
                 ),
-                IconButton(
-                  tooltip: 'Close',
-                  icon: Icon(Icons.close_rounded,
-                      size: 20, color: colors.textMuted),
-                  onPressed: () => Navigator.of(context).pop(),
-                ),
+                const SizedBox(height: 16),
               ],
-            ),
-            const SizedBox(height: 16),
-            Divider(height: 1, color: colors.border),
-            const SizedBox(height: 16),
 
-            // Document Summary Banner
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: colors.cardRaised,
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: colors.border),
-              ),
-              child: Row(
+              // Action Buttons
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
                 children: [
-                  Icon(Icons.description_outlined,
-                      size: 20, color: colors.brand),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          wsState.filename ?? 'Untitled Document',
-                          style: AppTypography.bodySmall(
-                            color: colors.textPrimary,
-                          ).copyWith(fontWeight: FontWeight.w600),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        Text(
-                          '${wsState.pageCount} page${wsState.pageCount == 1 ? "" : "s"} • ${wsState.allBBoxes.length} extracted bounding boxes',
-                          style: AppTypography.micro(
-                            color: colors.textMuted,
-                          ),
-                        ),
-                        if ((jobState.trustSummary?.flaggedCount ?? 0) > 0)
-                          Text(
-                            '${jobState.trustSummary!.flaggedCount} block${jobState.trustSummary!.flaggedCount == 1 ? "" : "s"} flagged for review',
-                            style: AppTypography.micro(
-                              color: colors.warning,
-                            ),
-                          ),
-                      ],
-                    ),
+                  AppButton(
+                    text: 'Cancel',
+                    variant: AppButtonVariant.ghost,
+                    size: AppButtonSize.md,
+                    onPressed: () => Navigator.of(context).pop(),
                   ),
-                  AppBadge(
-                    label: jobState.isProcessing
-                        ? 'PROCESSING'
-                        : isReady
-                            ? 'READY'
-                            : 'NO DATA',
-                    variant: isReady
-                        ? AppBadgeVariant.success
-                        : AppBadgeVariant.warning,
-                    size: AppBadgeSize.sm,
+                  const SizedBox(width: 8),
+                  AppButton(
+                    text: _isExporting ? 'Exporting...' : 'Export Document',
+                    variant: AppButtonVariant.primary,
+                    size: AppButtonSize.md,
+                    loading: _isExporting,
+                    disabled: !wsState.hasDocument || jobState.isProcessing,
+                    icon: const Icon(Icons.download_rounded, size: 16),
+                    onPressed: _handleExport,
                   ),
                 ],
               ),
-            ),
-            const SizedBox(height: 20),
-
-            // Export Format Selection
-            const SectionHeader(title: 'Export Format'),
-            const SizedBox(height: 8),
-            AppSelect<ExportFormat>(
-              label: 'Target File Format',
-              value: _selectedFormat,
-              items: ExportFormat.values
-                  .map(
-                    (f) => AppSelectItem<ExportFormat>(
-                      value: f,
-                      label: '${f.label} (.${f.extension})',
-                    ),
-                  )
-                  .toList(),
-              onChanged: (val) {
-                if (val != null) {
-                  setState(() {
-                    _selectedFormat = val;
-                    _statusMessage = null;
-                  });
-                }
-              },
-            ),
-            const SizedBox(height: 6),
-            Text(
-              _selectedFormat.description,
-              style: AppTypography.micro(color: colors.textMuted),
-            ),
-            const SizedBox(height: 16),
-
-            // Status message
-            if (_statusMessage != null) ...[
-              Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                decoration: BoxDecoration(
-                  color: _isSuccess
-                      ? colors.success.withValues(alpha: 0.1)
-                      : colors.error.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(6),
-                  border: Border.all(
-                    color: _isSuccess
-                        ? colors.success.withValues(alpha: 0.3)
-                        : colors.error.withValues(alpha: 0.3),
-                  ),
-                ),
-                child: Row(
-                  children: [
-                    Icon(
-                      _isSuccess
-                          ? Icons.check_circle_outline
-                          : Icons.error_outline,
-                      size: 16,
-                      color: _isSuccess ? colors.success : colors.error,
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        _statusMessage!,
-                        style: AppTypography.bodySmall(
-                          color: _isSuccess ? colors.success : colors.error,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 16),
             ],
-
-            // Action Buttons
-            Row(
-              mainAxisAlignment: MainAxisAlignment.end,
-              children: [
-                AppButton(
-                  text: 'Cancel',
-                  variant: AppButtonVariant.ghost,
-                  size: AppButtonSize.md,
-                  onPressed: () => Navigator.of(context).pop(),
-                ),
-                const SizedBox(width: 8),
-                AppButton(
-                  text: _isExporting ? 'Exporting...' : 'Export Document',
-                  variant: AppButtonVariant.primary,
-                  size: AppButtonSize.md,
-                  loading: _isExporting,
-                  disabled: !wsState.hasDocument || jobState.isProcessing,
-                  icon: const Icon(Icons.download_rounded, size: 16),
-                  onPressed: _handleExport,
-                ),
-              ],
-            ),
-          ],
+          ),
         ),
       ),
     );

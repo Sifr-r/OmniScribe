@@ -185,9 +185,8 @@ void main() {
   test('exports require recognized data and use processed PDF bytes and suffix',
       () async {
     final repository = _DocumentRepository();
-    final container = ProviderContainer(overrides: [
-      documentRepositoryProvider.overrideWithValue(repository)
-    ]);
+    final container = ProviderContainer(
+        overrides: [documentRepositoryProvider.overrideWithValue(repository)]);
     addTearDown(container.dispose);
     final document = container.read(workstationProvider.notifier);
     document.loadDocument(Uint8List.fromList([1]), 'scan.png');
@@ -203,17 +202,16 @@ void main() {
     expect(identical(prepared.bytes, pdf), isTrue);
     expect(prepared.filename, 'scan.pdf');
     document.loadDocument(Uint8List.fromList([2]), 'replacement.png');
-    await expectLater(exporter.prepare(ExportFormat.searchablePdf),
-        throwsFormatException);
+    await expectLater(
+        exporter.prepare(ExportFormat.searchablePdf), throwsFormatException);
   });
 
   test('document replacement invalidates an in-flight DOCX export', () async {
     final repository = _DocumentRepository();
     final response = Completer<Uint8List>();
     when(() => repository.exportDocx(any())).thenAnswer((_) => response.future);
-    final container = ProviderContainer(overrides: [
-      documentRepositoryProvider.overrideWithValue(repository)
-    ]);
+    final container = ProviderContainer(
+        overrides: [documentRepositoryProvider.overrideWithValue(repository)]);
     addTearDown(container.dispose);
     final document = container.read(workstationProvider.notifier);
     document.loadDocument(Uint8List.fromList([1]), 'first.png');

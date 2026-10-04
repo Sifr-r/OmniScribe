@@ -2,7 +2,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:omniscribe_client/features/settings/config_repository.dart';
 import 'package:omniscribe_client/features/settings/runtime_config.dart';
 import 'package:omniscribe_client/features/settings/settings_state.dart';
-import 'package:omniscribe_client/features/workstation/process_settings.dart';
 import 'package:omniscribe_client/shared/providers/api_providers.dart';
 
 final settingsStateProvider = NotifierProvider<SettingsNotifier, SettingsState>(

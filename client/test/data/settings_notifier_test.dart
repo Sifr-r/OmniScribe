@@ -4,8 +4,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:omniscribe_client/shared/providers/repository_providers.dart';
 import 'package:omniscribe_client/features/settings/settings_notifier.dart';
-import 'package:omniscribe_client/features/settings/config_repository.dart';
-import 'package:omniscribe_client/features/workstation/process_settings.dart';
 
 class _MockConfigRepository extends Mock implements ConfigRepository {}
 

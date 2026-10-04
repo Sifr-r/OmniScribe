@@ -72,7 +72,8 @@ void main() {
     });
 
     test(
-        'preserves existing streamed geometry while reconciling canonical text', () {
+        'preserves existing streamed geometry while reconciling canonical text',
+        () {
       final container = makeContainer();
       final notifier = container.read(workstationProvider.notifier);
 
@@ -107,14 +108,21 @@ void main() {
           'real-WS-text');
     });
 
-    test('recovers missing blocks within a page and repeated line occurrences', () {
+    test('recovers missing blocks within a page and repeated line occurrences',
+        () {
       final container = makeContainer();
       final notifier = container.read(workstationProvider.notifier);
       notifier.loadDocument(Uint8List.fromList([1]), 'scan.pdf');
-      const live = BBoxItem(blockId: 'live', page: 0, block: 3,
-          bbox: [0.1, 0.2, 0.8, 0.3], text: 'first\nrepeated');
+      const live = BBoxItem(
+          blockId: 'live',
+          page: 0,
+          block: 3,
+          bbox: [0.1, 0.2, 0.8, 0.3],
+          text: 'first\nrepeated');
       notifier.addOrUpdateBBox(0, live);
-      final artifact = <String, dynamic>{'0': 'first\nrepeated\nmissing\nrepeated'};
+      final artifact = <String, dynamic>{
+        '0': 'first\nrepeated\nmissing\nrepeated'
+      };
       expect(notifier.hydratePagesFromTextArtifact(artifact), 2);
       final page = container.read(workstationProvider).pages.single;
       expect(page.bboxes.first, same(live));
@@ -122,7 +130,8 @@ void main() {
       expect(page.text, artifact['0']);
       expect(page.bboxes.last.text, 'repeated');
       expect(notifier.hydratePagesFromTextArtifact(artifact), 0);
-      expect(container.read(workstationProvider).pages.single.bboxes, hasLength(3));
+      expect(container.read(workstationProvider).pages.single.bboxes,
+          hasLength(3));
     });
 
     test('returns 0 and writes nothing for an empty artifact', () {
@@ -141,17 +150,26 @@ void main() {
       final container = makeContainer();
       final notifier = container.read(workstationProvider.notifier);
       notifier.loadDocument(Uint8List.fromList([1]), 'scan.pdf');
-      notifier.addOrUpdateBBox(0, const BBoxItem(
-          blockId: 'live', page: 0, block: 0, bbox: [0, 0, 1, 1], text: ' line '));
+      notifier.addOrUpdateBBox(
+          0,
+          const BBoxItem(
+              blockId: 'live',
+              page: 0,
+              block: 0,
+              bbox: [0, 0, 1, 1],
+              text: ' line '));
       expect(notifier.hydratePagesFromTextArtifact({'0': 'line'}), 0);
       expect(container.read(workstationProvider).allBBoxes, hasLength(1));
     });
 
-    test('unbounded artifact page indices fail before extending preview state', () {
+    test('unbounded artifact page indices fail before extending preview state',
+        () {
       final container = makeContainer();
       final notifier = container.read(workstationProvider.notifier);
       notifier.loadDocument(Uint8List.fromList([1]), 'scan.pdf');
-      expect(() => notifier.hydratePagesFromTextArtifact({'1000000000': 'hostile'}),
+      expect(
+          () =>
+              notifier.hydratePagesFromTextArtifact({'1000000000': 'hostile'}),
           throwsFormatException);
       expect(container.read(workstationProvider).pages, hasLength(1));
     });

@@ -86,8 +86,7 @@ void main() {
 
   group('hydratePagesFromTextArtifact merge', () {
     test('recovers every page when no live frames arrived', () {
-      final container =
-          makeContainer(_FakeOcrRepository(artifacts: const {}));
+      final container = makeContainer(_FakeOcrRepository(artifacts: const {}));
       final notifier = container.read(workstationProvider.notifier);
 
       notifier.loadDocument(
@@ -97,8 +96,7 @@ void main() {
       );
       expect(container.read(workstationProvider).allBBoxes, isEmpty);
 
-      final written =
-          notifier.hydratePagesFromTextArtifact(_twoPageArtifact);
+      final written = notifier.hydratePagesFromTextArtifact(_twoPageArtifact);
 
       // 2 lines on page 0 + 1 line on page 1.
       expect(written, 3);
@@ -113,7 +111,8 @@ void main() {
       expect(state.allBBoxes.map((b) => b.page).toList(), [0, 0, 1]);
     });
 
-    test('keeps live page geometry and hydrates only the missing page', () {
+    test('keeps live page geometry and recovers the lines it never received',
+        () {
       final container = makeContainer(_FakeOcrRepository());
       final notifier = container.read(workstationProvider.notifier);
 
@@ -135,21 +134,30 @@ void main() {
         ),
       );
 
-      final written =
-          notifier.hydratePagesFromTextArtifact(_twoPageArtifact);
+      final written = notifier.hydratePagesFromTextArtifact(_twoPageArtifact);
 
-      // Only the one line belonging to the missing page is written.
-      expect(written, 1);
+      // Reconciliation is per line occurrence, not per page: the artifact's two
+      // page-0 lines and its one page-1 line were all never streamed, so all
+      // three are recovered. Skipping page 0 wholesale would silently drop the
+      // two blocks a partial progress stream never delivered.
+      expect(written, 3);
       final state = container.read(workstationProvider);
 
-      // Page 0 is untouched: same block count, text, geometry and kind.
+      // Page 0 keeps its live block first, with geometry, kind and label intact.
       final livePage = state.pages[0].bboxes;
-      expect(livePage, hasLength(1));
-      expect(livePage.single.blockId, 'p0_b0');
-      expect(livePage.single.text, 'real-WS-text');
-      expect(livePage.single.bbox, [0.05, 0.05, 0.95, 0.15]);
-      expect(livePage.single.kind, 'heading');
-      expect(livePage.single.label, isNull);
+      expect(livePage, hasLength(3));
+      expect(livePage.first.blockId, 'p0_b0');
+      expect(livePage.first.text, 'real-WS-text');
+      expect(livePage.first.bbox, [0.05, 0.05, 0.95, 0.15]);
+      expect(livePage.first.kind, 'heading');
+      expect(livePage.first.label, isNull);
+      // The blocks page 0 never streamed in are recovered with placeholder
+      // geometry, tagged so the UI can tell them from real coordinates.
+      expect(livePage[1].text, 'PAGE-ONE-LINE-A');
+      expect(livePage[1].bbox, [0.0, 0.0, 1.0, 1.0]);
+      expect(livePage[1].label, 'hydrated-from-artifact');
+      expect(livePage[2].text, 'PAGE-ONE-LINE-B');
+      expect(livePage[2].label, 'hydrated-from-artifact');
 
       // Page 1 is filled from the artifact with placeholder geometry.
       final recovered = state.pages[1].bboxes;
@@ -159,7 +167,7 @@ void main() {
       expect(recovered.single.label, 'hydrated-from-artifact');
     });
 
-    test('reports 0 and writes nothing when every page already has blocks',
+    test('reports 0 and writes nothing when every artifact line already exists',
         () {
       final container = makeContainer(_FakeOcrRepository());
       final notifier = container.read(workstationProvider.notifier);
@@ -181,9 +189,10 @@ void main() {
         ),
       );
 
-      final written =
-          notifier.hydratePagesFromTextArtifact(<String, dynamic>{
-        '0': 'should-not-be-written',
+      // Every line the artifact holds is already represented by the streamed
+      // block, so there is genuinely nothing missing to reconcile.
+      final written = notifier.hydratePagesFromTextArtifact(<String, dynamic>{
+        '0': 'real-WS-text',
       });
 
       expect(written, 0);
@@ -191,8 +200,7 @@ void main() {
           'real-WS-text');
     });
 
-    test('is idempotent: hydrating the same artifact twice adds no blocks',
-        () {
+    test('is idempotent: hydrating the same artifact twice adds no blocks', () {
       final container = makeContainer(_FakeOcrRepository());
       final notifier = container.read(workstationProvider.notifier);
 
@@ -269,7 +277,8 @@ void main() {
   });
 
   group('stale artifact guard', () {
-    test('a superseded run does not merge its artifact into a replaced '
+    test(
+        'a superseded run does not merge its artifact into a replaced '
         'document, even when live frames were already received', () async {
       // The gate lets the test swap documents while the artifact is in flight.
       final gate = Completer<String>();
@@ -356,13 +365,17 @@ void main() {
       await run;
 
       final state = container.read(workstationProvider);
-      // Live geometry preserved on page 0 ...
+      // Live geometry preserved on page 0, ahead of the blocks that never
+      // streamed in for that same page ...
       final page0 = state.pages[0].bboxes;
-      expect(page0, hasLength(1));
-      expect(page0.single.text, 'first-doc-live-text');
-      expect(page0.single.bbox, [0.05, 0.05, 0.95, 0.15]);
-      expect(page0.single.label, isNull);
-      // ... and the page that never streamed in is recovered.
+      expect(page0, hasLength(3));
+      expect(page0.first.text, 'first-doc-live-text');
+      expect(page0.first.bbox, [0.05, 0.05, 0.95, 0.15]);
+      expect(page0.first.label, isNull);
+      expect(page0[1].text, 'PAGE-ONE-LINE-A');
+      expect(page0[1].label, 'hydrated-from-artifact');
+      expect(page0[2].text, 'PAGE-ONE-LINE-B');
+      // ... and the page that never streamed in at all is recovered too.
       expect(state.pages[1].bboxes.single.text, 'PAGE-TWO-LINE-A');
       expect(state.pages[1].bboxes.single.label, 'hydrated-from-artifact');
     });

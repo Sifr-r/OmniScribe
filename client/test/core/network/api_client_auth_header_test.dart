@@ -74,7 +74,8 @@ void main() {
     test('applies the server bearer when the caller supplied none', () async {
       await client.get<Map<String, dynamic>>('/api/config');
 
-      expect(header(adapter.lastRequest, 'Authorization'), 'Bearer server-secret');
+      expect(
+          header(adapter.lastRequest, 'Authorization'), 'Bearer server-secret');
     });
 
     test('sends no Authorization when no server bearer is configured',

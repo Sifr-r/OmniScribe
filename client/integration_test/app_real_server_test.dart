@@ -145,7 +145,8 @@ void main() {
           .replaceAll(RegExp(r'\s+'), ' ')
           .toLowerCase();
       expect(text, contains('computer science'),
-          reason: 'OCR must recognize known content from the rasterized fixture');
+          reason:
+              'OCR must recognize known content from the rasterized fixture');
       final pdf = processed.processedPdfBytes;
       expect(pdf, isNotNull, reason: 'OCR must adopt the returned PDF');
       expect(pdf!.length, greaterThan(5));
@@ -185,7 +186,8 @@ Future<void> _waitFor(
 /// Spawns the real FastAPI server as a child process and waits for
 /// `/api/health`. Returns null when the Python tooling is unavailable.
 class _LiveServer {
-  _LiveServer._(this.port, this._process, this._output, this._runtimeDirectory) {
+  _LiveServer._(
+      this.port, this._process, this._output, this._runtimeDirectory) {
     unawaited(_process.exitCode.then<void>((_) {
       _hasExited = true;
     }));
@@ -253,7 +255,10 @@ class _LiveServer {
     }
 
     final server = _LiveServer._(
-      port, process, StringBuffer(), runtimeDirectory,
+      port,
+      process,
+      StringBuffer(),
+      runtimeDirectory,
     );
     process.stdout
         .transform(systemEncoding.decoder)
@@ -281,11 +286,14 @@ class _LiveServer {
     client.connectionTimeout = const Duration(seconds: 3);
     while (DateTime.now().isBefore(deadline)) {
       try {
-        final request =
-            await client.getUrl(Uri.parse('http://127.0.0.1:$port/api/health'))
-                .timeout(const Duration(seconds: 3));
-        final response = await request.close().timeout(const Duration(seconds: 3));
-        final body = await response.transform(utf8.decoder).join()
+        final request = await client
+            .getUrl(Uri.parse('http://127.0.0.1:$port/api/health'))
+            .timeout(const Duration(seconds: 3));
+        final response =
+            await request.close().timeout(const Duration(seconds: 3));
+        final body = await response
+            .transform(utf8.decoder)
+            .join()
             .timeout(const Duration(seconds: 3));
         if (response.statusCode == 200 && body.contains('"status":"ok"')) {
           client.close(force: true);

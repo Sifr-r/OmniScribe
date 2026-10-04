@@ -78,7 +78,8 @@ class _RecordingOcrRepository implements OcrRepository {
 /// produced when the client routes through the repository with the right
 /// artifact handle. An unknown artifact id throws rather than degrading.
 class _FakeDocumentRepository implements DocumentRepository {
-  _FakeDocumentRepository({required this.artifactStore, this.structuredFails = false});
+  _FakeDocumentRepository(
+      {required this.artifactStore, this.structuredFails = false});
 
   final Map<String, String> artifactStore;
 
@@ -95,7 +96,8 @@ class _FakeDocumentRepository implements DocumentRepository {
     final raw = artifactStore[artifactId];
     if (raw == null) throw StateError('unknown artifact $artifactId');
     final decoded = jsonDecode(raw) as Map<String, dynamic>;
-    return decoded.map((key, value) => MapEntry(int.parse(key), value as String));
+    return decoded
+        .map((key, value) => MapEntry(int.parse(key), value as String));
   }
 
   @override
@@ -143,9 +145,12 @@ class _FakeDocumentRepository implements DocumentRepository {
     markdownRequests.add(request);
     if (structuredFails) throw StateError('artifact markdown unavailable');
     final text = _pagesOf(request.textArtifactId)
-        .values.expand((page) => page.split('\n')).join('\n\n');
+        .values
+        .expand((page) => page.split('\n'))
+        .join('\n\n');
     return Uint8List.fromList(utf8.encode(request.documentArtifactId == null
-        ? text : '# Preserved heading\n\n$text'));
+        ? text
+        : '# Preserved heading\n\n$text'));
   }
 
   @override
@@ -289,13 +294,18 @@ void main() {
       expect(repo.treeRequests.single.textArtifactId, _artifactId);
       expect(repo.treeRequests.single.textArtifactToken, _artifactToken);
       expect(repo.docxTreeRequests.single.textArtifactId, _artifactId);
-      for (final request in [repo.treeRequests.single,
-        repo.docxTreeRequests.single, repo.markdownRequests.single]) {
+      for (final request in [
+        repo.treeRequests.single,
+        repo.docxTreeRequests.single,
+        repo.markdownRequests.single
+      ]) {
         expect(request.toJson()['document_artifact_id'], 'rich-document');
         expect(request.toJson()['document_artifact_token'], 'rich-token');
       }
-      expect(repo.htmlRequests.single.toJson()['document_artifact_id'], 'rich-document');
-      expect(repo.htmlRequests.single.toJson()['document_artifact_token'], 'rich-token');
+      expect(repo.htmlRequests.single.toJson()['document_artifact_id'],
+          'rich-document');
+      expect(repo.htmlRequests.single.toJson()['document_artifact_token'],
+          'rich-token');
     });
 
     test('treeJson output is indented JSON', () async {
@@ -331,24 +341,29 @@ void main() {
   });
 
   group('replaced document', () {
-    test('replacement while artifact fetch is pending rejects the stale export', () async {
+    test('replacement while artifact fetch is pending rejects the stale export',
+        () async {
       setUpScenario();
       final response = Completer<String>();
       ocrRepo.pendingArtifact = response.future;
-      final exporting = container.read(documentExportProvider.notifier)
+      final exporting = container
+          .read(documentExportProvider.notifier)
           .prepare(ExportFormat.rawText);
-      container.read(workstationProvider.notifier).loadDocument(
-          Uint8List.fromList([7]), 'replacement.pdf');
+      container
+          .read(workstationProvider.notifier)
+          .loadDocument(Uint8List.fromList([7]), 'replacement.pdf');
       final rejected = expectLater(exporting, throwsStateError);
       response.complete(jsonEncode(_twoPageArtifact));
       await rejected;
       expect(container.read(documentExportProvider), isFalse);
-      expect(container.read(jobOrchestrationProvider).documentArtifactId, isNull);
+      expect(
+          container.read(jobOrchestrationProvider).documentArtifactId, isNull);
     });
     test('a previous run artifact is never exported for a new document',
         () async {
       setUpScenario(artifact: _staleArtifact, livePages: 1);
-      expect(await exportText(ExportFormat.markdown), contains('STALE-RUN-TEXT'));
+      expect(
+          await exportText(ExportFormat.markdown), contains('STALE-RUN-TEXT'));
 
       // Loading another document resets the orchestration state, which clears
       // the artifact handle.
@@ -376,7 +391,8 @@ void main() {
       expect(repo.treeRequests, isEmpty);
     });
 
-    test('a replaced document with no text of its own is rejected, not '
+    test(
+        'a replaced document with no text of its own is rejected, not '
         'back-filled from a stale artifact', () async {
       setUpScenario(artifact: _staleArtifact, livePages: 1);
       container.read(workstationProvider.notifier).loadDocument(
@@ -450,7 +466,8 @@ void main() {
             'scan.pdf',
             pageCount: 2,
           );
-      scoped.read(workstationProvider.notifier)
+      scoped
+          .read(workstationProvider.notifier)
           .adoptProcessedDocument(Uint8List.fromList([9, 9, 9, 9]));
       scoped.read(jobOrchestrationProvider.notifier).setTextArtifact(
             textArtifactId: _artifactId,
@@ -519,12 +536,16 @@ void main() {
       }
     });
 
-    test('completed jobs without an artifact cannot export partial live text', () async {
+    test('completed jobs without an artifact cannot export partial live text',
+        () async {
       setUpScenario(livePages: 1, setArtifactHandle: false);
       final orchestration = container.read(jobOrchestrationProvider.notifier);
       orchestration.state = JobOrchestrationState(stage: 'Complete');
-      await expectLater(container.read(documentExportProvider.notifier)
-          .prepare(ExportFormat.rawText), throwsFormatException);
+      await expectLater(
+          container
+              .read(documentExportProvider.notifier)
+              .prepare(ExportFormat.rawText),
+          throwsFormatException);
     });
   });
 
@@ -567,32 +588,50 @@ void main() {
             textArtifactToken: 'token',
           );
 
-      await expectLater(scoped.read(documentExportProvider.notifier)
-          .prepare(ExportFormat.markdown), throwsStateError);
+      await expectLater(
+          scoped
+              .read(documentExportProvider.notifier)
+              .prepare(ExportFormat.markdown),
+          throwsStateError);
       expect(scoped.read(documentExportProvider), isFalse);
     });
 
-    test('empty or malformed completed text never produces an empty export', () async {
+    test('empty or malformed completed text never produces an empty export',
+        () async {
       for (final artifact in <Map<String, dynamic>>[
-        {}, {'0': ''}, {'0': 17}, {'0': 'valid', '1': 17},
+        {},
+        {'0': ''},
+        {'0': 17},
+        {'0': 'valid', '1': 17},
       ]) {
         setUpScenario(artifact: artifact);
-        for (final format in [ExportFormat.rawText, ExportFormat.markdown,
-          ExportFormat.html, ExportFormat.treeJson, ExportFormat.docx]) {
-          await expectLater(container.read(documentExportProvider.notifier)
-              .prepare(format), throwsStateError);
+        for (final format in [
+          ExportFormat.rawText,
+          ExportFormat.markdown,
+          ExportFormat.html,
+          ExportFormat.treeJson,
+          ExportFormat.docx
+        ]) {
+          await expectLater(
+              container.read(documentExportProvider.notifier).prepare(format),
+              throwsStateError);
         }
       }
     });
 
-    test('artifact fetch failure with no live blocks cannot export empty text', () async {
+    test('artifact fetch failure with no live blocks cannot export empty text',
+        () async {
       setUpScenario();
       artifactStore.clear();
-      await expectLater(container.read(documentExportProvider.notifier)
-          .prepare(ExportFormat.rawText), throwsStateError);
+      await expectLater(
+          container
+              .read(documentExportProvider.notifier)
+              .prepare(ExportFormat.rawText),
+          throwsStateError);
     });
 
-    test('a failing structured export surfaces the error rather than silently '
+    test(
+        'a failing structured export surfaces the error rather than silently '
         'shipping a partial file', () async {
       artifactStore = {_artifactId: jsonEncode(_twoPageArtifact)};
       repo = _FakeDocumentRepository(
@@ -602,8 +641,8 @@ void main() {
       container = ProviderContainer(
         overrides: [
           documentRepositoryProvider.overrideWithValue(repo),
-          ocrRepositoryProvider
-              .overrideWithValue(_FakeOcrRepository(artifactStore: artifactStore)),
+          ocrRepositoryProvider.overrideWithValue(
+              _FakeOcrRepository(artifactStore: artifactStore)),
         ],
       );
       addTearDown(container.dispose);

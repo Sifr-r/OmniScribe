@@ -1,8 +1,10 @@
-import '../lib/features/documents/documents_models.dart';
-import '../lib/features/glossary/glossary_models.dart';
-import '../lib/features/jobs/job_record.dart';
-import '../lib/features/transcription/transcription_models.dart';
-import '../lib/features/translation/translation_models.dart';
+import 'dart:io';
+
+import 'package:omniscribe_client/features/documents/documents_models.dart';
+import 'package:omniscribe_client/features/glossary/glossary_models.dart';
+import 'package:omniscribe_client/features/jobs/job_record.dart';
+import 'package:omniscribe_client/features/transcription/transcription_models.dart';
+import 'package:omniscribe_client/features/translation/translation_models.dart';
 
 bool rejects(void Function() parse) {
   try {
@@ -50,5 +52,5 @@ void main() {
       })));
   assert(rejects(() => TranscriptionResponse.fromJson(
       {'text': 'speech', 'duration': double.infinity})));
-  print('Feature JSON contracts passed.');
+  stdout.writeln('Feature JSON contracts passed.');
 }

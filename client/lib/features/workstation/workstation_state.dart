@@ -38,6 +38,7 @@ class WorkstationState {
 
   // Document data
   final Uint8List? loadedBytes;
+
   /// Searchable PDF output from the current successful OCR run.
   final Uint8List? processedPdfBytes;
   final String? filename;

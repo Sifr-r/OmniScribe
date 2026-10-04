@@ -7,13 +7,13 @@ the remaining demo-media capture target.
 
 | File | What it shows | Source |
 | --- | --- | --- |
-| `workstation.png` | The Workstation screen of the Flutter client with the sample PDF loaded (pipeline dock visible). | `client/lib/presentation/workstation/workstation_screen.dart` |
-| `workstation-empty.png` | The Workstation upload dropzone (empty state). | `client/lib/presentation/workstation/controls/upload_dropzone.dart` |
-| `ai-setup-wizard-modal.png` | The AI Engine Setup Wizard (Choose Mode → Configure Connection → Ready). | `client/lib/presentation/providers/ai_setup_wizard_modal.dart` |
-| `ai-setup-wizard.png` | The provider configuration step (endpoint / key / model / test). | `client/lib/presentation/providers/provider_modal.dart` |
-| `ai-provider-browser.png` | The LLM provider browser with all catalogued endpoints. | `client/lib/presentation/providers/provider_modal.dart` |
-| `glossary-screen.png` | The Terminology Glossary screen (Libraries / Entries / Merged Lexicon). | `client/lib/presentation/features/glossary_screen.dart` |
-| `export-modal.png` | The Export Document modal with the searchable-PDF format selector. | `client/lib/presentation/workstation/modals/export_modal.dart` |
+| `workstation.png` | The Workstation screen of the Flutter client with the sample PDF loaded (pipeline dock visible). | `client/lib/features/workstation/workstation_screen.dart` |
+| `workstation-empty.png` | The Workstation upload dropzone (empty state). | `client/lib/features/workstation/controls/upload_dropzone.dart` |
+| `ai-setup-wizard-modal.png` | The AI Engine Setup Wizard (Choose Mode → Configure Connection → Ready). | `client/lib/features/providers/ai_setup_wizard_modal.dart` |
+| `ai-setup-wizard.png` | The provider configuration step (endpoint / key / model / test). | `client/lib/features/providers/provider_modal.dart` |
+| `ai-provider-browser.png` | The LLM provider browser with all catalogued endpoints. | `client/lib/features/providers/provider_modal.dart` |
+| `glossary-screen.png` | The Terminology Glossary screen (Libraries / Entries / Merged Lexicon). | `client/lib/features/glossary/glossary_screen.dart` |
+| `export-modal.png` | The Export Document modal with the searchable-PDF format selector. | `client/lib/features/documents/export_modal.dart` |
 | `terminal-server-up.png` | `uv run omniscribe-server` startup banner: the `state backend sqlite` line, the 14-plugin harness mount, and `Uvicorn running`. | Rendered from the real server startup log (not a screen photo); provenance note below. |
 | `drop-to-result.gif` | The end-to-end flow: drop a PDF, watch OCR progress, preview the searchable result. | A 10-second screen recording. |
 

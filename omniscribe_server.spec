@@ -213,18 +213,33 @@ EXCLUDES = [
     # bundle is a known footgun.
     "PyInstaller",
     # Sprint 4 bundle size optimization (Handoff §3, RFC 002):
-    # Strip unused transformers models and quantizers. OmniScribe does not
-    # use these models/quantizers; excluding them saves ~40-70 MB from bundle.
+    # Strip unused transformers models. OmniScribe does not use these
+    # models; excluding them saves ~40-70 MB from bundle.
     "transformers.models.deepseek_ocr2",
     "transformers.models.glm_ocr",
     "transformers.models.got_ocr2",
     "transformers.models.lighton_ocr",
     "transformers.models.paddleocr_vl",
-    "transformers.models.pp_ocrv5_mobile_*",
     "transformers.models.pp_ocrv5_mobile_det",
     "transformers.models.pp_ocrv5_mobile_rec",
-    "transformers.quantizers",
-    "transformers.quantizers.auto",
+    # NOTE: transformers.quantizers is intentionally NOT excluded, despite
+    # the Sprint 4 note above claiming the quantizers were unused. That was
+    # true of the transformers version pinned at the time; it stopped being
+    # true in transformers 5.x. `transformers.integrations.finegrained_fp8`
+    # now does a module-level
+    #   `from ..quantizers.quantizers_utils import get_module_from_name, ...`
+    # which is reached unconditionally via
+    # `transformers.processing_utils` -> `transformers.modeling_utils` ->
+    # `transformers.integrations.finegrained_fp8`. Excluding the subpackage
+    # therefore broke the frozen binary at *import* time, before any OCR
+    # request: the built exe died with
+    #   `ModuleNotFoundError: No module named 'transformers.quantizers'`
+    #   `[PYI-35824:ERROR] Failed to execute script 'run_server'`
+    # and could not serve `/api/health` at all. Verified 2026-10-04: with
+    # these two entries removed the build completes and the frozen exe
+    # boots and serves health. This is the same misclassification class as
+    # the anyio and pydantic_settings entries above — when excluding a
+    # subpackage, confirm no module-level import reaches it first.
 ]
 
 

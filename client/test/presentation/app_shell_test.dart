@@ -10,7 +10,6 @@ import 'package:omniscribe_client/features/workstation/document_result.dart';
 import 'package:omniscribe_client/features/workstation/process_settings.dart';
 import 'package:omniscribe_client/shared/providers/repository_providers.dart';
 import 'package:omniscribe_client/features/workstation/workstation_notifier.dart';
-import 'package:omniscribe_client/features/workstation/ocr_repository.dart';
 import 'package:omniscribe_client/core/websocket/ws_client.dart';
 import 'package:omniscribe_client/features/documents/extraction_screen.dart';
 import 'package:omniscribe_client/features/glossary/glossary_screen.dart';

@@ -79,15 +79,17 @@ class ApiClient {
   /// True for loopback hosts where plaintext HTTP/WS is documented safe.
   static bool _isLoopbackHost(String host) {
     final lower = host.toLowerCase();
-    return lower == '127.0.0.1'
-        || lower == '::1'
-        || lower == 'localhost'
-        || lower == '[::1]';
+    return lower == '127.0.0.1' ||
+        lower == '::1' ||
+        lower == 'localhost' ||
+        lower == '[::1]';
   }
 
   static String _assertBaseUrlIsTransportSafe(String url) {
     final parsed = Uri.tryParse(url);
-    if (parsed == null || parsed.host.isEmpty || parsed.userInfo.isNotEmpty ||
+    if (parsed == null ||
+        parsed.host.isEmpty ||
+        parsed.userInfo.isNotEmpty ||
         (parsed.scheme != 'http' && parsed.scheme != 'https')) {
       throw ArgumentError(
         'api_base must be http(s); got $url',
@@ -103,7 +105,8 @@ class ApiClient {
     return url;
   }
 
-  static String validateBaseUrl(String url) => _assertBaseUrlIsTransportSafe(url);
+  static String validateBaseUrl(String url) =>
+      _assertBaseUrlIsTransportSafe(url);
 
   void setAuthToken(String? token) {
     _staticAuthToken = token;
@@ -491,7 +494,8 @@ class ApiClient {
     return result;
   }
 
-  static final Map<int, ApiException Function(String message, String? error, dynamic detail)>
+  static final Map<int,
+          ApiException Function(String message, String? error, dynamic detail)>
       _statusFactories = {
     400: (message, error, detail) => ValidationException(
           message: message,

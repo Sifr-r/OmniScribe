@@ -1,20 +1,21 @@
 """Dataset-driven regression test for the OCR quality hallucination guard.
 
-Marked ``slow_dataset`` so the fast ``pytest`` tier skips it by default
-— only the nightly workflow (which downloads the full KIE-HVQA
-dataset) runs it.
+Marked ``slow_dataset``. The synthetic mini fixture exercises the guard;
+the full regression skips until verified regional annotations exist.
 
 Acceptance criterion (from the design §16 item 5):
 
     Hallucination guard achieves ≥80% per-region agreement with
     KIE-HVQA per-region reliability annotations.
 
-The KIE-HVQA dataset (arXiv:2506.20168) provides pixel-level
-reliability annotations: for each character in the OCR output, a
-binary flag indicating whether it is visible in the source image or
-hallucinated by the VLM. We compare our
-:func:`omniscribe.core.ocr_quality.hallucination.evaluate` function
-against these annotations:
+The existing fixture contract expects bounding boxes and binary
+position-aligned visible/hallucinated flags for OCR output characters.
+Actual KIE-HVQA (arXiv:2506.20168) provides question/answer text and
+clear/not-clear strings/counts, without those boxes or aligned masks.
+Acquiring upstream sources therefore cannot produce this fixture or prove
+the acceptance criterion; see ``docs/benchmarks.md`` §5. When independently
+verified matching regional annotations are supplied, compare
+:func:`omniscribe.core.ocr_quality.hallucination.evaluate` as follows:
 
 - A block whose KIE-HVQA reliability is <50% (mostly hallucinated)
   should be classified as ``MEDIUM`` or ``HIGH`` hallucination risk
@@ -54,7 +55,11 @@ pytestmark = pytest.mark.slow_dataset
 
 def _records_or_skip(path: Path) -> list[dict[str, Any]]:
     if not path.exists():
-        pytest.skip(f"dataset not present: {path} (run scripts/fetch_datasets.py)")
+        pytest.skip(
+            f"fixture not present: {path}; full KIE-HVQA regional regression requires "
+            "verified bounding boxes and position-aligned reliability annotations. "
+            "Source acquisition alone cannot create it; see docs/benchmarks.md §5."
+        )
     return cast(list[dict[str, Any]], json.loads(path.read_text(encoding="utf-8")))
 
 
@@ -66,8 +71,8 @@ def _is_hallucinated(risk: HallucinationRisk) -> bool:
 def _is_kie_hallucinated(record: dict[str, Any]) -> bool:
     """KIE-HVQA label: a region is hallucinated if its reliability is <0.5.
 
-    The mini fixture encodes ``reliability`` as a list of 1s and 0s
-    (per-character visible/hallucinated flags from the dataset).
+    The synthetic mini fixture encodes ``reliability`` as a list of 1s and 0s;
+    these are fixture labels, not extracted upstream annotations.
     """
     reliability = record.get("reliability", [])
     if not reliability:

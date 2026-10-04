@@ -6,6 +6,181 @@
 > [Implementation closeout](#implementation-closeout-2026-10-04).
 > Earlier findings and DONE claims below are historical, not current signoff.
 
+## Gate execution (2026-10-04, later pass)
+
+The Flutter SDK, the Dart formatter and a live Redis daemon are all reachable in
+this environment now, so the gates recorded as "unexecuted" below were actually
+run. Running them was not a formality: it found defects that the blocked runs
+had concealed. This section supersedes the "Flutter" and "Windows bundle"
+paragraphs further down for those two areas.
+
+**Client gates now execute and pass.** `flutter analyze --fatal-infos` reported
+**24 findings** (unused/unnecessary imports, one `prefer_const_constructors`, five
+`avoid_relative_lib_imports` in the contract tool, one `avoid_print`) and
+`flutter test` reported **5 failures**. All are fixed; both commands now exit 0.
+
+| Gate | Before | After |
+| --- | --- | --- |
+| `flutter analyze --fatal-infos` | 24 findings, exit 1 | *No issues found*, exit 0 |
+| `flutter test` | 5 failed of ~434 | **439 passed, 0 failed**, exit 0 |
+| `dart format` (whole tree) | 34 files non-canonical, exit 1 | 169 files, 0 changed, exit 0 |
+| `tool/check_feature_contracts.dart` | failing `avoid_print` + relative imports | *Feature JSON contracts passed*, exit 0 |
+| `tool/check_feature_layout.py` | pass | pass — 169 Dart files, 31 providers |
+
+**What the previously unexecuted runs actually found**
+
+1. **Two real layout defects, both shipping user-visible breakage.** The glossary
+   header `Row` (`glossary_screen.dart:76`) had two non-flexible children; the
+   long subtitle pushed the **"Import glossary" action to x≈1495 on a 1400 px
+   surface — off-screen and unclickable**, with a 241 px overflow. Fixed by
+   wrapping the left block in `Expanded` and the title in `Flexible` + ellipsis,
+   matching the existing `settings_screen.dart:181` / `section_header.dart`
+   house pattern. The export modal body `Column` (`export_modal.dart:116`) needed
+   695 px inside a 550 px-bounded dialog and `AppCard`'s `ClipRRect` made the
+   bottom unreachable; fixed with `SingleChildScrollView`, matching
+   `app_modal.dart:218`.
+
+2. **A test-harness gap, not a production bug.** The export-modal smoke test
+   overrode four document-family providers but not `ocrRepositoryProvider`, so
+   `export_notifier._resolveExportText` reached the real `OcrRepositoryImpl` and
+   issued a live HTTP GET that `TestWidgetsFlutterBinding` rejected with 400 —
+   surfacing as a user-facing "Export failed: … 400 [error: bad_request]".
+   Production correctly uses the repository abstraction; the fake was completed
+   rather than the production path changed.
+
+3. **Two suites asserted contradictory contracts for the same function, and the
+   ledger documented the wrong one.** `hydratePagesFromTextArtifact` reconciles
+   **per line occurrence** (append only artifact lines no live block already
+   represents; placeholders tagged `hydrated-from-artifact`), which is what the
+   implementation, its doc comment and `workstation_hydration_test.dart` all
+   specify — including block-number continuity, object identity, repeated-line
+   counting and idempotence. `artifact_reconcile_test.dart` instead asserted
+   **page-level skip**. Page-level skip is the defect finding 2 exists to prevent:
+   a page that streamed 1 of 10 blocks would lose the other 9. Three
+   expectations were realigned to the occurrence contract, keeping each test's
+   intent, and the stale "reconciles only pages with no live blocks" wording was
+   corrected in the architecture ledger. Both suites now pass together (17/17).
+
+**Formatter/linter interaction worth recording.** `dart format` *preserves* a
+file's existing line endings, so the 34 non-canonical files were real drift, not
+CRLF/LF noise. Running it then **surfaced a 25th finding the unformatted file had
+masked**: an 82-character single-line `if` at `export_notifier.dart:351` was split
+by the formatter, and `curly_braces_in_flow_control_structures` only fires once
+the body sits on its own line. A lint gate run on unformatted sources is not a
+reliable lint gate; both must be run.
+
+Reproduce the client gates:
+
+```powershell
+cd client
+dart format --output=none --set-exit-if-changed .
+flutter analyze --fatal-infos
+flutter test
+```
+
+**Redis: the broker/state path is now proven against a real daemon; job
+completion is still not.** A live Redis was available, so the previously blocked
+Redis gate was run. The pre-existing `redis:latest` container publishes no host
+port, so a dedicated throwaway instance was started for this pass on
+`redis://127.0.0.1:6399/0` and used with **one** URL across server, worker and
+probe.
+
+Booting the API with `OMNISCRIBE_STATE_BACKEND=redis` and `OMNISCRIBE_JOBS_MODE=redis`
+logs one resolved broker everywhere, which is the live confirmation of finding 5:
+
+```
+redis state backend online url=redis://127.0.0.1:6399/0
+state backend redis url=redis://127.0.0.1:6399/0 tls=False
+jobs plugin mounted (mode=redis, url=redis://127.0.0.1:6399/0)
+progress plugin mounted (frame_cap=1000, mode=redis)
+harness mounted plugins: runtime, logging, state_backend, artifacts, jobs,
+progress, providers, health, documents, translate, transcribe, glossary, ocr,
+sample_pdfs (14 plugins)
+```
+
+`scripts/dev_redis_smoke.py` (default health/keyspace probe) passes with exit 0.
+With `--jobs 4`, all four jobs were accepted, **leased and executed by the worker
+over real Redis**, and their terminal outcomes were persisted:
+
+```
+omniscribe:jobs:heartbeat:worker-e48d67a3
+omniscribe:job:index
+omniscribe:job:332d87fa46ce407cae49b607268ba00e   (+ 3 more)
+```
+
+So state persistence, queue dispatch, lease acquisition, terminal outcome
+persistence and the worker's heartbeat/TTL registration are all confirmed live,
+and the harness itself reported the failure honestly with exit 1 — the strict
+exit behaviour finding 7 asked for.
+
+**What is still unproven.** The four jobs ended in terminal failure, not success:
+`LLMCallError: VLM call failed for provider 'lmstudio' (openai_compatible): All
+connection attempts failed`. That is an absent inference backend, not a Redis
+defect — `.env` points `OCR_API_BASE` at a LAN host (`http://192.168.1.75:1234`)
+and `TRANSLATION_API_BASE` at an unresolvable placeholder host, and nothing
+listens on the local LM Studio port. Consequently **a successful job completion
+and the abrupt-worker-restart lease handoff (`--verify-recovery`) remain
+unverified**; that gate needs a reachable translation/OCR endpoint, not a
+different Redis setup. Establishing a *production* Redis profile (worker count,
+throughput target, visibility timeout, topology, TLS/auth) is still an operator
+decision and was not attempted.
+
+Reproduce the Redis gates (with a Redis reachable from the host):
+
+```powershell
+$env:REDIS_URL = 'redis://127.0.0.1:6399/0'
+$env:OMNISCRIBE_STATE_BACKEND = 'redis'
+$env:OMNISCRIBE_JOBS_MODE = 'redis'
+.venv/Scripts/python.exe scripts/run_server.py --port 8124
+# second terminal, same REDIS_URL:
+.venv/Scripts/python.exe -m omniscribe.worker --concurrency 4 --visibility-timeout 30
+# third terminal:
+.venv/Scripts/python.exe scripts/dev_redis_smoke.py --base http://127.0.0.1:8124 `
+  --redis-url redis://127.0.0.1:6399/0 --port 6399 --jobs 4 --timeout 300
+```
+
+**Windows bundle: the old blocker is gone, and the bundle was found broken.**
+`PyInstaller --noconfirm omniscribe_server.spec` no longer hits
+`PermissionError [WinError 5]` on `%APPDATA%\Python\Python313\site-packages`; it
+runs to `Build complete!` (exit 0) and writes a ~460 MB
+`dist/omniscribe-server.exe`. But **building successfully is not the same as
+running successfully** — the first frozen binary died during boot:
+
+```
+ModuleNotFoundError: No module named 'transformers.quantizers'
+[PYI-35824:ERROR] Failed to execute script 'run_server' due to unhandled exception!
+```
+
+The cause was in the spec, not the dependency set. Sprint 4's bundle-size pass
+had added `"transformers.quantizers"` and `"transformers.quantizers.auto"` to
+`EXCLUDES`. That was true of the transformers version pinned at the time; in
+transformers 5.x (5.16.1 here) `transformers.integrations.finegrained_fp8`
+performs a **module-level** `from ..quantizers.quantizers_utils import ...`,
+reached unconditionally through `processing_utils` → `modeling_utils` →
+`integrations.finegrained_fp8`. The exclusion therefore removed a package the
+app cannot boot without. Removing the two entries and rebuilding produces a
+binary that serves the API:
+
+```
+harness mounted plugins: runtime, logging, state_backend, artifacts, jobs,
+progress, providers, health, documents, translate, transcribe, glossary, ocr,
+sample_pdfs (14 plugins)
+Application startup complete.
+Uvicorn running on http://127.0.0.1:8123
+```
+
+`GET /api/health` → `200 {"status":"ok"}` and `GET /openapi.json` → 57 routes.
+This is the same misclassification class the spec already documents for its
+`anyio` and `pydantic_settings` exclusions; the trap is now recorded in place.
+Note the health path is **`/api/health`**, not `/health` — a bare `/health`
+returns 404 and will look like a boot failure if you probe the wrong path.
+
+Still open for the bundle: a packaged smoke of the full upload → OCR → export
+journey, the client archive, and the SHA-256 manifest with matching versioned
+asset names. Publishing remains a separate, unauthorised action.
+
+
+
 ## GitHub precheck (2026-10-04)
 
 **Ready for review; full merge and release signoff remains open.** The backend

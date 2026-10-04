@@ -15,6 +15,11 @@ import 'package:omniscribe_client/shared/widgets/app_select.dart';
 import 'package:omniscribe_client/shared/widgets/error_banner.dart';
 import 'package:omniscribe_client/shared/widgets/section_header.dart';
 
+/// Inline width the header needs to place the action cluster beside the title.
+/// Below this the cluster drops onto its own line and the view-switcher labels
+/// shrink, so a constrained window degrades instead of overflowing.
+const double kGlossaryHeaderInlineBreakpoint = 1040;
+
 class GlossaryScreen extends ConsumerStatefulWidget {
   const GlossaryScreen({super.key});
 
@@ -65,6 +70,93 @@ class _GlossaryScreenState extends ConsumerState<GlossaryScreen> {
 
     final activeCount = state.libraries.where((l) => l.enabled).length;
 
+    // Title block. Kept flexible on both axes: the headline ellipsizes rather
+    // than pushing the action cluster off the surface.
+    final titleBlock = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Flexible(
+              child: Text(
+                'Terminology Glossary',
+                overflow: TextOverflow.ellipsis,
+                style: AppTypography.displaySmall(
+                  color: colors.textPrimary,
+                ),
+              ),
+            ),
+            const SizedBox(width: 10),
+            AppBadge(
+              label: '$activeCount active',
+              variant: AppBadgeVariant.success,
+              style: AppBadgeStyle.filled,
+            ),
+          ],
+        ),
+        const SizedBox(height: 4),
+        Text(
+          'Manage domain lexicons, term overrides, and dictionary mappings',
+          style: AppTypography.bodySmall(
+            color: colors.textMuted,
+          ),
+        ),
+      ],
+    );
+
+    // Action cluster: view switcher + primary import action. Its natural width
+    // (~990px) exceeds a constrained window, so the tab labels are flexible and
+    // the cluster moves to its own line below the breakpoint.
+    final actionCluster = Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // Segmented Control
+        Container(
+          padding: const EdgeInsets.all(3),
+          decoration: BoxDecoration(
+            color: colors.cardRaised,
+            borderRadius: BorderRadius.circular(6),
+            border: Border.all(color: colors.border),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _buildTabButton(
+                'Libraries (${state.libraries.length})',
+                0,
+                state.activeViewIndex,
+                notifier,
+                colors,
+              ),
+              _buildTabButton(
+                state.selectedLibrary != null
+                    ? 'Entries (${state.entries.length})'
+                    : 'Entries',
+                1,
+                state.activeViewIndex,
+                notifier,
+                colors,
+              ),
+              _buildTabButton(
+                'Merged Lexicon (${state.mergedLexicon.length})',
+                2,
+                state.activeViewIndex,
+                notifier,
+                colors,
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(width: 12),
+        AppButton(
+          text: 'Import glossary',
+          variant: AppButtonVariant.primary,
+          icon: const Icon(Icons.add, size: 14),
+          onPressed: _showImportModal,
+        ),
+      ],
+    );
+
     return Scaffold(
       backgroundColor: colors.background,
       body: Padding(
@@ -73,87 +165,35 @@ class _GlossaryScreenState extends ConsumerState<GlossaryScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             // Header Bar
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+            LayoutBuilder(
+              builder: (context, constraints) {
+                if (constraints.maxWidth < kGlossaryHeaderInlineBreakpoint) {
+                  // The cluster is rigid (~990px), so it cannot share a line
+                  // with the title on a constrained window. It drops to its own
+                  // line and scrolls horizontally, matching the dropzone's
+                  // narrow-viewport treatment, so "Import glossary" stays
+                  // reachable instead of overflowing off the surface.
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      titleBlock,
+                      const SizedBox(height: 12),
+                      SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: actionCluster,
+                      ),
+                    ],
+                  );
+                }
+                return Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
-                    Row(
-                      children: [
-                        Text(
-                          'Terminology Glossary',
-                          style: AppTypography.displaySmall(
-                            color: colors.textPrimary,
-                          ),
-                        ),
-                        const SizedBox(width: 10),
-                        AppBadge(
-                          label: '$activeCount active',
-                          variant: AppBadgeVariant.success,
-                          style: AppBadgeStyle.filled,
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      'Manage domain lexicons, term overrides, and dictionary mappings',
-                      style: AppTypography.bodySmall(
-                        color: colors.textMuted,
-                      ),
-                    ),
+                    Expanded(child: titleBlock),
+                    actionCluster,
                   ],
-                ),
-                Row(
-                  children: [
-                    // Segmented Control
-                    Container(
-                      padding: const EdgeInsets.all(3),
-                      decoration: BoxDecoration(
-                        color: colors.cardRaised,
-                        borderRadius: BorderRadius.circular(6),
-                        border: Border.all(color: colors.border),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          _buildTabButton(
-                            'Libraries (${state.libraries.length})',
-                            0,
-                            state.activeViewIndex,
-                            notifier,
-                            colors,
-                          ),
-                          _buildTabButton(
-                            state.selectedLibrary != null
-                                ? 'Entries (${state.entries.length})'
-                                : 'Entries',
-                            1,
-                            state.activeViewIndex,
-                            notifier,
-                            colors,
-                          ),
-                          _buildTabButton(
-                            'Merged Lexicon (${state.mergedLexicon.length})',
-                            2,
-                            state.activeViewIndex,
-                            notifier,
-                            colors,
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    AppButton(
-                      text: 'Import glossary',
-                      variant: AppButtonVariant.primary,
-                      icon: const Icon(Icons.add, size: 14),
-                      onPressed: _showImportModal,
-                    ),
-                  ],
-                ),
-              ],
+                );
+              },
             ),
             const SizedBox(height: 16),
 

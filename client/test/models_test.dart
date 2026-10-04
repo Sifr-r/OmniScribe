@@ -7,14 +7,15 @@ import 'package:omniscribe_client/features/workstation/process_settings.dart';
 import 'package:omniscribe_client/core/websocket/ws_frames.dart';
 
 void main() {
-  test('page preview updates have distinct identity without scanning bytes', () {
+  test('page preview updates have distinct identity without scanning bytes',
+      () {
     final preview = Uint8List.fromList([1]);
     final page = PageResult(page: 0, previewBytes: preview);
     final shared = page.copyWith();
     expect(shared, page);
     expect(shared.hashCode, page.hashCode);
     expect(page.copyWith(previewBytes: Uint8List.fromList([2])), isNot(page));
-    expect(PageResult(page: 0), isNot(page));
+    expect(const PageResult(page: 0), isNot(page));
   });
 
   group('BBoxItem Model Tests', () {

@@ -324,7 +324,8 @@ class DocumentExportNotifier extends Notifier<bool> {
             bytes = tree is List<int>
                 ? Uint8List.fromList(tree)
                 : Uint8List.fromList(
-                    utf8.encode(const JsonEncoder.withIndent('  ').convert(tree)),
+                    utf8.encode(
+                        const JsonEncoder.withIndent('  ').convert(tree)),
                   );
           } else {
             bytes = Uint8List.fromList(utf8.encode(
@@ -343,11 +344,13 @@ class DocumentExportNotifier extends Notifier<bool> {
               : Uint8List.fromList(utf8.encode(text));
           label = 'Markdown';
         case ExportFormat.rawText:
-          bytes = Uint8List.fromList(
-              utf8.encode(content.paragraphs.join('\n')));
+          bytes =
+              Uint8List.fromList(utf8.encode(content.paragraphs.join('\n')));
           label = 'Plain text';
       }
-      if (bytes.isEmpty) throw StateError('The server returned an empty export.');
+      if (bytes.isEmpty) {
+        throw StateError('The server returned an empty export.');
+      }
       if (!ref.mounted) throw StateError('Document export was cancelled.');
       final current = ref.read(workstationProvider);
       if (!identical(current.loadedBytes, document.loadedBytes) ||

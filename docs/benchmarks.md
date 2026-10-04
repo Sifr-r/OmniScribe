@@ -219,10 +219,44 @@ them for a same-protocol measurement.
 
 ## 5. Dataset Ingestion & License Review Status
 
-To prevent proprietary encumbrance or license contagion, external dataset ingestion follows the protocol in `scripts/fetch_datasets.py`:
+`scripts/fetch_datasets.py` now acquires pinned upstream sources into the local,
+ignored `reports/datasets/<dataset>/<revision>/` directory. It retains the
+upstream README and writes a manifest containing URLs, revision, declared
+dataset license, SHA-256 hashes and byte counts. Downloads use bounded reads,
+60-second network timeouts and atomic file replacement. These research sources
+are not shipped as product data or test fixtures.
 
-- **Status: unavailable.** The full-dataset downloaders are license-gated stubs,
-  not a working capability. No external corpus is fetched, and every harness
-  report states this under `provenance.datasets.status = "unavailable"`.
-- `tests/fixtures/datasets/ocr_quality_mini.json` and `kie_hvqa_mini.json` provide in-tree regression fixtures without network access.
-- Download of full external datasets (OmniDocBench / OCR-Quality / KIE-HVQA) is gated on licensing confirmation. Unlicensed fetches exit with code `77` (`EX_NOPERM`), which the nightly CI test harness interprets as an expected skip rather than a failure.
+| Dataset | Verified upstream / declared terms | Supported acquisition / remaining regression blocker |
+| --- | --- | --- |
+| OCR-Quality | [Aslan-mingye/OCR-Quality](https://huggingface.co/datasets/Aslan-mingye/OCR-Quality), MIT declaration; pinned `d6d42fc01b7aea801da3a429cc31350932bdbf87` | `--source-only` downloads the original Parquet (approximately 1.2 GB), including images and labels. Columns are `index`, `human_score`, `ocr_text`, `source`, `image`, `image_width`, `image_height`. There is **no raw model confidence**; the full calibration regression cannot run until actual confidence measurements for the corresponding OCR outputs exist. Human labels must never be reused as confidence predictions. |
+| KIE-HVQA | [bytedance-research/KIE-HVQA](https://huggingface.co/datasets/bytedance-research/KIE-HVQA), dataset CC BY 4.0 (source code Apache 2.0); pinned `1021ad7ae0ccb52594bf2838e61fa659863ec940` | `--source-only` acquires the original `kie_hocr.jsonl` annotations and README, **not images**. The records contain IDs, image paths, questions, and answer strings with clear/not-clear OCR text and counts. They do not supply bounding boxes or position-aligned character masks required by the existing regional test. Some nested answer strings are malformed JSON; raw acquisition preserves them without silently repairing or dropping them. |
+| OmniDocBench | [opendatalab/OmniDocBench](https://huggingface.co/datasets/opendatalab/OmniDocBench), **research only, noncommercial** copyright statement; pinned `aa1ee96d106dbe53d0ae59474d75c6e6d9b53fec` | Requires `--acknowledge-research-only`. Downloads the full original annotation JSON and the first `--max-pages` matching images (default 1; range 1–1651). `pages.json` preserves selected page/block annotations and adds a bbox from polygon min/max coordinates. This is a source adapter, not a measured Markdown accuracy result or commercial license approval. |
+
+The license column records upstream declarations, not independent clearance of
+all underlying documents. Preserve upstream attribution and comply with the
+stated terms; OmniDocBench data must remain in the research workspace.
+
+```bash
+uv run python scripts/fetch_datasets.py --dataset kie-hvqa --source-only
+uv run python scripts/fetch_datasets.py --dataset ocr-quality --source-only
+uv run python scripts/fetch_datasets.py --dataset omnidocbench --acknowledge-research-only --max-pages 1
+```
+
+**Observed acquisition on 2026-10-04:** KIE-HVQA README and 143,152-byte
+annotation JSONL downloaded successfully; annotation SHA-256 is
+`5354ebb138c7abfb0dd66fec28a3ae33cc3c2dfe1c37198772a9195bbc84c5fd`.
+OmniDocBench's 42,208,096-byte annotation JSON downloaded successfully
+(SHA-256 `a45cd84b04ad8b793e775089640e6b681209abea33ead54c1828ddca35fae496`),
+and one page image plus its preserved/converted annotations were acquired.
+The full source contains 1,651 pages. OCR-Quality's large Parquet acquisition
+is implemented but was not exercised in this closeout.
+
+**Regression status: blocked on missing evidence.** Default OCR-Quality and
+KIE-HVQA conversion still exits `77`, naming the missing schema fields; this
+preserves the nightly expected-unavailable contract. Actual network, parsing,
+validation or filesystem failures exit `1`. `--dry-run` does no I/O.
+`ocr_quality_mini.json` and `kie_hvqa_mini.json` remain synthetic, in-tree smoke
+fixtures; their passing results are not external benchmark measurements.
+The confidence evaluation harness still reports external dataset scoring as
+`provenance.datasets.status = "unavailable"`: acquisition alone does not run
+OCR, fit calibration, or measure accuracy.

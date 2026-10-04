@@ -45,7 +45,8 @@ TextArtifactPages parseTextArtifactPages(Map<String, dynamic> artifact) {
     final pageIndex = int.tryParse(key);
     if (pageIndex == null || pageIndex < 0 || value is! String) return;
     if (pageIndex >= maxTextArtifactPages) {
-      throw const FormatException('Text artifact exceeds the 10000-page preview limit.');
+      throw const FormatException(
+          'Text artifact exceeds the 10000-page preview limit.');
     }
     final lines = value
         .split('\n')

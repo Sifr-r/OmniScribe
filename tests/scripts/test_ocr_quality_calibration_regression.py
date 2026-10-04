@@ -1,8 +1,7 @@
 """Dataset-driven regression test for the OCR quality calibration layer.
 
-Marked ``slow_dataset`` so the fast ``pytest`` tier skips it by default
-— only the nightly workflow (which downloads the full OCR-Quality
-dataset) runs it.
+Marked ``slow_dataset``. The mini fixture tests the calibration machinery;
+the full regression skips until an independently measured fixture exists.
 
 Acceptance criterion (from the design §16 item 4):
 
@@ -11,12 +10,11 @@ Acceptance criterion (from the design §16 item 4):
 
 The test uses two fixture files:
 
-- ``ocr_quality_mini.json`` (10 records) — checked-in mini fixture
-  that always passes; used as the smoke test for the
-  ``slow_dataset`` machinery.
-- ``ocr_quality_full.json`` (downloaded) — the real OCR-Quality
-  dataset, only present after ``scripts/fetch_datasets.py`` runs.
-  When missing, the test is skipped with a clear message.
+- ``ocr_quality_mini.json`` (10 records) — synthetic checked-in smoke fixture.
+- ``ocr_quality_full.json`` — requires actual confidence measurements matched
+  to upstream OCR-Quality human scores. Upstream supplies no raw confidence,
+  so source acquisition alone cannot produce this fixture or satisfy the
+  acceptance criterion. See ``docs/benchmarks.md`` §5.
 """
 
 from __future__ import annotations
@@ -51,7 +49,11 @@ pytestmark = pytest.mark.slow_dataset
 
 def _records_or_skip(path: Path) -> list:
     if not path.exists():
-        pytest.skip(f"dataset not present: {path} (run scripts/fetch_datasets.py)")
+        pytest.skip(
+            f"fixture not present: {path}; full OCR-Quality calibration requires "
+            "actual confidence measurements matched to human labels. Source "
+            "acquisition alone cannot create it; see docs/benchmarks.md §5."
+        )
     try:
         return load_records(path)
     except CalibrationError as exc:

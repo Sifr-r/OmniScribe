@@ -146,11 +146,20 @@ class _JobHistoryScreenState extends ConsumerState<JobHistoryScreen> {
           variant: AppButtonVariant.danger,
           onPressed: () async {
             Navigator.of(context).pop();
-            await ref.read(jobsProvider.notifier).clearJobs();
-            if (mounted) {
-              setState(() {
-                _statusBanner = 'Job execution history cleared.';
-              });
+            try {
+              await ref.read(jobsProvider.notifier).clearJobs();
+              if (mounted) {
+                setState(() {
+                  _statusBanner = 'Job execution history cleared.';
+                });
+              }
+            } catch (_) {
+              if (mounted) {
+                setState(() {
+                  // The notifier retains the failure for the error banner.
+                  _statusBanner = null;
+                });
+              }
             }
           },
         ),
@@ -169,8 +178,11 @@ class _JobHistoryScreenState extends ConsumerState<JobHistoryScreen> {
   Widget build(BuildContext context) {
     final jobsState = ref.watch(jobsProvider);
     final colors = context.colors;
+    final statusBanner = jobsState.error != null
+        ? 'Job history error: ${jobsState.error}'
+        : _statusBanner;
     final isErrorBanner =
-        _statusBanner != null && _statusBanner!.toLowerCase().contains('error');
+        statusBanner != null && statusBanner.toLowerCase().contains('error');
 
     return Scaffold(
       backgroundColor: colors.background,
@@ -240,7 +252,7 @@ class _JobHistoryScreenState extends ConsumerState<JobHistoryScreen> {
               ),
               const SizedBox(height: 16),
 
-              if (_statusBanner != null) ...[
+              if (statusBanner != null) ...[
                 Container(
                   padding:
                       const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
@@ -265,7 +277,7 @@ class _JobHistoryScreenState extends ConsumerState<JobHistoryScreen> {
                       const SizedBox(width: 8),
                       Expanded(
                         child: Text(
-                          _statusBanner!,
+                          statusBanner,
                           style: TextStyle(
                             fontSize: 12,
                             color: isErrorBanner ? colors.error : colors.info,

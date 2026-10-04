@@ -457,13 +457,15 @@ class WorkstationNotifier extends Notifier<WorkstationState> {
       final lines = artifactPages[pageIndex]!;
       final represented = <String, int>{};
       for (final box in existing.bboxes) {
-        for (final line in box.text.split('\n').where((l) => l.trim().isNotEmpty)) {
-          represented.update(line.trim(), (count) => count + 1, ifAbsent: () => 1);
+        for (final line
+            in box.text.split('\n').where((l) => l.trim().isNotEmpty)) {
+          represented.update(line.trim(), (count) => count + 1,
+              ifAbsent: () => 1);
         }
       }
       final hydrated = <BBoxItem>[];
-      var nextBlock = existing.bboxes.fold<int>(
-              -1, (highest, box) => math.max(highest, box.block)) +
+      var nextBlock = existing.bboxes
+              .fold<int>(-1, (highest, box) => math.max(highest, box.block)) +
           1;
       for (var i = 0; i < lines.length; i++) {
         final lineKey = lines[i].trim();

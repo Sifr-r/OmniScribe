@@ -132,67 +132,99 @@ void main() {
     return container;
   }
 
-  test('real nullable status envelopes parse and malformed wire fields fail', () async {
+  test('real nullable status envelopes parse and malformed wire fields fail',
+      () async {
     final api = _MockApiClient();
     final repo = GlossaryRepository(api);
-    for (final status in ['pending', 'processing', 'complete', 'error', 'cancelled']) {
-      when(() => api.get<Map<String, dynamic>>(ApiConstants.processStatus('job')))
-          .thenAnswer((_) async => {'job_id': 'job', 'status': status, 'error': null});
+    for (final status in [
+      'pending',
+      'processing',
+      'complete',
+      'error',
+      'cancelled'
+    ]) {
+      when(() =>
+              api.get<Map<String, dynamic>>(ApiConstants.processStatus('job')))
+          .thenAnswer(
+              (_) async => {'job_id': 'job', 'status': status, 'error': null});
       final parsed = await repo.getImportJobStatus('job');
       expect(parsed.status, status);
       expect(parsed.error, isNull);
     }
-    expect(GlossaryJobStatus.fromJson({'status': 'complete'}).succeeded, isTrue);
-    for (final malformed in <Map<String, dynamic>>[{'status': 'surprise'},
-      {'status': 'complete', 'error': 17}, {'error': null}]) {
-      expect(() => GlossaryJobStatus.fromJson(malformed), throwsFormatException);
+    expect(
+        GlossaryJobStatus.fromJson({'status': 'complete'}).succeeded, isTrue);
+    for (final malformed in <Map<String, dynamic>>[
+      {'status': 'surprise'},
+      {'status': 'complete', 'error': 17},
+      {'error': null}
+    ]) {
+      expect(
+          () => GlossaryJobStatus.fromJson(malformed), throwsFormatException);
     }
   });
 
-  test('transient polling failures retry without treating the import as failed', () async {
-    final repo = _FakeGlossaryRepository(importResult: _queued('retry'),
-        statusFailures: 2, statusSequence: const [GlossaryJobStatus(status: 'complete')]);
+  test('transient polling failures retry without treating the import as failed',
+      () async {
+    final repo = _FakeGlossaryRepository(
+        importResult: _queued('retry'),
+        statusFailures: 2,
+        statusSequence: const [GlossaryJobStatus(status: 'complete')]);
     final container = makeContainer(repo);
-    await container.read(glossaryProvider.notifier).followImportJob(_queued('retry'),
-        pollInterval: Duration.zero);
+    await container
+        .read(glossaryProvider.notifier)
+        .followImportJob(_queued('retry'), pollInterval: Duration.zero);
     expect(container.read(glossaryProvider).error, isNull);
     expect(repo.libraryLoads, 1);
   });
 
-  test('persistent polling failure reports a still-running job, without refreshing', () async {
-    final repo = _FakeGlossaryRepository(importResult: _queued('unreachable'), statusFailures: 3);
+  test(
+      'persistent polling failure reports a still-running job, without refreshing',
+      () async {
+    final repo = _FakeGlossaryRepository(
+        importResult: _queued('unreachable'), statusFailures: 3);
     final container = makeContainer(repo);
-    await container.read(glossaryProvider.notifier).followImportJob(_queued('unreachable'),
-        pollInterval: Duration.zero);
-    expect(container.read(glossaryProvider).error, contains('may still be running'));
+    await container
+        .read(glossaryProvider.notifier)
+        .followImportJob(_queued('unreachable'), pollInterval: Duration.zero);
+    expect(container.read(glossaryProvider).error,
+        contains('may still be running'));
     expect(repo.libraryLoads, 0);
   });
 
   test('a hanging status request respects the total import deadline', () async {
-    final repo = _FakeGlossaryRepository(importResult: _queued('hanging'), statusNeverCompletes: true);
+    final repo = _FakeGlossaryRepository(
+        importResult: _queued('hanging'), statusNeverCompletes: true);
     final container = makeContainer(repo);
-    await container.read(glossaryProvider.notifier).followImportJob(_queued('hanging'),
-        pollInterval: Duration.zero, timeout: const Duration(milliseconds: 20));
+    await container.read(glossaryProvider.notifier).followImportJob(
+        _queued('hanging'),
+        pollInterval: Duration.zero,
+        timeout: const Duration(milliseconds: 20));
     expect(container.read(glossaryProvider).error, contains('still running'));
     expect(container.read(glossaryProvider).isLoading, isFalse);
     expect(repo.libraryLoads, 0);
   });
 
-  testWidgets('queued URL worker errors keep the import modal open', (tester) async {
+  testWidgets('queued URL worker errors keep the import modal open',
+      (tester) async {
     tester.view.physicalSize = const Size(1400, 1000);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
-    final repo = _FakeGlossaryRepository(importResult: _queued('failed-url'),
-        statusSequence: const [GlossaryJobStatus(status: 'error', error: 'invalid glossary')]);
+    final repo = _FakeGlossaryRepository(
+        importResult: _queued('failed-url'),
+        statusSequence: const [
+          GlossaryJobStatus(status: 'error', error: 'invalid glossary')
+        ]);
     await tester.pumpWidget(ProviderScope(
       overrides: [glossaryRepositoryProvider.overrideWithValue(repo)],
-      child: MaterialApp(theme: AppTheme.darkTheme, home: const GlossaryScreen()),
+      child:
+          MaterialApp(theme: AppTheme.darkTheme, home: const GlossaryScreen()),
     ));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Import glossary'));
     await tester.pumpAndSettle();
-    await tester.enterText(find.byType(TextField).last, 'https://example.com/bad.csv');
+    await tester.enterText(
+        find.byType(TextField).last, 'https://example.com/bad.csv');
     await tester.tap(find.text('Import Glossary').last);
     await tester.pump();
     await tester.pump(const Duration(seconds: 1));
@@ -212,10 +244,11 @@ void main() {
     );
     final container = makeContainer(repo);
 
-    final res = await container.read(glossaryProvider.notifier).importGlossaryUrl(
-          url: 'https://example.com/late.csv',
-          format: GlossaryFormat.csv,
-        );
+    final res =
+        await container.read(glossaryProvider.notifier).importGlossaryUrl(
+              url: 'https://example.com/late.csv',
+              format: GlossaryFormat.csv,
+            );
 
     expect(res.queued, isTrue);
     expect(
@@ -231,7 +264,8 @@ void main() {
     expect(repo.lexiconLoads, 1);
   });
 
-  test('queued import reports a worker failure instead of refreshing', () async {
+  test('queued import reports a worker failure instead of refreshing',
+      () async {
     final repo = _FakeGlossaryRepository(
       importResult: _queued('job-2'),
       statusSequence: const [
@@ -279,7 +313,8 @@ void main() {
           filename: 'now.csv',
         );
 
-    expect(repo.statusPolls, 0, reason: 'nothing to follow for an inline import');
+    expect(repo.statusPolls, 0,
+        reason: 'nothing to follow for an inline import');
     final state = container.read(glossaryProvider);
     expect(state.error, isNull);
     expect(state.libraries.map((l) => l.id), contains('lib-1'));

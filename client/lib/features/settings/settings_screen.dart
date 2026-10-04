@@ -7,7 +7,6 @@ import 'package:omniscribe_client/features/providers/provider_notifier.dart';
 import 'package:omniscribe_client/features/settings/runtime_config.dart';
 import 'package:omniscribe_client/features/settings/settings_notifier.dart';
 import 'package:omniscribe_client/features/settings/settings_state.dart';
-import 'package:omniscribe_client/features/workstation/process_settings.dart';
 import 'package:omniscribe_client/shared/widgets/app_badge.dart';
 import 'package:omniscribe_client/shared/widgets/app_button.dart';
 import 'package:omniscribe_client/shared/widgets/app_card.dart';

@@ -155,8 +155,7 @@ void main() {
       );
     });
 
-    testWidgets(
-        'ExportFormat.searchablePdf rejects an unprocessed source PDF',
+    testWidgets('ExportFormat.searchablePdf rejects an unprocessed source PDF',
         (tester) async {
       final container = ProviderContainer(
         overrides: [
@@ -305,7 +304,8 @@ void main() {
 
       verifyNever(() => mockRepo.exportDocx(any()));
       expect(
-        find.text('Recognized text not available. Please run OCR processing first.'),
+        find.text(
+            'Recognized text not available. Please run OCR processing first.'),
         findsOneWidget,
       );
     });

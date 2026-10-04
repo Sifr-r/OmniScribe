@@ -1,5 +1,35 @@
 # Architecture Ledger
 
+## Actionable document closeout (2026-10-04)
+
+The [blueprint and evidence](actionable-closeout-2026-10-04.md) records parallel
+ownership and fresh checks. The jobs feature retains history rendering and
+error feedback; its notifier retains repository operations and failure state.
+No production dependency or domain boundary changed.
+
+| New file | Single responsibility |
+| --- | --- |
+| `docs/actionable-closeout-2026-10-04.md` | Review scope, implementation ownership and observed acceptance evidence. |
+| `client/test/features/jobs/job_history_screen_test.dart` | Repository-driven Job History widget journeys: list, refresh, clear confirmation and recoverable errors. |
+| `tests/scripts/test_bundle_imports.py` | Verify frozen-bundle exclusions leave required server, Surya and Transformers runtime imports reachable. |
+| `tests/scripts/test_bundle_smoke.py` | Pin occupied-port rejection, bounded silent-process polling, isolated storage and owned-process shutdown. |
+
+`scripts/smoke_existing.py` owns the shared bounded bundle probe;
+`scripts/build_windows.py` delegates its smoke gate to it. Logs and extracted
+runtime evidence stay beneath workspace `build/bundle-smoke-*` after probing.
+`scripts/fetch_datasets.py` owns pinned, bounded upstream acquisition and the
+OmniDocBench page adapter; original data, declared license and digests stay in
+ignored workspace reports. Existing dataset script tests own acquisition,
+validation and honest unavailable-conversion regressions.
+
+Fresh client evidence: 447 widget/unit tests; fatal-info analysis, formatting,
+feature layout/contracts; Windows/web release builds; no-VLM Windows real-server
+sample/preview integration. Model-backed OCR remains blocked by unavailable
+configured endpoints. These checks supersede earlier SDK/build limitations.
+The backend coverage run reached 84.04% but failed one child-startup timeout;
+that same process-ownership regression passed alone without changes. The
+closeout preserves both outcomes instead of marking the full gate green.
+
 ## Goal-alignment implementation closeout (2026-10-04)
 
 GitHub preparation keeps the assessment's responsibility as the current acceptance
