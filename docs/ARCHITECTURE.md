@@ -1,5 +1,51 @@
 # Architecture Ledger
 
+## GitHub failed-check repair (2026-10-08)
+
+The [repair blueprint](ci-checks-blueprint-2026-10-08.md) owns scope, parallel
+file ownership and validation evidence. The other new tracked file,
+`.trivyignore.yaml`, owns the exact-version/path SDK advisory exception,
+its reachability statement, and its 2026-11-07 expiration date.
+Dependency automation owns `.github/dependabot.yml`, now tracking Flutter pub
+under `/client`. `Dockerfile` owns builder/runtime OS patching for the pinned
+Python base. `pyproject.toml` and `uv.lock` own the patched AnyIO constraint and
+resolution; existing `omniscribe_server.spec` submodule collection and
+`scripts/run_server.py` entry imports remain the bundle inclusion mechanism.
+The OCR bridge regression test narrows its concrete backend type, and audit
+commands in `test.yml` and `Makefile` remove obsolete AnyIO exceptions.
+No production module, runtime API, persistence format or plugin boundary changes.
+Final upgraded fast gate: 2,779 passed, 30 skipped, 13 deselected, 80.26%
+coverage. Full image build and normal non-root server startup pass; health is
+HTTP 200. The fresh Trivy scan has no unsuppressed fixable HIGH/CRITICAL findings
+and accepts exactly one SDK advisory; the original vulnerable base still fails
+with the same exception enabled. GitHub-hosted reruns remain pending publication.
+
+## Actionable document closeout (2026-10-06)
+
+The 2026-10-06 pass closed critical verification, security, and CI gaps:
+- **CI optional extras coverage gap closed**: Added `extras` job to `.github/workflows/nightly.yml`
+  (`pytest (py${{ matrix.python }}, extras tier: lexicon + memory + glossary)`) syncing
+  `--extra web --extra async-translation --extra lexicon --extra memory --extra glossary`
+  and executing `pytest -m "not slow and not slow_dataset"`. Eliminates dark coverage for
+  LanceDB, PyArrow, sentence-transformers, SQLAlchemy, openpyxl, and gitpython without
+  compromising the lean fast-tier PR merge policy (`test.yml:67-77`).
+- **CI pytest collection break resolved**: Added `pytest.importorskip("pyarrow")` to
+  `tests/core/test_lexicon_schema.py` ahead of module imports, unblocking pytest collection
+  across all non-extras CI environments.
+- **Dependency vulnerability audit resolved**: `uv run pip-audit` exits 0. `urllib3` upgraded
+  2.7.0 -> 2.8.0 in `uv.lock`. Remaining three advisories (`anyio` PYSEC-2026-4024 / -4025
+  and `langgraph-sdk` CVE-2026-104873) risk-accepted with reachability proofs in
+  `.github/workflows/test.yml` and `Makefile`.
+- **HTTPS OCR SSRF DNS-rebinding TOCTOU resolved**: Threaded `resolved_ip` through
+  `PromptedGroundedOCR`, `OCRProcessor`, and `ChatClient` with IP-pinned `httpx.AsyncClient`
+  instances closed in `aclose()`.
+- **Live inference reachability verified**: Sockets probed live on 2026-10-06; LAN endpoint
+  `192.168.1.75:1234` timed out and placeholder `translation-host:80` failed DNS resolution,
+  confirming external environment blocking for live VLM/OCR and Redis completion gates.
+- **Full verification gates passed**: Flutter analyze (0 issues), Flutter test (447 passed,
+  0 failed), Dart format (171 files, 0 changed), layout/JSON contracts pass, Ruff check/format
+  clean (446 files), Mypy clean (222 files), backend test subset passes (40 passed, 1 skipped).
+
 ## Actionable document closeout (2026-10-04)
 
 The [blueprint and evidence](actionable-closeout-2026-10-04.md) records parallel
@@ -397,7 +443,7 @@ Protocol (`ctx.inject(JobQueue)`), never by module singleton.
 | `src/omniscribe/utils/structured_logging.py` | Structured JSON logging formatter and handlers |
 | `src/omniscribe/utils/prompt_safety.py` | Prompt injection detection and input sanitization |
 | `src/omniscribe/utils/image.py` | Image crop, blank-region detection, and crop encoding helpers |
-| `src/omniscribe/utils/security.py` | SSRF target validation |
+| `src/omniscribe/utils/security.py` | SSRF target validation, `create_pinned_client` / `_PinnedIPTransport` IP-pinned async transports, and Redis URL credential redaction |
 | `src/omniscribe/utils/tqdm_patch.py` | Surya progress-bar suppression |
 | `src/omniscribe/utils/json_parse.py` | Robust extraction of first parseable JSON object or array from LLM/VLM text outputs using single-pass raw_decode |
 | `src/omniscribe/utils/env.py` | Typed environment-variable access helpers and robust atomic key persistence (`persist_env_key`) to `.env` |
@@ -554,7 +600,7 @@ state for one server process, while Redis coordinates multiple workers.
 5. **Lexicon Fail-Closed Error Policy**: `open_terms_table` and `ensure_meta_and_compat` in `core.lexicon.schema` fail closed by raising exceptions on table read/open errors instead of destructively recreating or overwriting existing lexicon databases with `mode="overwrite"`.
 6. **Client Bounded Polling & Artifact Hydration**: The Flutter client (`job_orchestration_notifier.dart`) implements bounded retry tracking (`_maxConsecutiveStatusFailures = 3`) before declaring status check failures, guards against stale artifact hydration overwrites (`_isCurrentRun`), preserves existing `PageResult` previews, dimensions, and image URLs without collapsing sparse page indices, and unconditionally clears processing state upon cancellation even when server-side cancel endpoints fail.
 7. **Unicode Fast-Path & Zero-Page PDF Embedding**: PyMuPDF embedding and synthetic document rendering automatically resolve Unicode font chains (supporting Arabic, CJK, Hebrew, and Cyrillic) and inject default blank pages for empty page collections, preventing WinAnsi encoding degradation and zero-page PDF fatal crashes.
-8. **SSRF IP-Pinned Transports & WebSocket Bearer Auth**: Outbound LLM API calls in extraction and translation bind HTTP transports directly to pre-resolved, SSRF-validated IP addresses to prevent DNS rebinding TOCTOU attacks. In addition, the ASGI `BearerAuthMiddleware` gates both `http` and `websocket` connection scopes on protected server instances.
+8. **SSRF IP-Pinned Transports & WebSocket Bearer Auth**: Outbound LLM API calls in extraction, translation, and the OCR VLM pre-flight probe bind HTTP transports directly to pre-resolved, SSRF-validated IP addresses to prevent DNS rebinding TOCTOU attacks. `OCRServiceImpl.preflight_check` passes `check_ssrf_target_sync(...).resolved_ip` into `_probe_vlm_server`, which builds the pinned `httpx.AsyncClient` and hands it to the SDK as `http_client`; without it the probe handed a bare hostname to `AsyncOpenAI`, which re-resolved it on connect. In addition, the ASGI `BearerAuthMiddleware` gates both `http` and `websocket` connection scopes on protected server instances.
 
 ### Multi-producer job runner dispatch
 

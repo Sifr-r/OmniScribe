@@ -10,10 +10,12 @@ import pytest
 
 from omniscribe.config import RuntimeSettings, load_settings
 from omniscribe.core.document import DenseMode, SpellcheckMode
+from omniscribe.core.grounded.prompted import PromptedGroundedOCR
 from omniscribe.core.imaging.page_preprocess import (
     LocalPagePreprocessor,
     PagePreprocessingOptions,
 )
+from omniscribe.core.ocr.processor import OCRProcessor
 from omniscribe.core.workflows.repair import RepairOptions
 from omniscribe.plugins.errors import PluginError
 from omniscribe.plugins.ocr import pipeline_bridge
@@ -145,6 +147,132 @@ def test_build_pipeline_foreign_origin_does_not_attach_settings_key(
     )
     pipeline3 = pipeline_bridge.build_pipeline(settings, request_same)
     assert pipeline3.grounded_backend.api_key == "server-super-secret"  # type: ignore[union-attr]
+
+
+@pytest.mark.parametrize("pipeline_mode", ["grounded", "hybrid"])
+def test_build_pipeline_pins_transport_to_resolved_ip_for_https(
+    monkeypatch: pytest.MonkeyPatch, pipeline_mode: str
+) -> None:
+    """An HTTPS ``api_base`` must keep its hostname *and* pin its transport.
+
+    Regression for a DNS-rebinding TOCTOU window that only existed on the
+    https scheme. ``_rewrite_url_with_resolved_ip`` cannot be used for https —
+    rewriting the host to a literal IP breaks SNI and certificate validation —
+    so ``pipeline_bridge`` previously skipped pinning entirely and handed the
+    bare hostname to ``AsyncOpenAI`` / ``call_llm``, both of which re-resolve
+    on connect. A host answering public during validation and link-local on the
+    second lookup therefore walked past the SSRF guard.
+
+    The contract now is: ``api_base`` keeps the hostname (so TLS still works)
+    *and* the resolved address is threaded into the engine, which builds an
+    IP-pinned transport from it.
+    """
+    from types import SimpleNamespace
+
+    settings = load_settings()
+    resolved_ip = "203.0.113.10"
+
+    pinned_args: list[tuple[str, str]] = []
+
+    class _FakePinnedClient:
+        def __init__(self) -> None:
+            self.closed = False
+
+        async def aclose(self) -> None:
+            self.closed = True
+
+    def _fake_create_pinned_client(url: str, ip: str, timeout: float = 60.0) -> object:
+        pinned_args.append((url, ip))
+        return _FakePinnedClient()
+
+    monkeypatch.setattr(
+        pipeline_bridge,
+        "check_ssrf_target_sync",
+        lambda url: SimpleNamespace(allowed=True, resolved_ip=resolved_ip),
+    )
+    # ``raising=False`` so that against the pre-fix source — which never
+    # imported these names — the test fails on the behavioural assertions
+    # below rather than on the patch mechanism itself.
+    monkeypatch.setattr(
+        "omniscribe.core.ocr.processor.create_pinned_client",
+        _fake_create_pinned_client,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "omniscribe.core.grounded.prompted.create_pinned_client",
+        _fake_create_pinned_client,
+        raising=False,
+    )
+
+    request = OCRRequest(
+        pipeline_mode=pipeline_mode,  # type: ignore[arg-type]
+        api_base="https://vlm.example.internal/v1",
+    )
+    pipeline = pipeline_bridge.build_pipeline(settings, request)
+
+    engine_backend = (
+        pipeline.grounded_backend
+        if pipeline.grounded_backend is not None
+        else getattr(pipeline._engine, "ocr_processor", None)
+    )
+    assert isinstance(engine_backend, (PromptedGroundedOCR, OCRProcessor))
+
+    # The hostname survives, so TLS SNI / certificate validation still work.
+    assert engine_backend.api_base == "https://vlm.example.internal/v1"
+    # ...and the validated address is pinned, closing the rebind window.
+    # Pre-fix, ``pinned_args`` is empty: https never reached this code.
+    assert pinned_args == [("https://vlm.example.internal/v1", resolved_ip)]
+    assert getattr(engine_backend, "_pinned_http_client", None) is not None
+
+
+@pytest.mark.parametrize("pipeline_mode", ["grounded", "hybrid"])
+async def test_ocr_pipeline_aclose_releases_pinned_transport(
+    monkeypatch: pytest.MonkeyPatch, pipeline_mode: str
+) -> None:
+    """The pipeline owns the pinned client and must release it exactly once.
+
+    ``call_llm`` never closes an injected client, so leaking it would keep a
+    connection pool alive per OCR run. Idempotency matters because
+    ``OCRPipeline.__aexit__`` also routes through ``aclose``.
+    """
+    from types import SimpleNamespace
+
+    settings = load_settings()
+    closed: list[bool] = []
+
+    class _FakePinnedClient:
+        async def aclose(self) -> None:
+            closed.append(True)
+
+    monkeypatch.setattr(
+        pipeline_bridge,
+        "check_ssrf_target_sync",
+        lambda url: SimpleNamespace(allowed=True, resolved_ip="203.0.113.10"),
+    )
+    monkeypatch.setattr(
+        "omniscribe.core.ocr.processor.create_pinned_client",
+        lambda url, ip, timeout=60.0: _FakePinnedClient(),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "omniscribe.core.grounded.prompted.create_pinned_client",
+        lambda url, ip, timeout=60.0: _FakePinnedClient(),
+        raising=False,
+    )
+
+    pipeline = pipeline_bridge.build_pipeline(
+        settings,
+        OCRRequest(
+            pipeline_mode=pipeline_mode,  # type: ignore[arg-type]
+            api_base="https://vlm.example.internal/v1",
+        ),
+    )
+
+    await pipeline.aclose()
+    assert closed == [True], "pinned client must be closed exactly once"
+    # Safe to call again.
+    await pipeline.aclose()
+    assert closed == [True], "aclose must stay idempotent"
 
 
 # -- resolve_run_kwargs -----------------------------------------------------------

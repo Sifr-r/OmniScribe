@@ -68,6 +68,18 @@ _ENV_BROKER_VARS = (
     "OMNISCRIBE_SPOOL_DIR",
 )
 
+#: Wall-clock ceiling for the child interpreters spawned by
+#: ``test_sqlite_owner_excludes_other_process_and_recovers_after_death``.
+#: The behaviour under test (owner exclusion, then recovery after the owner
+#: dies) is decided in microseconds once the child is up; almost the whole
+#: budget is cold interpreter start plus ``omniscribe`` plugin imports,
+#: measured at ~8.7 s per child unloaded on this machine. The previous 45 s
+#: ceiling left only ~5x headroom, which a loaded full-suite coverage run
+#: exhausts — that is what produced the intermittent 2026-10-04 failure,
+#: which then passed alone. This stays a genuine deadlock guard rather than a
+#: machine-speed proxy.
+_CHILD_OWNER_TIMEOUT_S = 180
+
 
 @pytest.fixture
 def offline_redis(monkeypatch: pytest.MonkeyPatch) -> list[str]:
@@ -461,13 +473,19 @@ async def test_sqlite_owner_excludes_other_process_and_recovers_after_death(
     try:
         queue._claim_owner()
         excluded = subprocess.run(
-            [sys.executable, "-c", child], capture_output=True, text=True, timeout=45
+            [sys.executable, "-c", child],
+            capture_output=True,
+            text=True,
+            timeout=_CHILD_OWNER_TIMEOUT_S,
         )
         assert excluded.returncode != 0
         assert "Another process owns" in excluded.stderr
         queue._release_owner()
         dead = subprocess.run(
-            [sys.executable, "-c", child], capture_output=True, text=True, timeout=45
+            [sys.executable, "-c", child],
+            capture_output=True,
+            text=True,
+            timeout=_CHILD_OWNER_TIMEOUT_S,
         )
         assert dead.returncode == 0, dead.stderr
         await backend.upsert_job(JobRecord(job_id="abandoned", status="running"))

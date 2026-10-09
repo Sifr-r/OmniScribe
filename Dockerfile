@@ -46,6 +46,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 ARG UV_VERSION=0.11.16
 ARG TARGETARCH
 RUN apt-get update \
+ && apt-get install -y --no-install-recommends --only-upgrade \
+      openssl libssl3t64 openssl-provider-legacy libpcre2-8-0 perl-base libsqlite3-0 gzip \
  && apt-get install -y --no-install-recommends curl ca-certificates \
  && rm -rf /var/lib/apt/lists/* \
  && case "${TARGETARCH:-amd64}" in \
@@ -82,6 +84,10 @@ RUN uv sync --locked --extra web --extra async-translation --extra preprocessing
 # ---- runtime stage ----
 FROM python:3.14-slim@sha256:656d12e70054d5fda18a045e2494c96701e9792dd1445f95b3d038df954f57e9 AS runtime
 
+# The digest-pinned base predates Debian's October security fixes. Upgrade
+# only the packages reported by Trivy (OpenSSL, PCRE2, Perl, SQLite and gzip)
+# in both stages; copying the venv does not update the runtime OS libraries.
+
 # Drop root for runtime. The official Python slim image ships a
 # ``nonroot`` user, but we create our own so the path is stable.
 # ``--system`` mirrors the pre-P1-7 user (uid 1001, no interactive
@@ -107,6 +113,8 @@ WORKDIR /app
 # already on PATH first and has its own ``pip`` if anything inside the
 # image needs one, so the system one is dead weight.
 RUN apt-get update \
+ && apt-get install -y --no-install-recommends --only-upgrade \
+      openssl libssl3t64 openssl-provider-legacy libpcre2-8-0 perl-base libsqlite3-0 gzip \
  && apt-get install -y --no-install-recommends tini \
  && rm -rf /var/lib/apt/lists/* \
  && rm -rf /usr/local/lib/python3.14/site-packages/pip \

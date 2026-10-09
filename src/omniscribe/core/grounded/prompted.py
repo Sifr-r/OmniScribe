@@ -23,6 +23,7 @@ import logging
 import os
 from collections.abc import Sequence
 
+import httpx
 from openai import AsyncOpenAI
 
 from omniscribe.core.grounded.models import (
@@ -52,6 +53,7 @@ from omniscribe.core.ocr.resilience import (
 )
 from omniscribe.core.workflows.base import OCRCancelled
 from omniscribe.utils.prompt_safety import sanitize_prompt_input
+from omniscribe.utils.security import create_pinned_client
 
 logger = logging.getLogger(__name__)
 
@@ -232,6 +234,7 @@ class PromptedGroundedOCR:
         timeout_s: float = 240.0,
         max_tokens: int = 8192,
         concurrency: int = 1,
+        resolved_ip: str | None = None,
     ):
         # H2/H4 audit fix: read LLM coordinates from load_settings()
         # rather than os.getenv so the centralised configuration is the
@@ -257,6 +260,13 @@ class PromptedGroundedOCR:
         self.timeout_s = timeout_s
         self.max_tokens = max_tokens
         self.concurrency = concurrency
+        # SSRF pin, same contract as ``core.ocr.processor.OCRProcessor``:
+        # ``resolved_ip`` is the address ``check_ssrf_target_sync`` already
+        # approved, and every outbound call on this backend reuses it instead
+        # of re-resolving ``api_base`` on connect. Released in :meth:`aclose`.
+        self._pinned_http_client: httpx.AsyncClient | None = (
+            create_pinned_client(self.api_base, resolved_ip) if resolved_ip else None
+        )
         # Same resilience policy as the hybrid OCRProcessor: retry
         # transient errors with backoff, fail fast once the endpoint is
         # deemed down. Env overrides: OMNISCRIBE_LLM_MAX_RETRIES,
@@ -314,7 +324,11 @@ class PromptedGroundedOCR:
         (issue #7) — the user had OlmOCR loaded but requested Qwen3-VL,
         and LM Studio silently served bad OCR from the wrong model.
         """
-        client = AsyncOpenAI(base_url=self.api_base, api_key=self.api_key)
+        client = AsyncOpenAI(
+            base_url=self.api_base,
+            api_key=self.api_key,
+            http_client=self._pinned_http_client,
+        )
         try:
             loaded = await _list_loaded_model_ids(client, self.api_base)
             if not _model_in_loaded(self.model, loaded):
@@ -327,6 +341,19 @@ class PromptedGroundedOCR:
                 res = close_method()
                 if asyncio.iscoroutine(res):
                     await res
+
+    async def aclose(self) -> None:
+        """Release the SSRF-pinned transport when this backend owns one.
+
+        ``call_llm`` and the ephemeral ``AsyncOpenAI`` above never close an
+        injected client, so this backend keeps that responsibility — the same
+        ownership rule :class:`~omniscribe.core.ocr.processor.OCRProcessor`
+        follows. Idempotent: a second call is a no-op.
+        """
+        pinned = getattr(self, "_pinned_http_client", None)
+        if pinned is not None:
+            self._pinned_http_client = None
+            await pinned.aclose()
 
     async def ocr_crop(
         self,
@@ -405,6 +432,7 @@ class PromptedGroundedOCR:
                     temperature=temperature,
                     max_tokens=self.max_tokens,
                     timeout=self.timeout_s,
+                    http_client=self._pinned_http_client,
                     system_prompt=(
                         GROUNDED_OCR_SYSTEM_MESSAGE
                         if _model_supports_system_role(self.model)

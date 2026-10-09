@@ -23,6 +23,7 @@ from omniscribe.config import RuntimeSettings
 from omniscribe.plugins.ocr.plugin import OCRService, build_ocr_router
 from omniscribe.plugins.ocr.schemas import PreflightRequest
 from omniscribe.plugins.ocr.service import OCRServiceImpl
+from omniscribe.utils.security import SSRFCheckResult
 
 
 def _build_test_service(
@@ -68,9 +69,12 @@ async def test_preflight_check_loaded_success(
     client_closed: list[bool] = []
 
     class _MockAsyncOpenAI:
-        def __init__(self, *, base_url: str, api_key: str) -> None:
+        def __init__(
+            self, *, base_url: str, api_key: str, http_client: object | None = None
+        ) -> None:
             self.base_url = base_url
             self.api_key = api_key
+            self.http_client = http_client
 
         async def close(self) -> None:
             client_closed.append(True)
@@ -102,9 +106,12 @@ async def test_preflight_check_model_not_found(
     client_closed: list[bool] = []
 
     class _MockAsyncOpenAI:
-        def __init__(self, *, base_url: str, api_key: str) -> None:
+        def __init__(
+            self, *, base_url: str, api_key: str, http_client: object | None = None
+        ) -> None:
             self.base_url = base_url
             self.api_key = api_key
+            self.http_client = http_client
 
         async def close(self) -> None:
             client_closed.append(True)
@@ -139,9 +146,12 @@ async def test_preflight_check_connection_failure(
     client_closed: list[bool] = []
 
     class _MockAsyncOpenAI:
-        def __init__(self, *, base_url: str, api_key: str) -> None:
+        def __init__(
+            self, *, base_url: str, api_key: str, http_client: object | None = None
+        ) -> None:
             self.base_url = base_url
             self.api_key = api_key
+            self.http_client = http_client
 
         async def close(self) -> None:
             client_closed.append(True)
@@ -175,7 +185,9 @@ async def test_preflight_check_custom_request_overrides(
     client_closed: list[bool] = []
 
     class _MockAsyncOpenAI:
-        def __init__(self, *, base_url: str, api_key: str) -> None:
+        def __init__(
+            self, *, base_url: str, api_key: str, http_client: object | None = None
+        ) -> None:
             recorded_init.append((base_url, api_key))
 
         async def close(self) -> None:
@@ -231,6 +243,82 @@ async def test_preflight_check_ssrf_protection() -> None:
     assert response.loaded is False
     assert response.loaded_models == []
     assert "SSRF blocked" in response.detail
+
+
+async def test_preflight_probe_pins_transport_to_resolved_ip(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The VLM probe must reuse the SSRF-validated address as its transport pin.
+
+    Regression for a DNS-rebinding TOCTOU window: ``preflight_check`` resolved
+    and approved ``api_base``, then handed the bare *hostname* to an
+    ``AsyncOpenAI`` that re-resolved it on connect. A host answering with a
+    public address during validation and a link-local/metadata address on the
+    second lookup slips through the guard. Passing ``check.resolved_ip`` into
+    ``create_pinned_client`` closes that window, matching what the
+    ``documents`` and ``translate`` services already do.
+    """
+    service = _build_test_service()
+    api_base = "http://vlm.example.internal/v1"
+    resolved_ip = "203.0.113.10"
+
+    class _FakePinnedClient:
+        def __init__(self) -> None:
+            self.closed = False
+
+        async def aclose(self) -> None:
+            self.closed = True
+
+    pinned_clients: list[_FakePinnedClient] = []
+    pinned_args: list[tuple[str, str]] = []
+    received_http_clients: list[object | None] = []
+
+    def _fake_create_pinned_client(
+        url: str, ip: str, timeout: float = 60.0
+    ) -> _FakePinnedClient:
+        pinned_args.append((url, ip))
+        pinned = _FakePinnedClient()
+        pinned_clients.append(pinned)
+        return pinned
+
+    def _fake_ssrf_check(url: str) -> SSRFCheckResult:
+        return SSRFCheckResult(allowed=True, resolved_ip=resolved_ip)
+
+    class _RecordingAsyncOpenAI:
+        def __init__(
+            self, *, base_url: str, api_key: str, http_client: object | None = None
+        ) -> None:
+            received_http_clients.append(http_client)
+
+        async def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(
+        "omniscribe.plugins.ocr.service.create_pinned_client",
+        _fake_create_pinned_client,
+    )
+    monkeypatch.setattr(
+        "omniscribe.plugins.ocr.service.check_ssrf_target_sync",
+        _fake_ssrf_check,
+    )
+    monkeypatch.setattr("openai.AsyncOpenAI", _RecordingAsyncOpenAI)
+    monkeypatch.setattr(
+        "omniscribe.core.ocr.client._list_loaded_model_ids",
+        AsyncMock(return_value=["allenai/olmocr-2-7b"]),
+    )
+
+    response = await service.preflight_check(
+        PreflightRequest(api_base=api_base, model="allenai/olmocr-2-7b")
+    )
+
+    assert response.loaded is True
+    assert pinned_args == [(api_base, resolved_ip)], (
+        "the probe transport must be pinned to the SSRF-validated address"
+    )
+    assert received_http_clients == [pinned_clients[0]], (
+        "the pinned client must reach the SDK as http_client"
+    )
+    assert pinned_clients[0].closed is True, "pinned client must be closed in finally"
 
 
 # ---------------------------------------------------------------------------

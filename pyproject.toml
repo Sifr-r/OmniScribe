@@ -61,15 +61,11 @@ web = [
     "fastapi>=0.141.1",
     "uvicorn>=0.52.3",
     "websockets>=17.0.1,<18.0",
-    # Phase 4.4 (2026-09-05, re-resolved 2026-09-05): pin anyio to the
-    # 3.x line. anyio 4.x uses ``_lazyimport`` for submodules, which
-    # PyInstaller's static analysis cannot trace — the resulting
-    # onefile bundle ships with ``anyio/__init__.py`` only and fails
-    # on the first ``import anyio.abc`` at runtime. anyio 3.x uses
-    # normal imports and is the LTS line; for a v0.2.0 hobbyist
-    # bundle the trade-off (no 4.x perf wins) is acceptable.
-    # See ``docs/deployment/windows-bundle.md`` §"Known build issue".
-    "anyio>=3.7,<4",
+    # Trivy's AnyIO security fixes require 4.14.2. The server spec collects
+    # the full AnyIO tree and the entry point imports anyio.abc explicitly;
+    # the isolated frozen import smoke verifies the former 3.x workaround
+    # is no longer needed with the current PyInstaller hooks.
+    "anyio>=4.14.2,<5",
     "python-multipart>=0.0.20",
 ]
 preprocessing = [
@@ -416,6 +412,5 @@ module = ["omniscribe.plugins.*", "omniscribe.harness.*"]
 disallow_untyped_defs = true
 disallow_untyped_calls = true
 check_untyped_defs = true
-
 
 

@@ -5,9 +5,9 @@ updates:
     schedule:
       interval: "weekly"
 
-  # Frontend dependencies live in frontend/ (audit P1-7).
-  - package-ecosystem: "npm"
-    directory: "/frontend"
+  # Flutter client dependencies live in client/pubspec.yaml.
+  - package-ecosystem: "pub"
+    directory: "/client"
     schedule:
       interval: "weekly"
 

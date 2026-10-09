@@ -152,3 +152,42 @@ jobs:
           path: |
             .pytest_cache/v/cache/lastfailed
           if-no-files-found: ignore
+
+  extras:
+    name: "pytest (py${{ matrix.python }}, extras tier: lexicon + memory + glossary)"
+    # Closes verification gap: test.yml follows a lean-tier policy (syncing only core
+    # and web extras) to keep PR-cycle latency minimal. As a result, optional extras
+    # such as `memory`, `lexicon`, and `glossary` previously ran in no CI workflow,
+    # causing dark coverage where format parsers (e.g. openpyxl, sqlalchemy, gitpython)
+    # and vector store integrations (e.g. lancedb, pyarrow) could silently regress.
+    # This nightly job syncs all secondary extras and executes the test suite with
+    # them present, ensuring complete optional-dependency compatibility.
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.12"]
+    steps:
+      # Action refs are SHA-pinned (audit P3-12); bump with
+      # `gh api repos/<owner>/<repo>/git/ref/tags/<tag>`.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: true
+          python-version: ${{ matrix.python }}
+
+      - name: Sync deps (web + async-translation + lexicon + memory + glossary extras)
+        run: uv sync --extra web --extra async-translation --extra lexicon --extra memory --extra glossary
+
+      - name: Run extras tests
+        run: uv run pytest -m "not slow and not slow_dataset" --no-header -v
+
+      - name: Upload results on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pytest-extras-results
+          path: |
+            .pytest_cache/v/cache/lastfailed
+          if-no-files-found: ignore

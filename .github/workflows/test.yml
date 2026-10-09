@@ -135,16 +135,38 @@ jobs:
           retention-days: 30
 
       - name: Run pip-audit vulnerability check
-        # 2026-09-12 audit: dropped --ignore-vuln PYSEC-2026-311.
-        # chromadb was removed from the dep tree in the Phase 5
-        # lexicon migration (Makefile line 53, 2026-09-06;
-        # pyproject.toml line 92), so the flag is dead code in CI
-        # and ``make audit`` already runs plain ``uv run pip-audit``.
-        # Re-add the flag only if chromadb returns to the resolver
-        # AND the vector is reachable in OmniScribe's usage. If
-        # pip-audit flags chromadb in a local env, it is a stale
-        # local install, not a declared dependency.
-        run: uv run pip-audit
+        # 2026-10-08: AnyIO >=4.14.2 and urllib3 >=2.8.0 resolve their
+        # advisories; neither dependency needs an audit exception.
+        # The remaining SDK exception has the reachability proof below.
+        #
+        # [3] CVE-2026-104873 (langgraph-sdk, High 7.6)
+        #     "resource-scoped authorization decorators @auth.on.* ignore
+        #     the actions argument", allowing cross-tenant access on a
+        #     LangGraph Platform server.
+        #     PROOF: it is a bug in the *custom auth handler* API for
+        #     people who run their own LangGraph API server. OmniScribe
+        #     never imports ``langgraph_sdk`` at all — the single import
+        #     site is ``core/translate/workflow.py:87``:
+        #     ``from langgraph.graph import END, START, StateGraph``,
+        #     i.e. the local graph-execution engine, not the server SDK.
+        #     langgraph-sdk is pulled in only as a mandatory transitive
+        #     dependency of ``langgraph``. Upgrading to the fix
+        #     (langgraph-sdk 0.4.4+) would force ``websockets>=17.0.1``
+        #     (pyproject ``[web]`` extra) down to ``<17`` — moving a
+        #     production runtime dependency backwards to silence a
+        #     finding that is unreachable. Deliberately declined
+        #     2026-10-06.
+        #
+        # History: PYSEC-2026-311 / CVE-2026-45829 (chromadb) was also
+        # risk-accepted here until chromadb left the dep tree in the
+        # Phase 5 lexicon migration, after which the flag was dropped
+        # (2026-09-06). If pip-audit flags chromadb in a local env, it
+        # is a stale local install, not a declared dependency.
+        #
+        # Keep this list and the Makefile ``audit`` target in sync.
+        run: >-
+          uv run pip-audit
+          --ignore-vuln CVE-2026-104873
 
       - name: Generate CycloneDX SBOM
         # F5-09 audit fix (revised 2026-09-12): only generate the SBOM
@@ -238,8 +260,13 @@ jobs:
           # unreachable, but that's a per-CVE decision best made in a
           # Security-tab triage, not silently ignored in CI.
           severity: HIGH,CRITICAL
+          # SARIF defaults to all severities unless this action input is set.
+          limit-severities-for-sarif: true
           ignore-unfixed: true
           exit-code: "1"
+          # One expiring, package-scoped SDK exception with reachability proof.
+          # All other fixable HIGH/CRITICAL findings still fail this job.
+          trivyignores: .trivyignore.yaml
           # GITHUB_TOKEN is auto-injected; using it raises the GHSA
           # rate limit so the public-feed path doesn't 429 on PR
           # bursts. Not a "secret" in the audit's sense (audit M2

@@ -112,6 +112,13 @@ def build_pipeline(
             api_key = (request.api_key or settings.llm_api_key).strip()
         api_base = clean_base
         if urlsplit(api_base).scheme.lower() == "http" and resolved_ip:
+            # Plain HTTP can carry the address in the URL itself. HTTPS
+            # cannot — rewriting the host to a literal IP breaks SNI and
+            # certificate validation — so ``resolved_ip`` is additionally
+            # threaded into the backend constructors below, which build an
+            # IP-pinned transport instead. Without that, an https api_base
+            # kept its bare hostname and was re-resolved on connect, leaving
+            # a DNS-rebinding TOCTOU window.
             api_base = _rewrite_url_with_resolved_ip(api_base, resolved_ip)
     else:
         api_base = settings.llm_api_base.strip()
@@ -132,6 +139,7 @@ def build_pipeline(
             max_image_dim=request.max_image_dim or settings.ocr_max_image_dim,
             concurrency=request.concurrency or settings.ocr_concurrency,
             dpi=request.dpi or settings.ocr_dpi,
+            resolved_ip=resolved_ip,
         )
         return OCRPipeline(
             pdf_handler=PDFHandler(),
@@ -143,7 +151,9 @@ def build_pipeline(
 
     from omniscribe.core.aligner import get_shared_hybrid_aligner
 
-    ocr_processor = OCRProcessor(api_base=api_base, api_key=api_key, model=model)
+    ocr_processor = OCRProcessor(
+        api_base=api_base, api_key=api_key, model=model, resolved_ip=resolved_ip
+    )
     return OCRPipeline(
         # Process-wide singleton: constructing a fresh aligner would reload
         # the Surya model weights on every request.

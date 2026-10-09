@@ -1,13 +1,35 @@
 # OmniScribe — Outstanding Work
 
-**Updated:** 2026-10-04
+**Updated:** 2026-10-06
 
 **Purpose:** canonical list of open work only. Completed plans, audit details,
 and earlier handoffs remain available in Git history or dated review artifacts.
 Actions below were checked against source and documentation on this date;
 fresh checks from the latest pass are recorded in the
-[actionable closeout](actionable-closeout-2026-10-04.md). Earlier counts below
-remain dated evidence rather than the current suite totals.
+[actionable closeout](actionable-closeout-2026-10-04.md) and the Architecture
+Ledgers. Earlier counts below remain dated evidence rather than current totals.
+
+## Closed on 2026-10-06 (previously listed here)
+
+- **Optional extras CI test coverage gap.** Added dedicated `extras` job to
+  `.github/workflows/nightly.yml`
+  (`pytest (py${{ matrix.python }}, extras tier: lexicon + memory + glossary)`).
+  Installs `--extra web --extra async-translation --extra lexicon --extra memory --extra glossary`
+  and executes `pytest -m "not slow and not slow_dataset"`, ensuring that
+  LanceDB, PyArrow, sentence-transformers, SQLAlchemy, openpyxl, and gitpython
+  paths are exercised in CI without inflating PR-cycle latency in the lean fast tier.
+- **CI pytest collection break.** Fixed bare `import pyarrow as pa` at module
+  scope in `tests/core/test_lexicon_schema.py` by prepending
+  `pytest.importorskip("pyarrow")` ahead of pyarrow and lexicon schema imports.
+  Unblocked pytest collection across all non-extras CI runs.
+- **CI vulnerability audit gate.** `uv run pip-audit` exits 0. `urllib3`
+  upgraded 2.7.0 → 2.8.0 in `uv.lock`. Remaining three advisories (`anyio`
+  PYSEC-2026-4024 / -4025 and `langgraph-sdk` CVE-2026-104873) risk-accepted
+  with written reachability proofs in `.github/workflows/test.yml` and `Makefile`.
+- **OCR pipeline HTTPS SSRF DNS-rebinding TOCTOU.** Threaded `resolved_ip` into
+  `PromptedGroundedOCR` and `OCRProcessor`, building IP-pinned `httpx.AsyncClient`
+  transports for OpenAI SDK and VLM prompt invocations, closed cleanly via
+  `OCRPipeline.aclose`. Verified red/green with 4 new regression tests.
 
 ## Closed on 2026-10-04 (previously listed here)
 
@@ -76,16 +98,81 @@ remain dated evidence rather than the current suite totals.
 
 ## Verification gaps
 
-- Obtain a clean full backend fast/coverage gate. Latest run: 2,848 passed,
-  21 skipped, one child-process timeout, 84.04% coverage. The exact SQLite
-  process-ownership test passed immediately in isolation without changes;
-  investigate recurring subprocess startup delays if the timeout repeats.
+- ~~The `fast` CI job is red on its vulnerability step.~~ **Closed 2026-10-06.**
+  `uv run pip-audit` exits 0. The three `urllib3` advisories
+  (PYSEC-2026-4177 / -4176 / -4175) were fixed properly — `urllib3` 2.7.0 →
+  2.8.0 in `uv.lock`, no design decision needed since neither `requests` nor
+  `lance-namespace-urllib3-client` caps it. The other three are risk-accepted
+  with an explicit reachability proof recorded at the step in
+  `.github/workflows/test.yml` and mirrored in the `Makefile` `audit` target:
+  `anyio` PYSEC-2026-4024 / PYSEC-2026-4025 (no anyio usage in `src/` at all;
+  and the IDNA vector is unreachable because the SSRF pin passes a literal IP to
+  `httpcore`'s `connect_tcp`) and `langgraph-sdk` CVE-2026-104873 (affects
+  `@auth.on.*` handlers on a self-hosted LangGraph server; OmniScribe imports
+  only `langgraph.graph.StateGraph` and never `langgraph_sdk`). Re-verify each
+  proof before keeping its flag. Note this corrected two errors in the previous
+  entry: it was six advisories, not five — `langgraph-sdk` CVE-2026-104873 was
+  missing entirely — and the `anyio` advisories are **not** blocked on the
+  PyInstaller `_lazyimport` story, which is a separate packaging concern.
+
+- ~~**The `fast` and `nightly` CI jobs both failed at pytest collection.**~~
+  **Closed 2026-10-06.** `tests/core/test_lexicon_schema.py` did a bare
+  `import pyarrow as pa` at module scope. `pyarrow` is only in the
+  `memory`/`lexicon` extras, and neither workflow installs them, so the import
+  aborted the whole suite before a single assertion ran — `pyarrow` is also a
+  hard module-level import of `core/lexicon/schema.py`, which the test imports
+  right after. Fixed with `pytest.importorskip("pyarrow")` placed ahead of both
+  imports, matching the three sibling lexicon tests that already skip this way.
+  This was invisible locally because the developer venv had the `lexicon` extra
+  installed; it is the reason the earlier "clean full backend gate" numbers were
+  only ever reproducible on a machine, not in CI.
+
+- ~~**The `memory` and `lexicon` extras run in no CI workflow at all.**~~
+  **Closed 2026-10-06.** Closed by adding a dedicated `extras` job to
+  `.github/workflows/nightly.yml`
+  (`pytest (py${{ matrix.python }}, extras tier: lexicon + memory + glossary)`).
+  The job syncs `--extra web --extra async-translation --extra lexicon --extra memory --extra glossary`
+  and executes `pytest -m "not slow and not slow_dataset"`, ensuring that
+  LanceDB, PyArrow, sentence-transformers, SQLAlchemy, openpyxl, and gitpython
+  integration paths are exercised on a scheduled and manual-dispatch cadence.
+  This eliminates dark coverage while strictly preserving the lean fast-tier PR
+  gate policy documented at `test.yml:67-77`.
+
+- ~~**SSRF rebinding unpinned for HTTPS in the main OCR pipeline.**~~ **Closed
+  2026-10-06.** `pipeline_bridge.py` could only rewrite the URL to the resolved IP
+  for plain `http` (an https URL→IP rewrite breaks SNI and certificate
+  validation), so for an HTTPS `api_base` the validated address was discarded and
+  the hostname re-resolved on connect. Both engines were affected. `resolved_ip` is
+  now threaded into `PromptedGroundedOCR` and `OCRProcessor`, each builds an
+  IP-pinned `httpx.AsyncClient` and passes it to `call_llm` and to the ephemeral
+  `AsyncOpenAI`; `ChatClient` gained an `http_client` parameter, and
+  `OCRPipeline.aclose` now releases the grounded backend's client as well as the
+  hybrid processor's. Both regression tests are parametrised over both engines and
+  verified red against the pre-fix source. Every outbound LLM path now pins:
+  `documents`, `translate`, `transcribe`, the OCR pre-flight probe, and both OCR
+  engines.
+
+- ~~Obtain a clean full backend fast/coverage gate.~~ **Closed 2026-10-04.**
+  `pytest -m "not slow and not slow_dataset" --cov=src/omniscribe
+  --cov-fail-under=80` → **2,866 passed, 18 skipped, 13 deselected, 0 failed,
+  exit 0 in 420.21 s**, 84.04% coverage. The previous 2,848-passed run's single
+  child-process timeout is resolved: it was a too-tight 45 s per-subprocess
+  ceiling against a measured ~8.7 s cold interpreter start, not a product
+  defect, and the ceiling is now `_CHILD_OWNER_TIMEOUT_S = 180`. Note the
+  skipped 18 are missing optional extras (`sqlalchemy` for the glossary extra,
+  `pytesseract`), not deferred work. Coverage for the SSRF-pinned probe is
+  partial by design — the `pinned_client is None` branch is unreachable from
+  `preflight_check` because `SSRFCheckResult.allowed` is True only when a
+  concrete `resolved_ip` exists.
 
 - **Reachable inference endpoint.** `.env` points `OCR_API_BASE` at a LAN host
   and `TRANSLATION_API_BASE` at an unresolvable placeholder, so every live
-  translation job ends `LLMCallError: ... All connection attempts failed`. With
-  a reachable endpoint, close the two remaining Redis gates: a job that
-  *completes*, and the abrupt-worker-restart lease handoff (`--verify-recovery`).
+  translation job ends `LLMCallError: ... All connection attempts failed`.
+  (Re-verified live 2026-10-06 via socket reachability check: `OCR_API_BASE`
+  192.168.1.75:1234 timed out, `TRANSLATION_API_BASE` translation-host:80 failed
+  DNS resolution, and `OMNISCRIBE_VLM_URL` is unset). With a reachable endpoint,
+  close the two remaining Redis gates: a job that *completes*, and the
+  abrupt-worker-restart lease handoff (`--verify-recovery`).
 - Execute the opt-in live VLM OCR integration run documented in
   [client/README.md](../client/README.md#real-server-integration-verification).
   `OMNISCRIBE_LIVE_OCR=true` now exercises model-backed OCR on a rasterized

@@ -130,14 +130,9 @@ _RUNTIME_SUBMODULES = (
     + collect_submodules("h11")
     + collect_submodules("scipy")
     + collect_submodules("pydantic_settings")
-    # Phase 4.4 (2026-09-05, re-resolved): with anyio pinned to 3.x
-    # (``anyio>=3.7,<4`` in the ``web`` extra), the lazy-import
-    # dance that defeated ``collect_submodules`` in 4.x is gone, and
-    # this single line bundles the full anyio 3.x submodule tree
-    # (abc, streams, from_thread, etc.). Tested 2026-09-05: the
-    # resulting 270 MB onefile boots successfully and serves
-    # ``/api/health``. If we ever unpin anyio, this line is the
-    # first thing to revisit.
+    # AnyIO imports its backends lazily. Collect the complete package;
+    # the upstream hook only enumerates anyio._backends. Verified with
+    # AnyIO 4.14.2: abc, streams, from_thread and _asyncio are collected.
     + collect_submodules("anyio")
     # stdlib / third-party that PyInstaller's analysis under-detects
     # for the way the harness uses them (lazy imports, importlib).
@@ -183,13 +178,9 @@ EXCLUDES = [
     # NOTE: anyio is intentionally NOT excluded — it is a runtime
     # dependency of FastAPI / Starlette / uvicorn, not a test dep.
     # Excluding it here was a misclassification during the 14-attempt
-    # saga that fought ``collect_submodules("anyio")`` on line 133.
-    # With the anyio 3.x pin, ``collect_submodules`` returns all 37
-    # submodules cleanly; excluding it dropped them all again and
-    # the binary booted with ``ModuleNotFoundError: anyio`` at the
-    # first await. Verified 2026-09-06: removing this entry plus
-    # adding ``import anyio.abc`` to ``scripts/run_server.py`` lets
-    # the bundle serve ``/api/health`` -> 200.
+    # saga that fought ``collect_submodules("anyio")``. Keep the
+    # collection above and explicit anyio.abc entry-point import;
+    # the isolated frozen smoke also passes with patched AnyIO 4.x.
     "mypy",
     "ruff",
     "pip",

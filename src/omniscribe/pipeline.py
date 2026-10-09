@@ -158,6 +158,16 @@ class OCRPipeline:
                 result = aclose()
                 if asyncio.iscoroutine(result):
                     await result
+        # The grounded backend may own an SSRF-pinned httpx client
+        # (``resolved_ip`` threaded down from ``pipeline_bridge``), which the
+        # pipeline owns for the duration of a run.
+        grounded_backend = getattr(self._engine, "grounded_backend", None)
+        if grounded_backend is not None:
+            aclose = getattr(grounded_backend, "aclose", None)
+            if callable(aclose):
+                result = aclose()
+                if asyncio.iscoroutine(result):
+                    await result
 
     async def __aenter__(self) -> OCRPipeline:
         """Enter the async context manager; returns ``self``."""

@@ -26,6 +26,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 
+import httpx
 from fastapi.responses import Response
 
 from omniscribe.config import RuntimeSettings
@@ -81,7 +82,7 @@ from omniscribe.plugins.state_backend_types import (
     JobRecord,
 )
 from omniscribe.utils.env import persist_env_key
-from omniscribe.utils.security import check_ssrf_target_sync
+from omniscribe.utils.security import check_ssrf_target_sync, create_pinned_client
 
 _TERMINAL_STATUSES: frozenset[str] = frozenset(
     TERMINAL_JOB_STATUSES | {"complete", "failed", "error", "cancelled"}
@@ -291,15 +292,28 @@ def _resolve_preflight_coordinates(
 async def _probe_vlm_server(
     api_base: str,
     api_key: str,
+    resolved_ip: str | None = None,
 ) -> list[str]:
-    """Construct ephemeral AsyncOpenAI client, probe loaded models, and ensure client closure."""
+    """Construct ephemeral AsyncOpenAI client, probe loaded models, and ensure client closure.
+
+    ``resolved_ip`` is the address already approved by ``check_ssrf_target_sync``.
+    When supplied, the SDK transport is pinned to it so the probe cannot be
+    redirected to an internal link-local or metadata address by a DNS rebind
+    between validation and connection — the same guarantee the ``documents``
+    and ``translate`` services give their own SSRF-validated calls. Omitting it
+    is only safe for callers that have not yet validated ``api_base``.
+    """
     import openai
 
     from omniscribe.core.ocr.client import _list_loaded_model_ids
 
+    pinned_client: httpx.AsyncClient | None = (
+        create_pinned_client(api_base, resolved_ip) if resolved_ip else None
+    )
     client = openai.AsyncOpenAI(
         base_url=api_base,
         api_key=api_key or "lm-studio",
+        http_client=pinned_client,
     )
     try:
         return await _list_loaded_model_ids(client, api_base)
@@ -309,6 +323,8 @@ async def _probe_vlm_server(
             res = close_method()
             if asyncio.iscoroutine(res):
                 await res
+        if pinned_client is not None:
+            await pinned_client.aclose()
 
 
 class OCRServiceImpl:
@@ -1219,9 +1235,8 @@ class OCRServiceImpl:
                 detail="api_base and model must be configured before pre-flight",
             )
 
+        resolved_ip: str | None = None
         if target_api_base:
-            from omniscribe.utils.security import check_ssrf_target_sync
-
             check = check_ssrf_target_sync(target_api_base)
             if not check.allowed:
                 return PreflightResponse(
@@ -1231,11 +1246,14 @@ class OCRServiceImpl:
                     loaded_models=[],
                     detail=f"SSRF blocked: {check.reason}",
                 )
+            resolved_ip = check.resolved_ip
 
         from omniscribe.core.ocr.client import _model_in_loaded
 
         try:
-            loaded = await _probe_vlm_server(target_api_base, target_api_key)
+            loaded = await _probe_vlm_server(
+                target_api_base, target_api_key, resolved_ip
+            )
             if _model_in_loaded(target_model, loaded):
                 return PreflightResponse(
                     loaded=True,

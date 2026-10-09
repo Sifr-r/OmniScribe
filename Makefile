@@ -53,8 +53,16 @@ typecheck: ## Run mypy against production code
 # in the lexicon migration Phase 5, so the ignore flag is gone (2026-09-06).
 # If pip-audit flags chromadb in your local env, it is a stale local install,
 # not a declared dependency.
+#
+# 2026-10-08: AnyIO and urllib3 advisories are fixed in uv.lock.
+# Only the LangGraph SDK exception remains, matching test.yml.
+#   CVE-2026-104873 (langgraph-sdk @auth.on.* action bypass)
+#     -- affects custom auth handlers for a self-hosted LangGraph server.
+#        OmniScribe imports only langgraph.graph.StateGraph and never
+#        imports langgraph_sdk.
+# Re-verify each proof before keeping it; drop any flag that stops being true.
 audit: ## Run pip-audit dependency vulnerability scan
-	uv run pip-audit
+	uv run pip-audit --ignore-vuln CVE-2026-104873
 
 # F5-27 audit fix: `make security` runs the local Semgrep static
 # analysis pass on the same ruleset `security.yml` uses in CI. The

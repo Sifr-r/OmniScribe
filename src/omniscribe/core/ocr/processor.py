@@ -32,6 +32,7 @@ import base64
 import logging
 from typing import TYPE_CHECKING, Any
 
+import httpx
 from openai import AsyncOpenAI
 
 from omniscribe.config import load_settings
@@ -66,6 +67,7 @@ from omniscribe.core.ocr.resilience import (
 )
 from omniscribe.utils.env import env_int
 from omniscribe.utils.prompt_safety import sanitize_prompt_input
+from omniscribe.utils.security import create_pinned_client
 
 if TYPE_CHECKING:
     from omniscribe.core.ocr.trocr import TrOCREngine
@@ -134,6 +136,7 @@ class OCRProcessor:
         handwriting_mode: bool = False,
         confidence_threshold: float = 0.75,
         circuit_breaker_registry: CircuitBreakerRegistry | None = None,
+        resolved_ip: str | None = None,
     ):
         # Pedantic 1.11/1.12: resolve all env-driven settings at
         # instance construction time so the env is read once per
@@ -168,6 +171,18 @@ class OCRProcessor:
         )
         self.model: str = model or settings.llm_model or "allenai/olmocr-2-7b"
         self.client: AsyncOpenAI | None = None
+        # SSRF pin. ``resolved_ip`` is the address already approved by
+        # ``check_ssrf_target_sync`` in ``plugins/ocr/pipeline_bridge.py``.
+        # Without it this class handed the bare *hostname* to AsyncOpenAI and
+        # to ``call_llm``, both of which re-resolve on connect — so a host
+        # answering public at validation and link-local/metadata on the second
+        # lookup walked past the guard (DNS-rebinding TOCTOU). Passing an
+        # explicit client also keeps TLS working, which a naive https
+        # URL→IP rewrite would break. Owned here and released in
+        # :meth:`aclose`, mirroring the existing ``self.client`` ownership.
+        self._pinned_http_client: httpx.AsyncClient | None = (
+            create_pinned_client(self.api_base, resolved_ip) if resolved_ip else None
+        )
         # Optional TrOCR specialist (lazy-loaded). When set, low-confidence
         # crops are re-OCR'd with TrOCR and the higher-confidence candidate wins.
         self.trocr_engine = trocr_engine
@@ -192,6 +207,7 @@ class OCRProcessor:
             retry_base_delay_s=self.retry_base_delay_s,
             retry_max_delay_s=self.retry_max_delay_s,
             circuit_breaker=self.circuit_breaker,
+            http_client=self._pinned_http_client,
         )
         # F1.13 audit fix (PARTIAL -> FULL): track the number of Tesseract
         # fallback failures over the lifetime of this processor. The
@@ -235,6 +251,7 @@ class OCRProcessor:
             client = AsyncOpenAI(
                 base_url=self.api_base,
                 api_key=getattr(self, "api_key", None) or "lm-studio",
+                http_client=getattr(self, "_pinned_http_client", None),
             )
             is_ephemeral = True
         try:
@@ -281,6 +298,13 @@ class OCRProcessor:
                 # Drop the reference so a follow-up aclose() call is a no-op
                 # even if the close itself raised.
                 self.client = None
+        # Release the SSRF-pinned transport when this processor owns one.
+        # ``getattr`` keeps the call safe for instances built via ``__new__``
+        # (which skip ``__init__``) — same rule as ``self.client`` above.
+        pinned = getattr(self, "_pinned_http_client", None)
+        if pinned is not None:
+            self._pinned_http_client = None
+            await pinned.aclose()
 
     async def __aenter__(self) -> OCRProcessor:
         """Enter the async context manager; returns ``self``."""

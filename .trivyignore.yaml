@@ -1,0 +1,20 @@
+# Recheck before expiration; remove if SDK authorization handlers become used.
+# Trivy v0.74 supports versioned PURLs, package paths, and expiration dates:
+# https://github.com/aquasecurity/trivy/blob/v0.74.0/docs/guide/configuration/filtering.md
+vulnerabilities:
+  - id: CVE-2026-104873
+    purls:
+      - "pkg:pypi/langgraph-sdk@0.3.15"
+    paths:
+      - "app/.venv/lib/python3.14/site-packages/langgraph_sdk-0.3.15.dist-info/METADATA"
+    expired_at: 2026-11-07
+    statement: >-
+      Reviewed 2026-10-08. This advisory affects resource-scoped LangGraph
+      API server authorization decorators (@auth.on.threads/assistants/crons).
+      OmniScribe imports only langgraph.graph in core/translate/workflow.py;
+      src contains no langgraph_sdk imports, API server, or auth.on handlers.
+      The SDK is an unused transitive dependency of the local graph engine.
+      Fixed SDK 0.4.4 and latest 0.4.6 both require websockets<17, conflicting
+      with the production web extra's websockets>=17.0.1. Preserve the current
+      web transport pending a compatible SDK fix, and reassess on dependency
+      or authorization changes. No other package, version, or CVE is accepted.

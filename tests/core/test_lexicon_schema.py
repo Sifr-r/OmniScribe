@@ -5,8 +5,21 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from unittest.mock import MagicMock
 
-import pyarrow as pa
 import pytest
+
+# ``pyarrow`` ships only in the ``memory``/``lexicon`` extras, and neither
+# ``test.yml`` nor ``nightly.yml`` installs them — both run
+# ``uv sync --extra web [--extra async-translation]``. Without this guard the
+# bare ``import pyarrow`` below made the *whole* suite fail at collection in
+# both workflows, so no fast-tier pytest run could ever reach the assertions.
+# The sibling lexicon tests (``test_recall_fixture.py``,
+# ``test_toggle_glossary_atomic.py``,
+# ``test_translation_lexicon_integration.py``) already skip on this import;
+# this module was simply missed. Keep the guard *before* the
+# ``omniscribe.core.lexicon.schema`` import, which hard-imports pyarrow too.
+pytest.importorskip("pyarrow")
+
+import pyarrow as pa
 
 from omniscribe.core.lexicon.schema import (
     EmbeddingModelMismatchError,

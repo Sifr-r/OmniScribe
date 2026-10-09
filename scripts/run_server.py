@@ -30,8 +30,8 @@ import argparse
 # inside FastAPI / Starlette / uvicorn. Force-importing it here ensures
 # the PYZ archive contains the anyio module — without this the bundled
 # binary raises ``ModuleNotFoundError: anyio`` at the first await.
-# Verified 2026-09-06: with the ``anyio>=3.7,<4`` pin in the ``web``
-# extra, the 37 anyio submodules import cleanly and the bundle boots.
+# Keep this explicit import alongside full submodule collection in the
+# spec; the isolated frozen import smoke passes with AnyIO 4.14.2.
 import anyio.abc  # noqa: F401
 
 from omniscribe.server import main

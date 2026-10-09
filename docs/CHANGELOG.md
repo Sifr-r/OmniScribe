@@ -6,6 +6,50 @@ the project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **2026-10-06 — CI optional extras test coverage gap.** Added dedicated `extras`
+  job to `.github/workflows/nightly.yml`
+  (`pytest (py${{ matrix.python }}, extras tier: lexicon + memory + glossary)`).
+  Syncs `--extra web --extra async-translation --extra lexicon --extra memory --extra glossary`
+  and executes `pytest -m "not slow and not slow_dataset"`, preventing dark coverage
+  in LanceDB, PyArrow, sentence-transformers, SQLAlchemy, openpyxl, and gitpython
+  integration modules while preserving the lean fast-tier PR merge policy.
+
+- **2026-10-06 — SSRF DNS-rebinding TOCTOU on HTTPS OCR endpoints.** For an
+  HTTPS `api_base`, the address approved by `check_ssrf_target_sync` was discarded
+  and the bare hostname re-resolved on connect, because
+  `plugins/ocr/pipeline_bridge.py` could only carry the validated IP in the URL for
+  plain `http` — an https URL→IP rewrite breaks SNI and certificate validation.
+  Both OCR engines were affected. `resolved_ip` is now threaded into
+  `PromptedGroundedOCR` and `OCRProcessor`, each builds an IP-pinned
+  `httpx.AsyncClient` and passes it to `call_llm` and to the ephemeral
+  `AsyncOpenAI`; `ChatClient` gained an `http_client` parameter, and
+  `OCRPipeline.aclose` now releases the grounded backend's pinned client as well as
+  the hybrid processor's. Every outbound LLM path now pins: `documents`,
+  `translate`, `transcribe`, the OCR pre-flight probe, and both OCR engines.
+
+- **2026-10-06 — `fast` and `nightly` CI could not collect the test suite.**
+  `tests/core/test_lexicon_schema.py` performed a bare `import pyarrow as pa` at
+  module scope. `pyarrow` is declared only in the `memory` and `lexicon` extras,
+  and neither `test.yml` (`uv sync --extra web`) nor `nightly.yml`
+  (`uv sync --extra web --extra async-translation`) installs them. Because
+  `omniscribe.core.lexicon.schema` also hard-imports `pyarrow`, the failure
+  aborted collection for the **entire** suite, so no CI run ever reached these
+  assertions. Added `pytest.importorskip("pyarrow")` ahead of both imports,
+  matching the three sibling lexicon tests that already skip this way. This was
+  masked locally because developer venvs carry the `lexicon` extra.
+
+- **2026-10-06 — `fast` CI job was red on its vulnerability step.**
+  `uv run pip-audit` now exits 0. `urllib3` was upgraded 2.7.0 → 2.8.0 in
+  `uv.lock`, clearing PYSEC-2026-4177 / -4176 / -4175 with no design decision
+  (nothing upstream caps `urllib3`). The remaining three —
+  `PYSEC-2026-4024` / `PYSEC-2026-4025` (anyio) and `CVE-2026-104873`
+  (langgraph-sdk) — are risk-accepted in `.github/workflows/test.yml` and the
+  `Makefile` `audit` target, each with a written reachability proof. This also
+  corrects a prior ledger entry that counted five advisories and omitted
+  `langgraph-sdk` entirely.
+
 ### Documentation
 
 - **2026-09-21 — Living-doc cleanup.** Removed completed predecessor audits,

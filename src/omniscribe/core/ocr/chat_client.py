@@ -36,6 +36,8 @@ from __future__ import annotations
 import asyncio
 import logging
 
+import httpx
+
 from omniscribe.core.llm.client import call_llm
 from omniscribe.core.llm.temperatures import TEMPERATURE_OCR
 from omniscribe.core.ocr.exceptions import LLMBalanceError, LLMCallError
@@ -82,6 +84,7 @@ class ChatClient:
         retry_base_delay_s: float,
         retry_max_delay_s: float,
         circuit_breaker: CircuitBreaker,
+        http_client: httpx.AsyncClient | None = None,
     ) -> None:
         self.model = model
         self.api_base = api_base
@@ -90,6 +93,13 @@ class ChatClient:
         self.retry_base_delay_s = retry_base_delay_s
         self.retry_max_delay_s = retry_max_delay_s
         self.circuit_breaker = circuit_breaker
+        # Injected transport. ``OCRProcessor`` passes an SSRF-pinned
+        # ``httpx.AsyncClient`` here so every ``call_llm`` in the retry loop
+        # connects to the address that was validated, instead of re-resolving
+        # ``api_base`` on every attempt (DNS-rebinding TOCTOU). ``call_llm``
+        # never closes an injected client, so the owner — the processor —
+        # keeps that responsibility.
+        self.http_client = http_client
 
     async def chat(
         self,
@@ -135,6 +145,7 @@ class ChatClient:
                     max_tokens=max_tokens,
                     timeout=timeout,
                     system_prompt=system_prompt,
+                    http_client=self.http_client,
                     messages=[
                         {
                             "role": "user",

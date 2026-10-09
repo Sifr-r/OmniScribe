@@ -357,9 +357,12 @@ async def test_preflight_check_closes_ephemeral_processor(
     closed = []
 
     class _MockClient:
-        def __init__(self, *, base_url: str, api_key: str):
+        def __init__(
+            self, *, base_url: str, api_key: str, http_client: object | None = None
+        ):
             self.base_url = base_url
             self.api_key = api_key
+            self.http_client = http_client
 
         async def close(self) -> None:
             closed.append(self)
