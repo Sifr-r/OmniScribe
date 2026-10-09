@@ -90,7 +90,7 @@ memory = [
     # CLI will back it up but no longer read it.
     "lancedb>=0.5.0",
     "pyarrow>=15.0.0",
-    "pandas>=2.0.0",
+    "pandas>=3.0.6",
     "sentence-transformers>=6.0.0",
 ]
 # Canonical lexicon store (LanceDB). Replaces the legacy `[memory]`
@@ -98,7 +98,7 @@ memory = [
 lexicon = [
     "lancedb>=0.5.0",
     "pyarrow>=15.0.0",
-    "pandas>=2.0.0",
+    "pandas>=3.0.6",
     "sentence-transformers>=6.0.0",
 ]
 
