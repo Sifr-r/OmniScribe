@@ -1,6 +1,13 @@
 version: 2
 updates:
-  - package-ecosystem: "pip"
+  # The project is installed with uv, not pip: Dockerfile runs
+  # `uv sync --locked` against the committed uv.lock, and pyproject.toml
+  # carries a [tool.uv] section. Declaring "pip" here made Dependabot edit
+  # only pyproject.toml and never regenerate uv.lock, so every pip bump
+  # shipped permanent lockfile drift and broke `uv sync --locked` during the
+  # container build -- which failed the Trivy container scan before it could
+  # scan anything. The "uv" ecosystem updates uv.lock alongside the manifest.
+  - package-ecosystem: "uv"
     directory: "/"
     schedule:
       interval: "weekly"
