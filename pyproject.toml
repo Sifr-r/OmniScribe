@@ -136,7 +136,7 @@ transcription = [
 glossary = [
     "openpyxl>=3.1.5",        # XLSX support (CSV/TSV use stdlib)
     "sqlalchemy>=2.1.3",       # SQL pair-table reader
-    "gitpython>=3.1.0",        # Git glossary file fetcher
+    "gitpython>=3.2.0",        # Git glossary file fetcher
     "chardet>=5.2.0",          # Encoding detection fallback
 ]
 
