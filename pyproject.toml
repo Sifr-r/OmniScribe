@@ -91,7 +91,7 @@ memory = [
     "lancedb>=0.39.0",
     "pyarrow>=15.0.0",
     "pandas>=3.0.6",
-    "sentence-transformers>=6.0.0",
+    "sentence-transformers>=6.1.0",
 ]
 # Canonical lexicon store (LanceDB). Replaces the legacy `[memory]`
 # ChromaDB-backed extra. Install with `uv sync --extra lexicon`.
@@ -99,7 +99,7 @@ lexicon = [
     "lancedb>=0.39.0",
     "pyarrow>=15.0.0",
     "pandas>=3.0.6",
-    "sentence-transformers>=6.0.0",
+    "sentence-transformers>=6.1.0",
 ]
 
 # TrOCR specialist (handwriting OCR). Adds transformers + sentencepiece.
