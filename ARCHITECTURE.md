@@ -5,6 +5,21 @@ The canonical Architecture Ledger for OmniScribe is located at [docs/ARCHITECTUR
 Please refer to `docs/ARCHITECTURE.md` for the complete system shape, pipeline topology, plugin tree, component catalog, extension points, and performance specifications.
 
 ## Latest Synchronizations
+- 2026-10-11 **Dependency branches resolved**. [docs/branch-resolution-2026-10-11.md](docs/branch-resolution-2026-10-11.md) owns compatibility, merge and branch-cleanup evidence. PRs #84 (mypy 2.4.0), #76 (PyArrow 25.0.1) and #73 (Pillow 12.3.0) passed fresh hosted checks and merged; their branches are deleted. The combined lock check passes for 194 packages. Existing source ownership and runtime APIs remain unchanged.
+- 2026-10-10 **CI registry reliability repair**. The single new tracked file,
+  [docs/ci-registry-blueprint-2026-10-10.md](docs/ci-registry-blueprint-2026-10-10.md),
+  owns the repair scope, parallel ownership and validation evidence. Semgrep
+  installs unchanged CLI 1.173.0 from PyPI in an isolated environment, removing
+  its Docker Hub job-container pull. Both Python stages use the official public
+  ECR mirror with the identical OCI digest. Container CI uses Docker's native
+  builder with containerd image storage, avoiding a BuildKit bootstrap-image
+  pull while retaining GHA caching. Trivy reads the local Docker image only
+  and fetches databases explicitly from GHCR. Installation, builds, cache
+  traffic, scans, uploads and jobs have deadlines; optional cache-export errors
+  are logged without suppressing build or scan failures. Scanner enforcement
+  and SARIF remain intact. Workflow syntax, Linux Semgrep clean/finding probes,
+  native mirrored-image build, optional-cache failure control and diff review
+  pass locally. Hosted runner integration is required before the approved follow-up merge.
 - 2026-10-08 **GitHub failed-check repair**. Ownership and evidence are recorded in
   [docs/ci-checks-blueprint-2026-10-08.md](docs/ci-checks-blueprint-2026-10-08.md),
   whose single responsibility is repair scope and validation evidence.
@@ -240,3 +255,11 @@ Historical implementation claims: [the assessment](docs/goal-alignment-assessmen
 `docs/modularity-review-2026-09-29.md` consolidates this Flutter/Python refactor. The linked Flutter/backend artifacts contain concrete layouts, exact before/after changes and complete source responsibilities; `docs/contract-review-2026-09-29.md` records the independent contract review. `client/tool/check_feature_contracts.dart` and `client/tool/check_feature_layout.py` provide runnable boundary/ownership checks.
 
 `docs/refactor-blueprint-2026-09-29.md` records this refactor's planned feature ownership, parallel implementation scope and preservation checks. The earlier `docs/refactor-blueprint-2026-09-27.md` records the preceding scoped refactor and its verification plan.
+
+
+## Branch and CI finalization (2026-10-11)
+
+Dependency PRs #84, #76 and #73 and approved CI follow-up #96 are merged; only main remains remotely and there are no open PRs. All nine checks passed on the final CI head, including hosted native Docker/containerd build, Semgrep and Trivy/SARIF. The CI and branch-resolution blueprints own scope and observed evidence. Final hosted verification is also preserved in PR #96 metadata. Local checkout and active environment were not synchronized.
+
+
+Hosted timing limitation: cache export step #22 took 1091.2 seconds (about 18 minutes), despite timeout=5m. That option did not impose an overall exporter deadline in this run. The enforced 35-minute build step and 50-minute job deadline bound the workflow; registry failures are resolved and every check passes, but cache-export latency is not solved.

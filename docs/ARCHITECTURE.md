@@ -1,5 +1,22 @@
 # Architecture Ledger
 
+## Dependency branch resolution (2026-10-11)
+
+[branch-resolution-2026-10-11.md](branch-resolution-2026-10-11.md) owns dependency compatibility, remote merge and branch-cleanup evidence. Mypy, PyArrow and Pillow PRs are merged after fresh hosted checks; the combined manifest and lockfile pass validation. No new production module or runtime API is introduced.
+
+## CI registry reliability repair (2026-10-10)
+
+The [registry repair blueprint](ci-registry-blueprint-2026-10-10.md) owns CI repair evidence; its single responsibility is repair scope, ownership and
+observed validation evidence. Existing `security.yml` owns isolated pinned
+Semgrep installation and bounded finding enforcement. `Dockerfile` owns the
+same digest-pinned Python stages sourced from the official ECR mirror.
+`test.yml` owns the native Docker builder/containerd runner setup, bounded GHA
+cache transfer, local-only Trivy scanning and explicit GHCR databases. Optional
+cache-export errors are logged; actual build and scanner failures remain fatal.
+SARIF uploads require a generated report. No application API, production module
+or data format changes. Local focused probes pass; hosted execution remains
+required before merging the authorized follow-up PR.
+
 ## GitHub failed-check repair (2026-10-08)
 
 The [repair blueprint](ci-checks-blueprint-2026-10-08.md) owns scope, parallel
@@ -707,3 +724,11 @@ This ledger describes the current system only. Release history belongs in
 - [COMPREHENSIVE-AUDIT.md](audits/COMPREHENSIVE-AUDIT.md) — historical audit snapshot; detailed predecessor reports remain in Git history
 
 _Last updated: 2026-09-27_
+
+
+## Branch and CI finalization (2026-10-11)
+
+Dependency PRs #84, #76 and #73 and approved CI follow-up #96 are merged; only main remains remotely and there are no open PRs. All nine checks passed on the final CI head, including hosted native Docker/containerd build, Semgrep and Trivy/SARIF. The CI and branch-resolution blueprints own scope and observed evidence. Final hosted verification is also preserved in PR #96 metadata. Local checkout and active environment were not synchronized.
+
+
+Hosted timing limitation: cache export step #22 took 1091.2 seconds (about 18 minutes), despite timeout=5m. That option did not impose an overall exporter deadline in this run. The enforced 35-minute build step and 50-minute job deadline bound the workflow; registry failures are resolved and every check passes, but cache-export latency is not solved.

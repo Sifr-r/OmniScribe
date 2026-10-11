@@ -43,26 +43,37 @@ jobs:
   semgrep:
     name: semgrep (OSS engine)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions:
       contents: read
       security-events: write
-    # Container image is published by Semgrep and pre-pins the OSS
-    # engine + rule packs; avoids a slow `pip install semgrep` step on
-    # every CI run. Pinned to a version tag — `returntocorp/semgrep`
-    # is the stale org name and `:latest` is a supply-chain vector.
-    container:
-      image: semgrep/semgrep:1.173.0
     steps:
       # Action refs are SHA-pinned (audit P3-12); bump with
       # `gh api repos/<owner>/<repo>/git/ref/tags/<tag>`.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      - name: Install pinned Semgrep CLI
+        timeout-minutes: 5
+        # Avoid Docker Hub's anonymous pull limits during job startup.
+        # Ubuntu's Python supports the same Semgrep version as the former
+        # container; isolate its dependencies from the project environment.
+        run: |
+          python3 --version
+          python3 -m venv "$RUNNER_TEMP/semgrep-venv"
+          "$RUNNER_TEMP/semgrep-venv/bin/python" -m pip install \
+            --disable-pip-version-check \
+            --index-url https://pypi.org/simple \
+            --timeout 30 --retries 2 \
+            "semgrep==1.173.0"
+          echo "$RUNNER_TEMP/semgrep-venv/bin" >> "$GITHUB_PATH"
+
       - name: Run Semgrep
+        timeout-minutes: 10
         # `--error` makes the exit code non-zero on any finding so
         # the workflow fails the PR. `--sarif` emits the SARIF that
         # the next step uploads to GitHub Security.
         run: |
-          semgrep scan \
+          timeout --verbose --kill-after=30s 8m semgrep scan \
             --config "p/default" \
             --config "p/security-audit" \
             --config "p/secrets" \
@@ -73,7 +84,8 @@ jobs:
             src/omniscribe
 
       - name: Upload SARIF to GitHub Security tab
-        if: always()
+        if: always() && hashFiles('semgrep.sarif') != ''
+        timeout-minutes: 3
         uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
         with:
           sarif_file: semgrep.sarif
