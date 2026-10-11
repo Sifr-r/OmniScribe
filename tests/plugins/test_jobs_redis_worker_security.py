@@ -29,6 +29,7 @@ from omniscribe.plugins.jobs import (
     JobOutcome,
     JobQueue,
     JobRunner,
+    _is_strictly_inside_spool,
 )
 from omniscribe.plugins.jobs_redis import (
     KEY_ACTIVE,
@@ -637,15 +638,34 @@ async def test_cancel_queued_job_does_not_trust_redis_payload_input_path(
         shutil.rmtree(work_dir, ignore_errors=True)
 
 
+def _outside_spool_probe() -> Path:
+    """Return a writable path that sits outside every trusted spool root.
+
+    Uses the real :func:`_is_strictly_inside_spool` predicate instead of
+    assuming a location, so the test cannot silently degrade into asserting
+    something weaker than its name claims.
+    """
+    for base in (Path.cwd().resolve(), Path(__file__).resolve().parent):
+        probe = base / "outside_safety_check.txt"
+        if not _is_strictly_inside_spool(probe):
+            return probe
+    pytest.skip("no writable location outside the trusted spool roots")
+
+
 async def test_cancel_queued_job_does_not_delete_outside_spool(
     harness: dict[str, Any], tmp_path: Path
 ) -> None:
     """Cancel does NOT delete files located outside trusted spool roots."""
     queue: RedisJobQueue = harness["queue"]
 
-    # Create a file outside trusted spool (in tmp_path when not in env var)
-    # tmp_path in pytest is normally under tempfile, but let's test a non-temp path
-    outside_file = Path("d:/OmniScribe/outside_safety_check.txt")
+    # Create a file outside trusted spool. `tmp_path` is unusable here: pytest
+    # roots it under tempfile.gettempdir(), which is itself a trusted spool
+    # root, so a file there would legitimately be deleted and the assertion
+    # below would prove nothing. A hardcoded absolute path is also wrong --
+    # it only ever existed on the authoring machine and raises
+    # FileNotFoundError on CI. Probe writable locations and verify the
+    # property we actually care about.
+    outside_file = _outside_spool_probe()
     outside_file.write_text("safe content")
 
     try:
