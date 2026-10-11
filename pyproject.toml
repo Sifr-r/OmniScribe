@@ -27,7 +27,7 @@ classifiers = [
 ]
 dependencies = [
     "openai>=2.11.0,<3",
-    "pillow>=11.3",
+    "pillow>=12.3.0",
     "pymupdf>=1.26.7,<2",  # AGPL-3.0; see THIRD_PARTY_LICENSES.md
     "python-dotenv>=1.2.1",
     "tqdm>=4.70.0",
@@ -209,7 +209,7 @@ dev = [
 # practice. Re-evaluate when surya-ocr publishes a release that
 # drops the upper pin; bump this in lockstep.
 override-dependencies = [
-    "pillow>=11.3",
+    "pillow>=12.3.0",
     "httpx2>=2.12.0",  # CVE-2026-84378/9/80/1/2 (Trivy 0.69.3). langsmith's `httpx2<3,>=2` allows this.
 ]
 
