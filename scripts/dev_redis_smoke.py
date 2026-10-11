@@ -317,9 +317,10 @@ async def _run_jobs(base: str, args: argparse.Namespace) -> None:
         await r.aclose()
         await backend.aclose()
     elapsed = time.monotonic() - started
-    print(
-        f"  {args.jobs} jobs in {elapsed:.2f}s ({args.jobs / elapsed:.2f} completed/s; this run only)"
-    )
+    # Guard the divide: with fully mocked or very fast runs the monotonic clock
+    # can tick 0.0 across the whole batch, and the rate is only diagnostic.
+    rate = f"{args.jobs / elapsed:.2f}" if elapsed > 0 else "n/a"
+    print(f"  {args.jobs} jobs in {elapsed:.2f}s ({rate} completed/s; this run only)")
     if args.verify_recovery:
         print(
             "  Recovery verified: same job handed to a different worker and completed"
