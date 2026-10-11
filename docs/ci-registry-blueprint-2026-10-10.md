@@ -79,3 +79,13 @@ registry-rule/network performance still require GitHub runner execution.
 On 2026-10-11 the user authorized publishing these tested fixes through GitHub
 APIs. A follow-up PR will validate the hosted setup before merge; no local Git
 mutation is required. The reported 80-minute stall was not independently located.
+
+## Hosted assertion correction (2026-10-11)
+
+The first hosted run passed Docker/containerd setup and Semgrep (48 seconds),
+but fast pytest exposed a stale Dockerfile hygiene regex requiring unqualified
+`FROM python`. The existing test now accepts only Docker Hub Python or the
+exact official ECR prefix, requires a full SHA-256 digest and retains allowed
+Python versions. Thirteen focused hygiene tests, Ruff and mypy pass; negative
+controls reject untrusted registries, latest, unsupported versions and absent
+or short digests. Hosted checks restart on this correction before merge.
