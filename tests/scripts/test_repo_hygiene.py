@@ -76,9 +76,14 @@ def test_dockerfile_pins_python_and_uv_installs_extras():
     # Pinned Python - keeps the build deterministic.
     # Updated 2026-08-16: dependabot PR #22 bumped the base from 3.12-slim
     # to 3.14-slim. Pin the regex to whatever the Dockerfile currently has.
-    m = re.search(r"^FROM python:(\d+\.\d+)-slim@", dockerfile, re.MULTILINE)
+    m = re.search(
+        r"^FROM (?:public\.ecr\.aws/docker/library/)?python:"
+        r"(\d+\.\d+)-slim@sha256:[a-f0-9]{64}(?=\s|$)",
+        dockerfile,
+        re.MULTILINE,
+    )
     assert m, (
-        "Dockerfile must pin a specific Python base image (e.g. FROM python:3.14-slim@...)"
+        "Dockerfile must pin an official Python base image by version and SHA-256 digest"
     )
     assert m.group(1) in {"3.12", "3.13", "3.14"}, (
         f"Dockerfile pins python:{m.group(1)}-slim; expected 3.12/3.13/3.14"

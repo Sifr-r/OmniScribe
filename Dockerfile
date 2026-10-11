@@ -24,8 +24,10 @@
 # (Content-Type: application/vnd.oci.image.index.v1+json,
 #  self-digest re-lookup consistent). Satisfies the digest-pinning
 # requirement in SECURITY.md (M7).
+# 2026-10-10: use Docker's official ECR mirror to avoid anonymous Hub limits.
+# Verified the mirror serves this identical OCI index digest; Python is unchanged.
 # ---- builder stage ----
-FROM python:3.14-slim@sha256:656d12e70054d5fda18a045e2494c96701e9792dd1445f95b3d038df954f57e9 AS builder
+FROM public.ecr.aws/docker/library/python:3.14-slim@sha256:656d12e70054d5fda18a045e2494c96701e9792dd1445f95b3d038df954f57e9 AS builder
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -82,7 +84,7 @@ RUN uv sync --locked --extra web --extra async-translation --extra preprocessing
  && rm -rf /root/.cache
 
 # ---- runtime stage ----
-FROM python:3.14-slim@sha256:656d12e70054d5fda18a045e2494c96701e9792dd1445f95b3d038df954f57e9 AS runtime
+FROM public.ecr.aws/docker/library/python:3.14-slim@sha256:656d12e70054d5fda18a045e2494c96701e9792dd1445f95b3d038df954f57e9 AS runtime
 
 # The digest-pinned base predates Debian's October security fixes. Upgrade
 # only the packages reported by Trivy (OpenSSL, PCRE2, Perl, SQLite and gzip)

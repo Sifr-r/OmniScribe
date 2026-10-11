@@ -1,5 +1,22 @@
 # Architecture Ledger
 
+## Dependency branch resolution (2026-10-11)
+
+[branch-resolution-2026-10-11.md](branch-resolution-2026-10-11.md) owns dependency compatibility, remote merge and branch-cleanup evidence. Mypy, PyArrow and Pillow PRs are merged after fresh hosted checks; the combined manifest and lockfile pass validation. No new production module or runtime API is introduced.
+
+## CI registry reliability repair (2026-10-10)
+
+The [registry repair blueprint](ci-registry-blueprint-2026-10-10.md) owns CI repair evidence; its single responsibility is repair scope, ownership and
+observed validation evidence. Existing `security.yml` owns isolated pinned
+Semgrep installation and bounded finding enforcement. `Dockerfile` owns the
+same digest-pinned Python stages sourced from the official ECR mirror.
+`test.yml` owns the native Docker builder/containerd runner setup, bounded GHA
+cache transfer, local-only Trivy scanning and explicit GHCR databases. Optional
+cache-export errors are logged; actual build and scanner failures remain fatal.
+SARIF uploads require a generated report. No application API, production module
+or data format changes. Local focused probes pass; hosted execution remains
+required before merging the authorized follow-up PR.
+
 ## GitHub failed-check repair (2026-10-08)
 
 The [repair blueprint](ci-checks-blueprint-2026-10-08.md) owns scope, parallel
