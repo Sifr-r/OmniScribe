@@ -735,15 +735,15 @@ wheels = [
 
 [[package]]
 name = "fakeredis"
-version = "2.37.1"
+version = "2.39.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "redis" },
     { name = "sortedcontainers" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/95/5e/fce3355d20d37dc18f7f4c422653ac69cabffa019afaaf607e26704fb829/fakeredis-2.37.1.tar.gz", hash = "sha256:9045851b0a9fe56312696aadc82435141aa43a193cab462d372c8fb583a7c087", size = 238182, upload-time = "2026-08-18T15:22:01.676Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/2f/27/3ed3eee5e5a929345c37024b814a70f6e2452ffdab77a2680c2ebba3614a/fakeredis-2.39.0.tar.gz", hash = "sha256:e89c3410f290330042638ff5cca3e22788fa267dcaf28a64b4f483e14577208d", size = 301722, upload-time = "2026-10-01T12:35:19.404Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/7b/e0/fe1c760abd9e9cb5dfbce057b6582cb1ac36dfd8b5ce202e1445605c922d/fakeredis-2.37.1-py3-none-any.whl", hash = "sha256:f15c41be151c1e9206416dece764369a4dedb6b1341df3734c3c2c000e405508", size = 152738, upload-time = "2026-08-18T15:22:00.1Z" },
+    { url = "https://files.pythonhosted.org/packages/35/ca/8bf657139922808196e6480ec6ed94008897e23d603abd5b27538cfdf811/fakeredis-2.39.0-py3-none-any.whl", hash = "sha256:acd1450575259634db2942d5bae93e383aac32bb9968aab29fe7b0c2ab880bb8", size = 186508, upload-time = "2026-10-01T12:35:17.899Z" },
 ]
 
 [[package]]
@@ -2375,7 +2375,7 @@ provides-extras = ["web", "preprocessing", "async-translation", "memory", "lexic
 [package.metadata.requires-dev]
 dev = [
     { name = "cyclonedx-bom", specifier = ">=7.3.1" },
-    { name = "fakeredis", specifier = ">=2.0" },
+    { name = "fakeredis", specifier = ">=2.39.0" },
     { name = "hypothesis", specifier = ">=6.100.0" },
     { name = "mypy", specifier = ">=2.4.0" },
     { name = "pip-audit", specifier = ">=2.10.1" },
