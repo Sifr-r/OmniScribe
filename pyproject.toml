@@ -29,7 +29,7 @@ dependencies = [
     "openai>=2.11.0,<3",
     "pillow>=12.3.0",
     "pymupdf>=1.26.7,<2",  # AGPL-3.0; see THIRD_PARTY_LICENSES.md
-    "python-dotenv>=1.2.1",
+    "python-dotenv>=1.2.4",
     "tqdm>=4.70.0",
     "surya-ocr>=0.22.1",
     # Bounded majors (audit backlog): a torch 3.x or torchvision 1.x
