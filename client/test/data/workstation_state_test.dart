@@ -153,6 +153,186 @@ void main() {
     });
   });
 
+  group('WorkstationState bbox memoization', () {
+    BBoxItem box(
+      String id, {
+      int page = 0,
+      int block = 0,
+      String kind = 'paragraph',
+      bool revised = false,
+      double confidence = 0.5,
+    }) {
+      return BBoxItem(
+        blockId: id,
+        page: page,
+        block: block,
+        bbox: const [0.0, 0.0, 1.0, 1.0],
+        text: 'text-$id',
+        kind: kind,
+        revised: revised,
+        confidence: confidence,
+      );
+    }
+
+    test(
+        'copyWith with changed pages must not return stale bbox data '
+        '(memo is per-instance)', () {
+      final initial = WorkstationState(
+        pages: [
+          PageResult(page: 0, bboxes: [box('b0')])
+        ],
+        pageCount: 1,
+      );
+
+      // Force the memo to evaluate on the pre-copy instance.
+      expect(initial.allBBoxes, hasLength(1));
+      expect(initial.documentRevisedCount, 0);
+
+      final next = initial.copyWith(
+        pages: [
+          PageResult(
+              page: 0, bboxes: [box('b0'), box('b1', block: 1, revised: true)]),
+        ],
+        pageCount: 1,
+      );
+
+      // The copy must report the NEW data, never the memoized old data.
+      expect(next.allBBoxes, hasLength(2));
+      expect(next.documentRevisedCount, 1);
+      expect(next.allBBoxes.map((b) => b.blockId).toList(), ['b0', 'b1']);
+      expect(identical(next.allBBoxes, initial.allBBoxes), isFalse);
+
+      // ...and the pre-copy instance keeps its own answer (no leakage).
+      expect(initial.allBBoxes, hasLength(1));
+      expect(initial.documentRevisedCount, 0);
+    });
+
+    test('repeated reads reuse a single memoized instance', () {
+      final state = WorkstationState(
+        pages: [
+          PageResult(
+            page: 0,
+            bboxes: [box('b0'), box('b1', block: 1, revised: true)],
+          ),
+          PageResult(page: 1, bboxes: [box('b2', page: 1)]),
+        ],
+        pageCount: 2,
+      );
+
+      // No re-allocation on read: every read yields the same instance.
+      expect(identical(state.allBBoxes, state.allBBoxes), isTrue);
+      expect(
+          identical(state.currentPageBBoxes, state.currentPageBBoxes), isTrue);
+
+      // The count is derived from that shared list, so it always agrees.
+      expect(state.documentRevisedCount, 1);
+      expect(
+        state.documentRevisedCount,
+        state.allBBoxes.where((b) => b.revised ?? false).length,
+      );
+
+      // The memo is shared, so callers must not be able to mutate it.
+      expect(() => state.allBBoxes.add(box('x')), throwsUnsupportedError);
+    });
+
+    test(
+        'bbox values stay correct across a sequence of page mutations '
+        '(the OCR block-by-block flow)', () {
+      // Mirrors WorkstationNotifier.addOrUpdateBBox: each completed block
+      // allocates a new page list and produces a new state via copyWith.
+      var state = WorkstationState(pageCount: 0);
+      final pages = <PageResult>[];
+
+      expect(state.allBBoxes, isEmpty);
+      expect(state.documentRevisedCount, 0);
+
+      for (var i = 0; i < 6; i++) {
+        final pageIdx = i ~/ 3;
+        while (pages.length <= pageIdx) {
+          pages.add(PageResult(page: pages.length));
+        }
+        final revised = i.isEven; // blocks 0, 2 and 4 arrive already revised
+        final updated = List<BBoxItem>.from(pages[pageIdx].bboxes)
+          ..add(box('b$i', page: pageIdx, block: i, revised: revised));
+        pages[pageIdx] = pages[pageIdx].copyWith(bboxes: updated);
+
+        state = state.copyWith(pages: pages, pageCount: pages.length);
+
+        expect(state.allBBoxes, hasLength(i + 1));
+        expect(state.documentRevisedCount, i ~/ 2 + 1);
+        expect(
+          state.allBBoxes.map((b) => b.blockId).toList(),
+          List.generate(i + 1, (n) => 'b$n'),
+        );
+      }
+    });
+
+    test(
+        'copyWith changing filterKind or selectedPageIndex recomputes '
+        'currentPageBBoxes', () {
+      final state = WorkstationState(
+        pages: [
+          PageResult(
+            page: 0,
+            bboxes: [box('h', kind: 'heading'), box('p', block: 1)],
+          ),
+          PageResult(
+            page: 1,
+            bboxes: [box('q', page: 1, kind: 'heading')],
+          ),
+        ],
+        pageCount: 2,
+        selectedPageIndex: 0,
+      );
+
+      // Evaluate the memo before changing anything.
+      expect(state.currentPageBBoxes, hasLength(2));
+
+      final filtered = state.copyWith(filterKind: 'heading');
+      expect(filtered.currentPageBBoxes.map((b) => b.blockId).toList(), ['h']);
+
+      final onPage1 = state.copyWith(selectedPageIndex: 1);
+      expect(onPage1.currentPageBBoxes.map((b) => b.blockId).toList(), ['q']);
+
+      // The filtered result is shared, so it must be unmodifiable.
+      expect(
+        () => filtered.currentPageBBoxes.clear(),
+        throwsUnsupportedError,
+      );
+
+      // A copyWith that leaves pages alone still reports correct data.
+      final renamed = state.copyWith(filename: 'other.pdf');
+      expect(renamed.allBBoxes, equals(state.allBBoxes));
+      expect(renamed.currentPageBBoxes, hasLength(2));
+    });
+
+    test('currentPageBBoxes is unmodifiable in the unfiltered branch too', () {
+      final state = WorkstationState(
+        pages: [
+          PageResult(
+            page: 0,
+            bboxes: [box('b1'), box('b2')],
+          ),
+        ],
+        pageCount: 1,
+        selectedPageIndex: 0,
+      );
+
+      // The unfiltered branch used to hand back PageResult.bboxes itself.
+      // The memo is a `late final`, so an in-place mutation would have been
+      // invisible to every later read of this state instance and could let
+      // documentRevisedCount disagree with allBBoxes.
+      expect(() => state.currentPageBBoxes.clear(), throwsUnsupportedError);
+      expect(
+          () => state.currentPageBBoxes.removeLast(), throwsUnsupportedError);
+
+      // The underlying page data is untouched by the failed mutation.
+      expect(state.currentPageBBoxes, hasLength(2));
+      expect(state.allBBoxes, hasLength(2));
+      expect(state.documentRevisedCount, 0);
+    });
+  });
+
   group('WorkstationState Immutability (unmodifiable getters)', () {
     test('pages getter returns an unmodifiable list', () {
       final state = WorkstationState(pages: [PageResult(page: 0)]);

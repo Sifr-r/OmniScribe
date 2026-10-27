@@ -30,6 +30,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("omniscribe.core.workflows.hybrid")
 
+# Optional sibling of ``HybridAligner.get_detected_boxes_batch`` that takes
+# already-decoded images. Probed by name so duck-typed aligners that only
+# implement the byte-based entry point keep working unchanged.
+_DETECT_FROM_IMAGES = "get_detected_boxes_from_images"
+
 
 def decode_chunk_bytes(
     images_dict: Mapping[int, str],
@@ -68,6 +73,50 @@ class HybridLayoutDetector:
         self.aligner = aligner
         self.recall_booster = recall_booster
         self.text_layer_recall = text_layer_recall
+
+    def _detect_chunk(
+        self,
+        chunk_pages: Sequence[int],
+        chunk_bytes: list[bytes],
+        decoded_get: Callable[[int], Image.Image | None] | None,
+    ) -> list[list[BBox]]:
+        """Run detection for one chunk, reusing already-decoded page images.
+
+        ``decode_chunk_bytes`` already decoded every page in the chunk to
+        hand the PIL image to the ``decoded_put`` cache callback. Feeding
+        those same images to the aligner removes the second, identical
+        JPEG decode the byte path would otherwise force per page.
+
+        Falls back to :meth:`get_detected_boxes_batch` when either
+        condition holds:
+
+        * the caller passed no ``decoded_get`` cache, or the cache missed
+          for at least one page (a failed decode in ``decode_chunk_bytes``
+          is suppressed, so an absent entry is expected, not exceptional);
+        * the aligner's type does not implement
+          :meth:`get_detected_boxes_from_images` — ``HybridAligner`` is
+          duck-typed across the codebase and some test stand-ins
+          implement only the byte-based method.
+
+        The capability probe is done on ``type(self.aligner)``, not on the
+        instance: a bare ``MagicMock`` auto-creates *any* attribute on
+        lookup, so an instance-level ``getattr`` would happily return a
+        mock "method" whose return value is another mock rather than a
+        list of boxes.
+        """
+        if decoded_get is not None and hasattr(type(self.aligner), _DETECT_FROM_IMAGES):
+            detect_from_images: Callable[[list[Image.Image]], list[list[BBox]]] = (
+                getattr(self.aligner, _DETECT_FROM_IMAGES)
+            )
+            images: list[Image.Image] = []
+            for page_num in chunk_pages:
+                cached = decoded_get(page_num)
+                if cached is None:
+                    break
+                images.append(cached)
+            if len(images) == len(chunk_pages):
+                return detect_from_images(images)
+        return self.aligner.get_detected_boxes_batch(chunk_bytes)
 
     async def detect_layout(
         self,
@@ -112,7 +161,7 @@ class HybridLayoutDetector:
                     decode_chunk_bytes, images_dict, chunk_pages, decoded_put
                 )
                 chunk_boxes = await asyncio.to_thread(
-                    self.aligner.get_detected_boxes_batch, chunk_bytes
+                    self._detect_chunk, chunk_pages, chunk_bytes, decoded_get
                 )
                 if booster is not None and getattr(booster, "enabled", True):
                     chunk_boxes, touched, added = await self.apply_recall(

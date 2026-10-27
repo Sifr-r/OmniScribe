@@ -159,6 +159,12 @@ class HybridAligner:
         """
         Run Surya detection on a batch of page images in a single call.
         Returns one list of normalized boxes per page, sorted in reading order.
+
+        This is the byte-oriented entry point kept for every existing caller
+        and for duck-typed stand-ins that only implement this method. It
+        simply decodes the bytes and delegates to
+        :meth:`get_detected_boxes_from_images`, so both paths run identical
+        post-decode logic and return byte-identical results.
         """
         if not images_bytes_list:
             return []
@@ -172,6 +178,23 @@ class HybridAligner:
             with Image.open(io.BytesIO(b)) as src:
                 src.load()
                 images.append(src.copy())
+        return self.get_detected_boxes_from_images(images)
+
+    def get_detected_boxes_from_images(
+        self, images: list[Image.Image]
+    ) -> list[list[BBox]]:
+        """
+        Run Surya detection on a batch of already-decoded page images.
+
+        Same contract as :meth:`get_detected_boxes_batch` — one list of
+        normalized boxes per page, sorted in reading order — but it accepts
+        decoded :class:`PIL.Image.Image` objects so a caller that already
+        paid for the JPEG decode (e.g. the layout stage, via
+        ``decode_chunk_bytes`` and its ``on_decoded`` cache callback) does not
+        force a second identical decode.
+        """
+        if not images:
+            return []
         images = [img.convert("RGB") if img.mode != "RGB" else img for img in images]
         sizes = [img.size for img in images]
 
@@ -240,9 +263,9 @@ class HybridAligner:
             logger.warning(
                 "Surya returned a mismatched prediction count for %d page(s); "
                 "degrading chunk to no detected boxes.",
-                len(images_bytes_list),
+                len(images),
             )
-            return [[] for _ in images_bytes_list]
+            return [[] for _ in images]
         # Surya can occasionally return an entirely empty batch immediately
         # after predictor initialization on local backends. Retry only when every
         # page is empty; a real blank page inside a mixed batch must stay blank.
@@ -259,7 +282,7 @@ class HybridAligner:
             )
             retried = run_detection()
             if retried is None:
-                return [[] for _ in images_bytes_list]
+                return [[] for _ in images]
             all_boxes = retried
         return all_boxes
 

@@ -21,8 +21,12 @@ text in the request body.
 
 from __future__ import annotations
 
+import asyncio
+import contextvars
 import json
-from typing import Any
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
+from typing import Any, Final, TypeVar
 
 from fastapi import APIRouter, Header, Response
 from fastapi.responses import JSONResponse
@@ -64,6 +68,34 @@ DOCX_MEDIA_TYPE = (
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 )
 
+_T = TypeVar("_T")
+
+# Export rendering is CPU- and memory-bound: a single export holds a fully
+# rendered document in memory for the duration of the render. The asyncio
+# default executor is shared with the OCR / TrOCR / NLLB inference paths, so
+# routing exports through it lets concurrent exports saturate that pool — and
+# the memory that inference needs — instead of being bounded. A dedicated,
+# capped executor keeps export concurrency bounded and leaves the default
+# pool to inference, following the pattern already used by
+# ``omniscribe/utils/image.py`` and ``omniscribe/utils/security.py``.
+_EXPORT_MAX_WORKERS: Final[int] = 4
+_EXPORT_EXECUTOR: Final[ThreadPoolExecutor] = ThreadPoolExecutor(
+    max_workers=_EXPORT_MAX_WORKERS,
+    thread_name_prefix="omniscribe-export",
+)
+
+
+async def _run_export_blocking(fn: Callable[[], _T]) -> _T:
+    """Run ``fn`` on the bounded export executor.
+
+    ``asyncio.to_thread`` copies the caller's context variables into the
+    worker thread; ``run_in_executor`` does not, so the context is copied
+    explicitly here to keep that behaviour identical.
+    """
+    loop = asyncio.get_running_loop()
+    ctx = contextvars.copy_context()
+    return await loop.run_in_executor(_EXPORT_EXECUTOR, ctx.run, fn)
+
 
 def _parse_json_object(blob: bytes) -> dict[str, Any] | None:
     """Parse ``blob`` as JSON, returning the decoded dict or ``None``.
@@ -80,16 +112,27 @@ def _parse_json_object(blob: bytes) -> dict[str, Any] | None:
     return parsed if isinstance(parsed, dict) else None
 
 
-def _docx_response(text: str) -> Response:
+async def _docx_response(text: str) -> Response:
     """Convert ``text`` (Markdown) to a ``.docx`` download ``Response``.
 
     Used by the POST ``/api/export/docx`` route. The body is set with a
     ``Content-Disposition: attachment`` so browsers trigger a download
     rather than inline rendering.
+
+    python-docx parses the Markdown and serializes an entire OOXML zip
+    package in memory, so the conversion is CPU-bound and grows with the
+    document. It runs on a worker thread (inner-closure pattern already
+    used in ``plugins/ocr/service.py``) so a large export cannot stall
+    the event loop for every other in-flight request. The rendered bytes
+    — not just the conversion — are produced off-loop.
     """
-    stream = convert_markdown_to_docx(text)
+
+    def _render() -> bytes:
+        stream = convert_markdown_to_docx(text)
+        return stream.getvalue()
+
     return Response(
-        content=stream.getvalue(),
+        content=await _run_export_blocking(_render),
         media_type=DOCX_MEDIA_TYPE,
         headers={"Content-Disposition": 'attachment; filename="document.docx"'},
     )
@@ -193,16 +236,26 @@ async def handle_document_export(
         if document is None:
             return envelope(404, "not_found", "Export input not found")
 
-    payload = build_document_export(
-        page_text=load_pages(raw),
-        metadata=metadata,
-        export_format=body.export_format.value,
-        document=document,
-    )
-    if isinstance(payload, dict):
-        blob = json.dumps(payload).encode("utf-8")
-    else:
-        blob = payload.encode("utf-8")
+    def _build() -> bytes:
+        # ``build_document_export`` renders Markdown for the markdown
+        # format and base64-encodes figure bytes for the structured
+        # formats, and the result is then re-serialized into the artifact
+        # blob. All of that is CPU-bound and scales with document size, so
+        # the whole build — page-text parsing, export rendering and
+        # encoding — runs on a worker thread (same inner-closure pattern
+        # as the sibling export handlers). ``DocumentsError`` for an
+        # unsupported format still propagates to the route's handler.
+        payload = build_document_export(
+            page_text=load_pages(raw),
+            metadata=metadata,
+            export_format=body.export_format.value,
+            document=document,
+        )
+        if isinstance(payload, dict):
+            return json.dumps(payload).encode("utf-8")
+        return payload.encode("utf-8")
+
+    blob = await _run_export_blocking(_build)
     handle = await store.put(
         blob,
         content_type=EXPORT_MEDIA_TYPES[body.export_format.value],
@@ -222,7 +275,7 @@ async def handle_export_docx_post(body: ExportDocxRequest) -> Response:
     document text in memory (or wants to bypass the artifact store)
     and just wants a one-shot ``.docx`` download.
     """
-    return _docx_response(body.text)
+    return await _docx_response(body.text)
 
 
 async def handle_export_html(
@@ -243,8 +296,12 @@ async def handle_export_html(
     )
     if tree is None:
         return envelope(404, "not_found", "text artifact not found")
+
+    def _render() -> str:
+        return render_html(tree)
+
     return Response(
-        content=render_html(tree),
+        content=await _run_export_blocking(_render),
         media_type="text/html; charset=utf-8",
         headers={"Content-Disposition": 'attachment; filename="document.html"'},
     )
@@ -269,9 +326,13 @@ async def handle_export_docx_tree(
     )
     if tree is None:
         return envelope(404, "not_found", "text artifact not found")
-    stream = convert_tree_to_docx(tree)
+
+    def _render() -> bytes:
+        stream = convert_tree_to_docx(tree)
+        return stream.getvalue()
+
     return Response(
-        content=stream.getvalue(),
+        content=await _run_export_blocking(_render),
         media_type=DOCX_MEDIA_TYPE,
         headers={"Content-Disposition": 'attachment; filename="document.docx"'},
     )
@@ -304,7 +365,15 @@ async def handle_export_blocktree(
         if metadata is None:
             return envelope(404, "not_found", "metadata artifact not found")
         tree.metadata["processor_report"] = metadata
-    return JSONResponse(content=json.loads(export_json(tree)))
+
+    def _serialize() -> Any:
+        # ``export_json`` walks the whole tree, base64-encodes figure
+        # image bytes and pretty-prints the payload; ``json.loads``
+        # re-parses that string. Both halves are CPU-bound and scaled
+        # by document size, so the whole round-trip runs off-loop.
+        return json.loads(export_json(tree))
+
+    return JSONResponse(content=await _run_export_blocking(_serialize))
 
 
 async def handle_export_markdown_post(
@@ -335,7 +404,13 @@ async def handle_export_markdown_post(
         if metadata is None:
             return envelope(404, "not_found", "metadata artifact not found")
         tree.metadata["processor_report"] = metadata
-    content = build_markdown_export(tree)
+
+    def _render() -> str:
+        # ``render_markdown`` walks every page/block/table in pure
+        # Python — CPU-bound and proportional to document size.
+        return build_markdown_export(tree)
+
+    content = await _run_export_blocking(_render)
     return Response(
         content=content,
         media_type="text/markdown; charset=utf-8",
@@ -374,7 +449,11 @@ async def handle_export_markdown_get(
         if metadata is None:
             return envelope(404, "not_found", "metadata artifact not found")
         tree.metadata["processor_report"] = metadata
-    content = build_markdown_export(tree)
+
+    def _render() -> str:
+        return build_markdown_export(tree)
+
+    content = await _run_export_blocking(_render)
     return Response(
         content=content,
         media_type="text/markdown; charset=utf-8",
@@ -410,13 +489,20 @@ async def handle_export_chunks_post(
         if metadata is None:
             return envelope(404, "not_found", "metadata artifact not found")
         tree.metadata["processor_report"] = metadata
-    try:
-        chunks = build_chunks_export(
+
+    def _build() -> list[dict[str, Any]]:
+        # ``chunk_tree`` re-renders Markdown per section and runs the
+        # overlap/min-length windowing in pure Python — CPU-bound.
+        # ``ChunkingError`` still surfaces to the handler's ``except``.
+        return build_chunks_export(
             tree,
             max_chars=body.max_chars,
             overlap_chars=body.overlap_chars,
             min_chars=body.min_chars,
         )
+
+    try:
+        chunks = await _run_export_blocking(_build)
     except ChunkingError as exc:
         return envelope(400, "bad_request", str(exc))
     return JSONResponse(content={"chunks": chunks, "total_chunks": len(chunks)})
@@ -455,13 +541,17 @@ async def handle_export_chunks_get(
         if metadata is None:
             return envelope(404, "not_found", "metadata artifact not found")
         tree.metadata["processor_report"] = metadata
-    try:
-        chunks = build_chunks_export(
+
+    def _build() -> list[dict[str, Any]]:
+        return build_chunks_export(
             tree,
             max_chars=max_chars,
             overlap_chars=overlap_chars,
             min_chars=min_chars,
         )
+
+    try:
+        chunks = await _run_export_blocking(_build)
     except ChunkingError as exc:
         return envelope(400, "bad_request", str(exc))
     return JSONResponse(content={"chunks": chunks, "total_chunks": len(chunks)})

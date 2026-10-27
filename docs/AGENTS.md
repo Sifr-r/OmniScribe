@@ -29,6 +29,10 @@ uv run pytest -m slow
 uv run pytest tests/core/test_aligner.py -v
 ```
 
+- The CI type gate is `uv run mypy src tests` (`.github/workflows/test.yml`) — the
+  command that must stay green. The `uv run mypy src` line above and the
+  `make typecheck` target cover production code only, so a typing error under
+  `tests/` passes them and still fails CI.
 - `pytest-asyncio` uses auto mode. Write `async def test_...` without decorators.
 - Slow tests load Surya and may download its model on the first run.
 - Markers are `slow` and `slow_dataset`:
@@ -280,7 +284,7 @@ contract tests live in `tests/routers/`, plugin unit tests in
 - **Cross-pod Redis Pub/Sub terminal event replay**: In multi-worker Redis deployments, worker processes broadcast terminal progress frames (`complete`, `failed`/`error`, `cancelled`) across Redis Pub/Sub channels (`omniscribe:progress:{channel_id}`). `ProgressServiceImpl._pubsub_subscriber_loop` intercepts non-local terminal frames and replays corresponding `JobCompleted`, `JobFailed`, or `JobCancelled` events into the local in-process `Context` event bus (`ctx.emit`). This unblocks SSE event listeners waiting on `/api/process/{job_id}/events` via `OCRService.wait_for_events`, which is additionally hardened against deadlocks by checking `StateBackend` terminal status upfront and enforcing bounded 2.0s wait intervals.
 - **VLM resilience**: every LLM call retries transient errors (429/5xx/connection resets) with exponential backoff, and a per-request circuit breaker fails fast after `OMNISCRIBE_CB_FAILURE_THRESHOLD` (default 5) consecutive failures. Tunables: `OMNISCRIBE_LLM_MAX_RETRIES` (default 2), `OMNISCRIBE_LLM_RETRY_BASE_DELAY` (default 1.0s), `OMNISCRIBE_CB_COOLDOWN` (default 30s), `OMNISCRIBE_VLM_PAGE_MAX_TOKENS` (default 6144), `OMNISCRIBE_VLM_CROP_MAX_TOKENS` (default 256).
 - **Model pre-flight (`GET|POST /api/process/preflight`)**: implemented in-core via `ensure_model_loaded()` in `core/ocr/processor.py` (checks `GET /v1/models` against loaded model IDs before execution to guard against silent model fallback; also mirrored in `core/grounded/prompted.py`). Publicly exposed under the OCR plugin via `GET|POST /api/process/preflight`. The OCR plugin additionally seeds the `verify_model` config key.
-- **Quality repair loop**: `/api/process` re-OCRs blocks whose estimated confidence is below the target (crop-scoped, sequential, accept-only-while-improving) after block emission and before embedding. Defaults ON at the API layer (up to 2 extra VLM passes per low-confidence block); in-process `OCRPipeline.run` callers stay off unless they pass `repair_options=`. Per-request form fields `quality_loop_enabled` / `quality_target` (0.5–1.0) / `quality_max_retries` (0–5); the boot defaults are seeded by the `ocr` plugin's `cordis.yml` config, which expands the env seeds `OMNISCRIBE_QUALITY_LOOP`, `OMNISCRIBE_QUALITY_TARGET`, `OMNISCRIBE_QUALITY_MAX_RETRIES`. WebSocket frames: `block_retry`, `block_revised`, `quality_summary`.
+- **Quality repair loop**: `/api/process` re-OCRs blocks whose estimated confidence is below the target (crop-scoped, accept-only-while-improving; block-level repair inside a page stays sequential, while the repair phase now fans out across pages with a bounded concurrency) after block emission and before embedding. Defaults ON at the API layer (up to 2 extra VLM passes per low-confidence block); in-process `OCRPipeline.run` callers stay off unless they pass `repair_options=`. Per-request form fields `quality_loop_enabled` / `quality_target` (0.5–1.0) / `quality_max_retries` (0–5); the boot defaults are seeded by the `ocr` plugin's `cordis.yml` config, which expands the env seeds `OMNISCRIBE_QUALITY_LOOP`, `OMNISCRIBE_QUALITY_TARGET`, `OMNISCRIBE_QUALITY_MAX_RETRIES`. WebSocket frames: `block_retry`, `block_revised`, `quality_summary`.
 - Web runtime settings live in the OCR plugin's in-memory `/api/config` store, seeded from `RuntimeSettings` at plugin apply time; LLM coordinate updates write through to the shared settings.
 - **Flutter client**: the committed targets are Windows desktop and web under `client/`, connecting to the OmniScribe FastAPI/plugin backend over HTTP and WebSocket.
 - **Developer scripts** live in `scripts/`. The most useful for OCR quality work are `scripts/confidence_eval.py` (hybrid + grounded vs the `examples/*.pdf` fixtures) and `scripts/confidence_image.py` (single-image confidence). The rest are debug/inspection/visualization tools.
@@ -359,4 +363,4 @@ All runtime settings are declared in `src/omniscribe/config.py` (`RuntimeSetting
 - [DEPLOYMENT.md](DEPLOYMENT.md) — local / LAN / public-internet deployment profiles
 - [SECURITY.md](SECURITY.md) — threat model, hardening checklist, vulnerability disclosure
 
-_Last updated: 2026-09-27_
+_Last updated: 2026-10-26_

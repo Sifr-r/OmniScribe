@@ -184,6 +184,132 @@ class TestHybridLayoutDetector:
         assert pages == {0: [((0.1, 0.1, 0.9, 0.2), "")]}
         assert 0 in cache
 
+    async def test_detect_layout_reuses_decoded_images_instead_of_redecoding(
+        self, monkeypatch
+    ) -> None:
+        """Regression: the layout path must hand the aligner the images that
+        ``decode_chunk_bytes`` already produced.
+
+        Pre-fix, ``detect_layout`` passed the raw chunk bytes to
+        ``get_detected_boxes_batch``, which re-opened and re-decoded every
+        page a second time. Counting ``Image.open`` calls pins the fix: one
+        decode per page, not two.
+        """
+        import PIL.Image
+
+        images = {0: _make_tiny_b64_image(), 1: _make_tiny_b64_image()}
+
+        class _DecodingAligner:
+            """Stub exposing both entry points so we can see which is used."""
+
+            def __init__(self) -> None:
+                self.image_batches: list[list[Image.Image]] = []
+                self.byte_calls = 0
+
+            def get_detected_boxes_from_images(self, imgs):
+                self.image_batches.append(list(imgs))
+                return [[(0.1, 0.1, 0.9, 0.2)] for _ in imgs]
+
+            def get_detected_boxes_batch(self, raw):
+                self.byte_calls += 1
+                return [[(0.1, 0.1, 0.9, 0.2)] for _ in raw]
+
+        cache: dict[int, Image.Image] = {}
+        aligner = _DecodingAligner()
+        detector = HybridLayoutDetector(aligner=aligner)  # type: ignore[arg-type]
+
+        # Count every PIL decode performed during detect_layout. Both
+        # layout.decode_chunk_bytes and aligner.get_detected_boxes_batch
+        # resolve Image.open off the PIL.Image module at call time.
+        real_open = PIL.Image.open
+        opened: list[object] = []
+
+        def _counting_open(fp, *args, **kwargs):
+            opened.append(fp)
+            return real_open(fp, *args, **kwargs)
+
+        monkeypatch.setattr(PIL.Image, "open", _counting_open)
+
+        pages = await detector.detect_layout(
+            images_dict=images,
+            page_nums=[0, 1],
+            progress=None,
+            decoded_put=cache.__setitem__,
+            decoded_get=cache.get,
+        )
+
+        # Output is unchanged by the de-duplication.
+        assert pages == {
+            0: [((0.1, 0.1, 0.9, 0.2), "")],
+            1: [((0.1, 0.1, 0.9, 0.2), "")],
+        }
+        # The cached images are handed straight to the aligner; the byte
+        # path — and its second decode — is never taken.
+        assert aligner.byte_calls == 0
+        assert len(aligner.image_batches) == 1
+        assert aligner.image_batches[0] == [cache[0], cache[1]]
+        # Exactly one decode per page.
+        assert len(opened) == len(images)
+
+    async def test_detect_layout_falls_back_to_byte_path_for_stub_aligner(
+        self,
+    ) -> None:
+        """A duck-typed aligner that only implements the byte entry point
+        must keep working, even when the decoded cache is populated."""
+        cache: dict[int, Image.Image] = {}
+        aligner = _StubAligner(boxes_per_page=[(0.1, 0.1, 0.9, 0.2)])
+        detector = HybridLayoutDetector(aligner=aligner)  # type: ignore[arg-type]
+        images = {0: _make_tiny_b64_image()}
+        pages = await detector.detect_layout(
+            images_dict=images,
+            page_nums=[0],
+            progress=None,
+            decoded_put=cache.__setitem__,
+            decoded_get=cache.get,
+        )
+        assert pages == {0: [((0.1, 0.1, 0.9, 0.2), "")]}
+        assert 0 in cache
+
+    async def test_detect_layout_falls_back_when_decoded_cache_misses(
+        self,
+    ) -> None:
+        """A cache miss on any page must fall back to the byte path rather
+        than feed a short/None image list to the aligner."""
+
+        class _DecodingAligner:
+            def __init__(self) -> None:
+                self.byte_calls = 0
+
+            def get_detected_boxes_from_images(self, imgs):
+                raise AssertionError("must not be called on a cache miss")
+
+            def get_detected_boxes_batch(self, raw):
+                self.byte_calls += 1
+                return [[(0.1, 0.1, 0.9, 0.2)] for _ in raw]
+
+        cache: dict[int, Image.Image] = {}
+        aligner = _DecodingAligner()
+        detector = HybridLayoutDetector(aligner=aligner)  # type: ignore[arg-type]
+        images = {0: _make_tiny_b64_image(), 1: _make_tiny_b64_image()}
+
+        def _put(page_num: int, image: Image.Image) -> None:
+            # Simulate a decode that failed: nothing lands in the cache.
+            if page_num == 0:
+                cache[page_num] = image
+
+        pages = await detector.detect_layout(
+            images_dict=images,
+            page_nums=[0, 1],
+            progress=None,
+            decoded_put=_put,
+            decoded_get=cache.get,
+        )
+        assert aligner.byte_calls == 1
+        assert pages == {
+            0: [((0.1, 0.1, 0.9, 0.2), "")],
+            1: [((0.1, 0.1, 0.9, 0.2), "")],
+        }
+
     async def test_detect_layout_with_whitespace_recall(self) -> None:
         class _Booster:
             def __init__(self) -> None:

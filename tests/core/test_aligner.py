@@ -507,6 +507,46 @@ class TestDetectionBatchResilience:
         assert all(0.0 <= v <= 1.0 for v in result[0][0])
 
 
+class TestPreDecodedImageEntryPoint:
+    """``get_detected_boxes_from_images`` is the additive, decode-free
+    sibling of ``get_detected_boxes_batch``.
+
+    The layout stage uses it to hand over the images ``decode_chunk_bytes``
+    already produced instead of paying for a second decode of the same
+    bytes. Because it is a pure de-duplication, both entry points must
+    produce identical boxes for identical pixels.
+    """
+
+    def test_image_and_byte_paths_return_identical_boxes(self) -> None:
+        pred = _StubPredictor([[_pred_with_boxes()], [_pred_with_boxes()]])
+        aligner = HybridAligner(detection_predictor=pred)
+        # Page is 100x80, bbox (10, 10, 50, 40) normalizes to
+        # (0.1, 0.125, 0.5, 0.5).
+        expected = [[(0.1, 0.125, 0.5, 0.5)]]
+        assert aligner.get_detected_boxes_batch([_png_bytes((100, 80))]) == expected
+        from_images = aligner.get_detected_boxes_from_images(
+            [Image.new("RGB", (100, 80), "white")]
+        )
+        assert from_images == expected
+        # Both entry points reached the predictor exactly once.
+        assert pred.calls == 2
+
+    def test_image_path_converts_non_rgb_like_the_byte_path(self) -> None:
+        # A grayscale page is converted to RGB before detection so the
+        # normalized coordinates are computed from identical pixels.
+        pred = _StubPredictor([[_pred_with_boxes()]])
+        aligner = HybridAligner(detection_predictor=pred)
+        result = aligner.get_detected_boxes_from_images(
+            [Image.new("L", (100, 80), "white")]
+        )
+        assert result == [[(0.1, 0.125, 0.5, 0.5)]]
+
+    def test_empty_inputs_short_circuit(self) -> None:
+        aligner = HybridAligner(detection_predictor=_StubPredictor([]))
+        assert aligner.get_detected_boxes_from_images([]) == []
+        assert aligner.get_detected_boxes_batch([]) == []
+
+
 class TestNaNBboxHandling:
     """F1.6 audit fix (HIGH): Surya occasionally returns NaN/inf
     bbox coordinates. The aligner must drop those boxes (not silently

@@ -10,14 +10,27 @@ from __future__ import annotations
 import asyncio
 import json
 import secrets
+import threading
+import time
 import uuid
+from collections.abc import Callable, Coroutine
 from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
 from starlette.applications import Starlette
 
+from omniscribe.plugins.artifacts import ArtifactHandle
+from omniscribe.plugins.documents import routes as documents_routes
+from omniscribe.plugins.documents.schemas import (
+    DocumentExportFormat,
+    DocumentExportRequest,
+    ExportBlockTreeRequest,
+    ExportHtmlRequest,
+)
+from omniscribe.plugins.documents.service import EXPORT_MEDIA_TYPES
 from omniscribe.plugins.state_backend import StateBackend
+from omniscribe.plugins.state_backend_types import ArtifactBlob, ArtifactRecord
 
 DOCX_MEDIA_TYPE = (
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
@@ -467,3 +480,217 @@ def test_export_blocktree_unknown_metadata_404(api_client: TestClient) -> None:
         },
     )
     assert response.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Event-loop blocking: export rendering must run off the loop
+# ---------------------------------------------------------------------------
+
+# The blocking stand-in below must be much slower than the responsiveness
+# probe, otherwise a loaded CI box could finish the "render" before the
+# probe gets a chance to observe the loop.
+_RENDER_BLOCK_SECONDS = 0.5
+_PROBE_SECONDS = 0.02
+
+
+class _StubArtifactStore:
+    """Single-artifact :class:`ArtifactStore` for handler-level tests.
+
+    The render tests drive the handler coroutines directly (not through
+    ``TestClient``) so that the loop being measured is the loop the test
+    itself runs on.
+    """
+
+    def __init__(self, blob: bytes) -> None:
+        self._blob = blob
+
+    async def get(self, artifact_id: str, token: str) -> ArtifactBlob:
+        return ArtifactBlob(
+            record=ArtifactRecord(
+                id=artifact_id,
+                token=token,
+                owner_job_id="",
+                content_type="application/json",
+                created_at=0.0,
+                ttl_seconds=3600,
+            ),
+            blob=self._blob,
+        )
+
+    async def put(
+        self,
+        blob: bytes,
+        *,
+        content_type: str,
+        owner_job_id: str,
+        ttl_seconds: int | None = None,
+    ) -> ArtifactHandle:
+        raise AssertionError("export render must not write artifacts")
+
+    async def delete(self, artifact_id: str) -> None:
+        raise AssertionError("export render must not delete artifacts")
+
+
+class _RecordingArtifactStore(_StubArtifactStore):
+    """Store stub that captures the blob written by ``handle_document_export``."""
+
+    def __init__(self, blob: bytes) -> None:
+        super().__init__(blob)
+        self.put_blob: bytes | None = None
+        self.put_content_type: str | None = None
+
+    async def put(
+        self,
+        blob: bytes,
+        *,
+        content_type: str,
+        owner_job_id: str,
+        ttl_seconds: int | None = None,
+    ) -> ArtifactHandle:
+        self.put_blob = blob
+        self.put_content_type = content_type
+        return ArtifactHandle(id="a" * 32, token="t" * 43)
+
+
+class _FakeDocxStream:
+    """Minimal ``io.BytesIO`` stand-in returned by the render stand-in."""
+
+    def __init__(self, payload: bytes) -> None:
+        self._payload = payload
+
+    def getvalue(self) -> bytes:
+        return self._payload
+
+
+def _blocking_renderer(
+    monkeypatch: pytest.MonkeyPatch,
+    target: str,
+    result: Any,
+    render_threads: list[int],
+    entered: threading.Event,
+) -> None:
+    """Patch ``target`` with a synchronously blocking render stand-in.
+
+    The stand-in burns wall-clock time without ever yielding, exactly as
+    the real per-block renderers do. It records the thread it ran on and
+    signals ``entered`` before blocking, so the caller can tell "the loop
+    is free" apart from "the loop was stuck inside the render".
+    """
+
+    def _render(*_args: Any, **_kwargs: Any) -> Any:
+        render_threads.append(threading.get_ident())
+        entered.set()
+        time.sleep(_RENDER_BLOCK_SECONDS)
+        return result
+
+    monkeypatch.setattr(documents_routes, target, _render)
+
+
+async def _assert_runs_off_loop(
+    handler: Callable[[], Coroutine[Any, Any, Any]],
+) -> Any:
+    """Await ``handler`` while proving it never blocked the event loop."""
+    task = asyncio.create_task(handler())
+    # Yields to the loop: the handler starts and reaches its render.
+    await asyncio.sleep(0)
+    await asyncio.sleep(_PROBE_SECONDS)
+    # The render is still blocked, yet this probe ran on schedule — so
+    # the loop was never held by it.
+    assert not task.done(), (
+        "export render finished before the probe sleep elapsed: the "
+        "render helper is running inline on the event loop"
+    )
+    return await task
+
+
+async def test_export_html_render_runs_off_the_event_loop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``/api/export/html`` must not render inline on the event loop."""
+    render_threads: list[int] = []
+    entered = threading.Event()
+    _blocking_renderer(
+        monkeypatch,
+        "render_html",
+        "<html>rendered off-loop</html>",
+        render_threads,
+        entered,
+    )
+    store = _StubArtifactStore(json.dumps({"0": "Heading\nBody."}).encode("utf-8"))
+    body = ExportHtmlRequest(text_artifact_id="a" * 32, text_artifact_token="t" * 43)
+
+    response = await _assert_runs_off_loop(
+        lambda: documents_routes.handle_export_html(body, store)
+    )
+
+    assert entered.is_set()
+    assert render_threads and render_threads[0] != threading.get_ident()
+    # The response contract is untouched by the offload.
+    assert response.headers["content-type"] == "text/html; charset=utf-8"
+    assert response.body == b"<html>rendered off-loop</html>"
+
+
+async def test_export_docx_tree_render_runs_off_the_event_loop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``/api/export/docx-tree`` must not build the docx on the loop."""
+    render_threads: list[int] = []
+    entered = threading.Event()
+    _blocking_renderer(
+        monkeypatch,
+        "convert_tree_to_docx",
+        _FakeDocxStream(b"PK-off-loop-docx-bytes"),
+        render_threads,
+        entered,
+    )
+    store = _StubArtifactStore(json.dumps({"0": "Heading\nBody."}).encode("utf-8"))
+    body = ExportBlockTreeRequest(
+        text_artifact_id="a" * 32, text_artifact_token="t" * 43
+    )
+
+    response = await _assert_runs_off_loop(
+        lambda: documents_routes.handle_export_docx_tree(body, store)
+    )
+
+    assert entered.is_set()
+    assert render_threads and render_threads[0] != threading.get_ident()
+    assert response.headers["content-type"] == DOCX_MEDIA_TYPE
+    assert response.body == b"PK-off-loop-docx-bytes"
+
+
+async def test_export_document_build_runs_off_the_event_loop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``/api/export/document`` must not build the export on the loop.
+
+    ``build_document_export`` renders Markdown / base64-encodes figures
+    and the payload is re-serialized into the stored artifact blob, so
+    the whole build must run off-loop.
+    """
+    render_threads: list[int] = []
+    entered = threading.Event()
+    _blocking_renderer(
+        monkeypatch,
+        "build_document_export",
+        {"pages": []},
+        render_threads,
+        entered,
+    )
+    store = _RecordingArtifactStore(json.dumps({"0": "Heading\nBody."}).encode("utf-8"))
+    body = DocumentExportRequest(
+        text_artifact_id="a" * 32,
+        text_artifact_token="t" * 43,
+        export_format=DocumentExportFormat.MARKDOWN,
+    )
+
+    result = await _assert_runs_off_loop(
+        lambda: documents_routes.handle_document_export(body, store)
+    )
+
+    assert entered.is_set()
+    assert render_threads and render_threads[0] != threading.get_ident()
+    assert isinstance(result, dict)
+    assert result == {"artifact_id": "a" * 32, "token": "t" * 43, "format": "markdown"}
+    # The bytes handed to the store are unchanged by the offload.
+    assert store.put_blob == b'{"pages": []}'
+    assert store.put_content_type == EXPORT_MEDIA_TYPES["markdown"]
