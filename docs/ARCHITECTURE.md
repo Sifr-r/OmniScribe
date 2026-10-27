@@ -1,5 +1,44 @@
 # Architecture Ledger
 
+## Python dependency update (2026-10-27)
+
+Refreshed 87 package names and added three in the 199-entry dependency lock,
+then synchronized all extras. The manifest raises Pillow to >=13.0.0 and
+adds the reviewed filelock >=4.2.1,<5 override of Surya's restrictive metadata.
+Python >=3.11, the equivalent memory/lexicon aliases, and module ownership
+remain unchanged. Makefile and CI no longer ignore the fixed LangGraph SDK
+advisory. The final installed filelock is 4.2.4; `pip-audit --skip-editable`
+reports no known vulnerabilities without vulnerability exceptions.
+
+The initial updated fast tier passed **2,913 tests**, with two expected skips
+and **84.21% coverage**. Ruff lint/format and CI typing pass for 447 files;
+23 dependency imports plus AVIF pass. Final filelock consumer lock smokes,
+lock consistency, and the repeat all-extras dry run pass. The focused aligner,
+OCR, imaging, and image regression run on final filelock passes **237 tests**
+with one expected pytesseract skip; final Surya/Torch imports pass as well.
+The two Surya metadata conflicts for Pillow and filelock remain explicit.
+
+The sole new file for this update,
+[python-dependency-update-2026-10-27.md](python-dependency-update-2026-10-27.md),
+owns the scoped blueprint, file responsibilities, package delta, rollback,
+and validation evidence. No new production files or wire contracts.
+
+## Local Python dependency repair (2026-10-27)
+
+The existing CPython 3.13.9 environment now includes all declared extras after
+installing 29 missing packages from the unchanged 194-package lockfile. A repeat
+offline all-extras dry run checked 168 installed packages and would make no
+changes. Sixteen dependency imports pass; focused repository, real LanceDB,
+and SQL/git glossary integration checks pass: **106 passed, 1 expected skip**.
+The existing Surya/Pillow metadata exception remains; Surya detection/recognition,
+Torch/Torchvision, and native AVIF import checks pass without model inference.
+
+The sole new file, [python-dependency-repair-2026-10-27.md](python-dependency-repair-2026-10-27.md),
+owns the repair blueprint, file responsibilities, commands, and validation
+limits. No production module, dependency version, runtime ownership, or wire
+contract changes. Normal Windows runtime access was required for LanceDB checks
+after sandbox initialization stalled; test artifacts stayed in the workspace.
+
 ## Publication validation (2026-10-27)
 
 Revalidated the performance-hardening candidate against base

@@ -27,7 +27,7 @@ classifiers = [
 ]
 dependencies = [
     "openai>=2.11.0,<3",
-    "pillow>=12.3.0",
+    "pillow>=13.0.0",
     "pymupdf>=1.26.7,<2",  # AGPL-3.0; see THIRD_PARTY_LICENSES.md
     "python-dotenv>=1.2.1",
     "tqdm>=4.70.0",
@@ -199,18 +199,16 @@ dev = [
 ]
 
 [tool.uv]
-# Pillow override — keep >=11.3 for native AVIF decoding (drops the
-# pillow-avif-plugin runtime dep entirely). Required because the
-# current ``surya-ocr`` line still pins Pillow <11 in its resolver
-# metadata, which conflicts with our other deps that need the 11.x
-# API. The Pillow 10→11 changes are deprecated-API removals and
-# the Python 3.8 drop, both already aligned with our
-# ``requires-python >=3.11`` floor, so the override is safe in
-# practice. Re-evaluate when surya-ocr publishes a release that
-# drops the upper pin; bump this in lockstep.
+# Surya 0.22.1 still declares Pillow <11. Override its stale cap to retain
+# native AVIF decoding and the security fixes in Pillow 13; Python >=3.11
+# matches our supported floor. Revisit when Surya relaxes its metadata.
 override-dependencies = [
-    "pillow>=12.3.0",
+    "pillow>=13.0.0",
     "httpx2>=2.12.0",  # CVE-2026-84378/9/80/1/2 (Trivy 0.69.3). langsmith's `httpx2<3,>=2` allows this.
+    # Surya's filelock <4 cap excludes the fixes for CVE-2026-112940,
+    # CVE-2026-112913 and CVE-2026-112907. Its FileLock context manager
+    # and the Hugging Face/Torch lock APIs remain compatible with 4.x.
+    "filelock>=4.2.1,<5",
 ]
 
 [tool.pytest.ini_options]

@@ -48,21 +48,11 @@ lint: ## Run Ruff lint and format checks
 typecheck: ## Run mypy against production code
 	uv run mypy src
 
-# PYSEC-2026-311 / CVE-2026-45829 (chromadb server RCE) was previously
-# risk-accepted here with --ignore-vuln; chromadb left the dependency tree
-# in the lexicon migration Phase 5, so the ignore flag is gone (2026-09-06).
-# If pip-audit flags chromadb in your local env, it is a stale local install,
-# not a declared dependency.
-#
-# 2026-10-08: AnyIO and urllib3 advisories are fixed in uv.lock.
-# Only the LangGraph SDK exception remains, matching test.yml.
-#   CVE-2026-104873 (langgraph-sdk @auth.on.* action bypass)
-#     -- affects custom auth handlers for a self-hosted LangGraph server.
-#        OmniScribe imports only langgraph.graph.StateGraph and never
-#        imports langgraph_sdk.
-# Re-verify each proof before keeping it; drop any flag that stops being true.
+# Audit every installed dependency without vulnerability exceptions, matching CI.
+# The lock now includes langgraph-sdk 0.4.10, beyond the 0.4.4 fix for
+# CVE-2026-104873, while retaining the supported WebSocket version.
 audit: ## Run pip-audit dependency vulnerability scan
-	uv run pip-audit --ignore-vuln CVE-2026-104873
+	uv run pip-audit
 
 # F5-27 audit fix: `make security` runs the local Semgrep static
 # analysis pass on the same ruleset `security.yml` uses in CI. The
