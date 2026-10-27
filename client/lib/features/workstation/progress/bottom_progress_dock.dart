@@ -20,7 +20,11 @@ class BottomProgressDock extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final colors = context.colors;
-    final wsState = ref.watch(workstationProvider);
+    // Narrow to the only workstation field this dock reads: the whole-provider
+    // watch rebuilt the dock on every unrelated document state change.
+    final revisedCount = ref.watch(
+      workstationProvider.select((state) => state.documentRevisedCount),
+    );
     final job = ref.watch(jobOrchestrationProvider);
     final notifier = ref.read(workstationProvider.notifier);
 
@@ -33,7 +37,7 @@ class BottomProgressDock extends ConsumerWidget {
     final processedBlocks = job.processedBlocks;
     final totalBlocks = job.totalBlocks;
     final retries = job.totalRetriesAttempted;
-    final repaired = job.repairedCount(wsState.documentRevisedCount);
+    final repaired = job.repairedCount(revisedCount);
     final avgConf = job.avgConfidence;
 
     // Sprint 3 / H-1 audit fix: wrap the dock in a Semantics node

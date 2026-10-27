@@ -25,6 +25,9 @@ class HybridSearchEngine:
     """Executes hybrid vector + keyword searches and exact lookups over LanceDB tables."""
 
     RRF_K: int = 60
+    # LanceDB returns `_distance` alongside the projected columns for a vector
+    # search, so this is the complete set consumed by `_execute_vector_search`.
+    _VECTOR_PROJECTION: ClassVar[list[str]] = ["id", "_distance"]
     _KEYWORD_PROJECTION: ClassVar[list[str]] = [
         "id",
         "glossary_id",
@@ -133,6 +136,11 @@ class HybridSearchEngine:
                 )
                 if where_clauses:
                     search = search.where(where_clauses, prefilter=True)
+                # Push the projection into the query: without it every returned
+                # row carries the full 384-float embedding, which
+                # `to_pylist()` materialises into Python objects only to
+                # discard it.
+                search = search.select(self._VECTOR_PROJECTION)
                 raw = search.to_arrow().to_pylist()
             except Exception as exc:
                 logger.warning(
@@ -224,6 +232,26 @@ class HybridSearchEngine:
             )
         return hits
 
+    def _available_columns(self, table: Any) -> list[str]:
+        """Intersect the keyword projection with the table's actual schema.
+
+        Reads column names from the table schema so a projection can be pushed
+        into the query. Falls back to an empty list (no projection) when the
+        schema cannot be read, leaving the caller's scan unrestricted.
+        """
+        try:
+            names = set(table.schema.names)
+        except Exception as exc:
+            # An unreadable schema silently disables the projection, which
+            # re-materialises the embedding column this change exists to
+            # avoid. Fall back, but say so — a DEBUG line is invisible to an
+            # operator debugging a sudden latency regression.
+            logger.warning(
+                "lexicon table schema unreadable, projection disabled: %s", exc
+            )
+            return []
+        return [c for c in self._KEYWORD_PROJECTION if c in names]
+
     def keyword_scores(self, table: Any, query: LexiconQuery) -> dict[str, float]:
         """Deterministic keyword evidence: exact > prefix > substring."""
         terms = [normalize_term(t) for t in candidate_terms(query.source_chunk)]
@@ -251,11 +279,21 @@ class HybridSearchEngine:
             where = self.build_where(query)
             if where:
                 search = search.where(where, prefilter=True)
-            tbl = search.to_arrow()
-            cols = [c for c in self._KEYWORD_PROJECTION if c in tbl.column_names]
-            rows = tbl.select(cols).to_pylist()
+            # Push the projection into the query rather than selecting after
+            # `to_arrow()`, which materialised every column (including the
+            # 384-float embedding) only to drop it. Columns absent from the
+            # table are filtered out here because `select()` rejects unknown
+            # names, preserving the previous `column_names` behaviour.
+            cols = self._available_columns(table)
+            search = search.select(cols) if cols else search
+            rows = search.to_arrow().to_pylist()
         except Exception as exc:
-            logger.debug("keyword leg scan failed: %s", exc)
+            # The projection pushed into the query added a new failure mode
+            # here: a rejected `select()` drops the whole keyword leg, so the
+            # scan silently degrades to vector-only scoring. Fail closed, but
+            # log at WARNING — a DEBUG line is invisible to an operator
+            # debugging a sudden quality regression.
+            logger.warning("keyword leg scan failed: %s", exc)
             return {}
         scores: dict[str, float] = {}
         for row in rows:

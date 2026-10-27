@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import cast
 from unittest.mock import AsyncMock
 
@@ -377,3 +378,524 @@ class TestRepairPhasePageDecode:
         assert summaries[0].repaired_count == 1
         assert summaries[1].repaired_count == 0
         assert summaries[1].below_target_count == 0
+
+
+#: Deadlock guard for the concurrency tests below. It bounds how long a
+#: test waits for a latch it expects to be released; it never establishes
+#: the behaviour under test. Generous on purpose so a loaded CI box does
+#: not turn a scheduling delay into a failure.
+_GUARD_TIMEOUT = 30.0
+
+
+async def _drain_ready_tasks() -> None:
+    """Let every ready task take one step, without using a timer.
+
+    ``sleep(0)`` is a bare event-loop yield: it has no duration and so is
+    unaffected by machine load. Used to give a wrongly-admitted task the
+    chance to register before a test asserts on a peak in-flight count.
+    """
+    for _ in range(5):
+        await asyncio.sleep(0)
+
+
+class TestRepairPhaseConcurrency:
+    """Phase 4b fans out across pages, bounded by ``concurrency``.
+
+    The driver used to walk ``page_nums`` one page at a time, so repair
+    wall-clock was the SUM of every page's VLM latency even though the
+    phase is dominated by network-bound re-OCR calls that sit idle
+    waiting on a response. These tests pin the bounded-concurrency
+    contract that replaced it: real overlap above 1, strict
+    serialisation at 1, page-ordered summaries no matter which page
+    finishes first, and a progress counter that cannot interleave.
+
+    Every precondition here is established with ``asyncio.Event`` latches
+    rather than with sleeps. An earlier version of these tests inferred
+    overlap and completion order from ``asyncio.sleep`` durations, which
+    made them pass in isolation and fail under parallel suite load.
+    ``_GUARD_TIMEOUT`` is a deadlock guard only — it never establishes the
+    behaviour under test — and ``sleep(0)`` is a duration-free yield.
+    """
+
+    async def test_pages_overlap_when_concurrency_above_one(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``concurrency=3`` admits three pages at once, and never a fourth.
+
+        Overlap is forced by a latch: every admitted page parks on
+        ``release`` and the test withholds it until three pages are
+        provably inside at the same time. Because the parked pages hold
+        their permits, a fourth would have registered its arrival by the
+        time the loop is drained — so the peak asserted here fails both
+        for "never overlapped" and for "bound removed".
+        """
+        from omniscribe.core.workflows import hybrid_repair as hr
+        from omniscribe.core.workflows.hybrid_repair import run_repair_phase
+
+        bound = 3
+        inflight = 0
+        peak = 0
+        saturated = asyncio.Event()
+        release = asyncio.Event()
+
+        async def _latched_repair(*, p_num: int, **kwargs: object) -> PageRepairSummary:
+            nonlocal inflight, peak
+            inflight += 1
+            peak = max(peak, inflight)
+            if inflight >= bound:
+                saturated.set()
+            try:
+                await release.wait()
+            finally:
+                inflight -= 1
+            return PageRepairSummary(
+                page_idx=p_num,
+                target=0.9,
+                block_count=1,
+                avg_confidence=0.4,
+                repaired_count=0,
+                below_target_count=1,
+            )
+
+        monkeypatch.setattr(hr, "repair_single_page", _latched_repair)
+
+        class _StubEngine:
+            ocr_processor: OCRProcessor = cast(OCRProcessor, object())
+            block_callbacks = BlockCallbackSet()
+
+        pages = list(range(6))
+        task = asyncio.create_task(
+            run_repair_phase(
+                engine=_StubEngine(),
+                # "ab" estimates ~0.4, below the 0.5 target, so every page
+                # is a repair target and the driver does not early-return.
+                pages_structured={p: [((0.0, 0.0, 1.0, 1.0), "ab")] for p in pages},
+                images_dict={p: f"img-{p}" for p in pages},
+                page_nums=pages,
+                repair_options=RepairOptions(enabled=True, target=0.5, max_retries=1),
+                concurrency=bound,
+                progress=None,
+                on_warning=None,
+                decoded_get=lambda p_num: None,
+            )
+        )
+
+        await asyncio.wait_for(saturated.wait(), timeout=_GUARD_TIMEOUT)
+        await _drain_ready_tasks()
+        held = peak
+        release.set()
+        summaries = await asyncio.wait_for(task, timeout=_GUARD_TIMEOUT)
+
+        assert held == bound, (
+            f"expected exactly {bound} pages in flight at once, got {held}"
+        )
+        assert len(summaries) == 6
+
+    async def test_concurrency_one_stays_serial(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``concurrency=1`` keeps the old one-page-at-a-time behaviour.
+
+        The first page parks on ``release`` while the loop is drained, so
+        ``peak == 1`` is observed with every later page already created
+        and waiting — no timing assumption is involved. ``admitted``
+        follows ``page_nums`` because ``asyncio.Semaphore`` releases its
+        waiters FIFO, a property of the primitive rather than of
+        scheduling luck.
+        """
+        from omniscribe.core.workflows import hybrid_repair as hr
+        from omniscribe.core.workflows.hybrid_repair import run_repair_phase
+
+        inflight = 0
+        peak = 0
+        admitted: list[int] = []
+        entered = asyncio.Event()
+        release = asyncio.Event()
+
+        async def _latched_repair(*, p_num: int, **kwargs: object) -> PageRepairSummary:
+            nonlocal inflight, peak
+            admitted.append(p_num)
+            inflight += 1
+            peak = max(peak, inflight)
+            entered.set()
+            try:
+                await release.wait()
+            finally:
+                inflight -= 1
+            return PageRepairSummary(
+                page_idx=p_num,
+                target=0.9,
+                block_count=1,
+                avg_confidence=0.4,
+                repaired_count=0,
+                below_target_count=1,
+            )
+
+        monkeypatch.setattr(hr, "repair_single_page", _latched_repair)
+
+        class _StubEngine:
+            ocr_processor: OCRProcessor = cast(OCRProcessor, object())
+            block_callbacks = BlockCallbackSet()
+
+        pages = list(range(4))
+        task = asyncio.create_task(
+            run_repair_phase(
+                engine=_StubEngine(),
+                pages_structured={p: [((0.0, 0.0, 1.0, 1.0), "ab")] for p in pages},
+                images_dict={p: f"img-{p}" for p in pages},
+                page_nums=pages,
+                repair_options=RepairOptions(enabled=True, target=0.5, max_retries=1),
+                concurrency=1,
+                progress=None,
+                on_warning=None,
+                decoded_get=lambda p_num: None,
+            )
+        )
+
+        await asyncio.wait_for(entered.wait(), timeout=_GUARD_TIMEOUT)
+        await _drain_ready_tasks()
+        held = peak
+        release.set()
+        summaries = await asyncio.wait_for(task, timeout=_GUARD_TIMEOUT)
+
+        assert held == 1, f"expected exactly one page in flight, got {held}"
+        assert admitted == pages, "expected pages to be admitted in page_nums order"
+        assert [s.page_idx for s in summaries] == pages
+
+    async def test_summaries_keep_page_order_when_pages_finish_out_of_order(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Summaries stay positional to ``page_nums`` under concurrency.
+
+        Completion order is forced, not inferred: page 1 parks on
+        ``others_finished`` and is released only once pages 0, 2 and 3
+        have all returned, so it provably completes last. No wall-clock
+        sleep is involved and the reordering therefore holds on a loaded
+        machine. The observed completion order is asserted *before* the
+        summary order, so the test fails loudly rather than passing
+        vacuously if the reordering ever stops happening.
+        """
+        from omniscribe.core.workflows import hybrid_repair as hr
+        from omniscribe.core.workflows.hybrid_repair import run_repair_phase
+
+        pages = [0, 1, 2, 3]
+        others_finished = asyncio.Event()
+        completed: list[int] = []
+
+        async def _gated_repair(*, p_num: int, **kwargs: object) -> PageRepairSummary:
+            if p_num == 1:
+                await others_finished.wait()
+            completed.append(p_num)
+            if p_num != 1 and len(completed) == len(pages) - 1:
+                others_finished.set()
+            return PageRepairSummary(
+                page_idx=p_num,
+                target=0.9,
+                block_count=1,
+                avg_confidence=0.4,
+                repaired_count=0,
+                below_target_count=1,
+            )
+
+        monkeypatch.setattr(hr, "repair_single_page", _gated_repair)
+
+        class _StubEngine:
+            ocr_processor: OCRProcessor = cast(OCRProcessor, object())
+            block_callbacks = BlockCallbackSet()
+
+        summaries = await run_repair_phase(
+            engine=_StubEngine(),
+            pages_structured={p: [((0.0, 0.0, 1.0, 1.0), "ab")] for p in pages},
+            images_dict={p: f"img-{p}" for p in pages},
+            page_nums=pages,
+            repair_options=RepairOptions(enabled=True, target=0.5, max_retries=1),
+            concurrency=len(pages),
+            progress=None,
+            on_warning=None,
+            decoded_get=lambda p_num: None,
+        )
+
+        # Precondition: page 1 really did complete last.
+        assert sorted(completed) == pages, f"pages ran {completed}"
+        assert completed[-1] == 1, (
+            f"expected page 1 to complete last, got completion order {completed}"
+        )
+        assert [s.page_idx for s in summaries] == pages
+
+    async def test_summaries_track_pages_through_real_repair_under_concurrency(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """End-to-end companion: real repair, one summary per page, in order.
+
+        Runs the unstubbed ``repair_single_page`` with every page
+        repairable and all of them admitted at once. It deliberately
+        makes no claim about completion order — that guarantee is
+        covered above with a forced gate — its job is that no page is
+        dropped, duplicated or misfiled once the driver is concurrent.
+        """
+        from PIL import Image
+
+        from omniscribe.core.workflows.hybrid_repair import run_repair_phase
+
+        monkeypatch.setattr(
+            "omniscribe.core.workflows.hybrid_repair.decode_base64_image",
+            lambda image_b64, mode=None: Image.effect_noise((64, 64), 64).convert(
+                "RGB"
+            ),
+        )
+
+        class _StubOCR:
+            async def perform_ocr_on_crop(self, crop_b64: str, **kwargs: object) -> str:
+                return "clean repaired words here"
+
+        class _StubEngine:
+            ocr_processor: OCRProcessor = cast(OCRProcessor, _StubOCR())
+            block_callbacks = BlockCallbackSet()
+
+        pages = [0, 1, 2, 3]
+        summaries = await run_repair_phase(
+            engine=_StubEngine(),
+            pages_structured={p: [((0.0, 0.0, 1.0, 1.0), "ab")] for p in pages},
+            images_dict={p: f"img-{p}" for p in pages},
+            page_nums=pages,
+            repair_options=RepairOptions(enabled=True, target=0.9, max_retries=1),
+            concurrency=len(pages),
+            progress=None,
+            on_warning=None,
+            decoded_get=lambda p_num: None,
+        )
+
+        assert [s.page_idx for s in summaries] == pages
+        assert all(
+            s.block_count == 1 and s.repaired_count == 1 and s.below_target_count == 0
+            for s in summaries
+        ), f"unexpected per-page stats: {summaries}"
+
+    async def test_progress_emits_never_interleave_across_pages(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The shared counter serialises its progress emit.
+
+        The counter is carried via a single-element list, which the old
+        serial loop made safe by construction. With concurrent pages the
+        increment and its emit have to be one critical section,
+        otherwise two pages sit inside the callback simultaneously and a
+        stale count can be published after a newer one.
+        """
+        from PIL import Image
+
+        from omniscribe.core.workflows.hybrid_repair import run_repair_phase
+
+        monkeypatch.setattr(
+            "omniscribe.core.workflows.hybrid_repair.decode_base64_image",
+            lambda image_b64, mode=None: Image.effect_noise((64, 64), 64).convert(
+                "RGB"
+            ),
+        )
+
+        class _StubOCR:
+            async def perform_ocr_on_crop(self, crop_b64: str, **kwargs: object) -> str:
+                # A bare yield, not a duration: the ordering this test
+                # cares about comes from the counter lock, not timing.
+                await asyncio.sleep(0)
+                return "clean repaired words here"
+
+        class _StubEngine:
+            ocr_processor: OCRProcessor = cast(OCRProcessor, _StubOCR())
+            block_callbacks = BlockCallbackSet()
+
+        events: list[str] = []
+
+        async def _progress(stage: str, current: int, total: int, message: str) -> None:
+            events.append(f"+{current}")
+            # Yield: an unguarded counter lets the next page's emit land
+            # inside this one.
+            await asyncio.sleep(0)
+            events.append(f"-{current}")
+
+        pages = [0, 1, 2]
+        await run_repair_phase(
+            engine=_StubEngine(),
+            pages_structured={p: [((0.0, 0.0, 1.0, 1.0), "ab")] for p in pages},
+            images_dict={p: f"img-{p}" for p in pages},
+            page_nums=pages,
+            repair_options=RepairOptions(enabled=True, target=0.9, max_retries=1),
+            concurrency=3,
+            progress=_progress,
+            on_warning=None,
+            decoded_get=lambda p_num: None,
+        )
+
+        # The opening "0/targets" emit plus one per repaired block, each a
+        # contiguous pair, in non-decreasing order.
+        assert events == [
+            x for n in range(len(events) // 2) for x in (f"+{n}", f"-{n}")
+        ]
+
+    async def test_cancelled_run_terminates_without_dangling_tasks(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Cancelling the phase aborts it promptly and drains its pages.
+
+        The phase has no ``cancel_check``; a cancelled run arrives as
+        ``asyncio`` cancellation of the awaiting task, and the TaskGroup
+        must cancel and await every in-flight page before re-raising so
+        no page task is left running against the VLM endpoint.
+        """
+        from omniscribe.core.workflows import hybrid_repair as hr
+        from omniscribe.core.workflows.hybrid_repair import run_repair_phase
+
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def _hanging_repair(*, p_num: int, **kwargs: object) -> PageRepairSummary:
+            started.set()
+            # Never completes on its own; only cancellation ends it.
+            await release.wait()
+            raise AssertionError("unreachable")
+
+        monkeypatch.setattr(hr, "repair_single_page", _hanging_repair)
+
+        class _StubEngine:
+            ocr_processor: OCRProcessor = cast(OCRProcessor, object())
+            block_callbacks = BlockCallbackSet()
+
+        pages = [0, 1, 2, 3]
+        task = asyncio.create_task(
+            run_repair_phase(
+                engine=_StubEngine(),
+                pages_structured={p: [((0.0, 0.0, 1.0, 1.0), "ab")] for p in pages},
+                images_dict={p: f"img-{p}" for p in pages},
+                page_nums=pages,
+                repair_options=RepairOptions(enabled=True, target=0.5, max_retries=1),
+                concurrency=3,
+                progress=None,
+                on_warning=None,
+                decoded_get=lambda p_num: None,
+            )
+        )
+
+        await asyncio.wait_for(started.wait(), timeout=_GUARD_TIMEOUT)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(task, timeout=_GUARD_TIMEOUT)
+
+        leftover = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
+        assert leftover == [], f"cancelled run left dangling tasks: {leftover}"
+
+
+class TestRepairPhaseFailureSurface:
+    """A failed page must reach the caller as its own exception type.
+
+    ``asyncio.TaskGroup`` wraps child failures in an exception group, so
+    the fan-out has to unwrap it. Audit P0-1 already recorded a group
+    leaking out of the OCR stage as a generic 500 for exactly this reason,
+    and the repair fan-out was the one place where the unwrap was
+    incomplete: a page error outside the three control-flow types escaped
+    as an ``ExceptionGroup``, and a MIXED failure escaped as a
+    ``BaseExceptionGroup`` that no type-specific handler matched — so
+    ``except OCRCancelled`` (the 503 cancel handshake in
+    ``plugins/ocr/routes.py``) stopped firing.
+    """
+
+    async def test_page_error_surfaces_as_its_own_type(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A plain page error must reach the caller as that same error."""
+        from omniscribe.core.workflows import hybrid_repair as hr
+        from omniscribe.core.workflows.hybrid_repair import run_repair_phase
+
+        async def _failing_repair(*, p_num: int, **kwargs: object) -> PageRepairSummary:
+            raise ValueError("page repair exploded")
+
+        monkeypatch.setattr(hr, "repair_single_page", _failing_repair)
+
+        class _StubEngine:
+            ocr_processor: OCRProcessor = cast(OCRProcessor, object())
+            block_callbacks = BlockCallbackSet()
+
+        pages = [0, 1]
+        with pytest.raises(ValueError, match="page repair exploded"):
+            await asyncio.wait_for(
+                run_repair_phase(
+                    engine=_StubEngine(),
+                    pages_structured={p: [((0.0, 0.0, 1.0, 1.0), "ab")] for p in pages},
+                    images_dict={p: f"img-{p}" for p in pages},
+                    page_nums=pages,
+                    repair_options=RepairOptions(
+                        enabled=True, target=0.5, max_retries=1
+                    ),
+                    concurrency=2,
+                    progress=None,
+                    on_warning=None,
+                    decoded_get=lambda p_num: None,
+                ),
+                timeout=_GUARD_TIMEOUT,
+            )
+
+    async def test_mixed_failure_surfaces_cancellation_bare(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A cancellation must stay catchable by ``except OCRCancelled``.
+
+        Both pages are released together so both failures land in the
+        group; the unwrap then has to pick the cancellation and raise it
+        bare, because the cancel handshake upstream is keyed on that exact
+        type rather than on the group.
+        """
+        from omniscribe.core.workflows import hybrid_repair as hr
+        from omniscribe.core.workflows.base import OCRCancelled
+        from omniscribe.core.workflows.hybrid_repair import run_repair_phase
+
+        release = asyncio.Event()
+
+        async def _failing_repair(*, p_num: int, **kwargs: object) -> PageRepairSummary:
+            await release.wait()
+            if p_num == 0:
+                raise OCRCancelled("cancelled mid-repair")
+            raise ValueError("page repair exploded")
+
+        monkeypatch.setattr(hr, "repair_single_page", _failing_repair)
+
+        class _StubEngine:
+            ocr_processor: OCRProcessor = cast(OCRProcessor, object())
+            block_callbacks = BlockCallbackSet()
+
+        pages = [0, 1]
+        task = asyncio.create_task(
+            run_repair_phase(
+                engine=_StubEngine(),
+                pages_structured={p: [((0.0, 0.0, 1.0, 1.0), "ab")] for p in pages},
+                images_dict={p: f"img-{p}" for p in pages},
+                page_nums=pages,
+                repair_options=RepairOptions(enabled=True, target=0.5, max_retries=1),
+                concurrency=2,
+                progress=None,
+                on_warning=None,
+                decoded_get=lambda p_num: None,
+            )
+        )
+        await _drain_ready_tasks()
+        release.set()
+
+        with pytest.raises(OCRCancelled):
+            await asyncio.wait_for(task, timeout=_GUARD_TIMEOUT)
+
+    def test_repair_failure_prefers_control_flow_exception(self) -> None:
+        """The helper prefers the cancellation over any other leaf."""
+        from omniscribe.core.workflows.base import OCRCancelled
+        from omniscribe.core.workflows.hybrid_repair import _repair_failure
+
+        group = BaseExceptionGroup(
+            "repair", [OCRCancelled("cancelled"), ValueError("boom")]
+        )
+        assert isinstance(_repair_failure(group), OCRCancelled)
+
+    def test_repair_failure_returns_other_leaf_bare(self) -> None:
+        """Without a control-flow leaf, the original error type survives."""
+        from omniscribe.core.workflows.hybrid_repair import _repair_failure
+
+        group = BaseExceptionGroup("repair", [ValueError("boom")])
+        picked = _repair_failure(group)
+        assert isinstance(picked, ValueError)
+        assert not isinstance(picked, BaseExceptionGroup)

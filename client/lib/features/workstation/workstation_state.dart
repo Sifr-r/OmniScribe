@@ -6,6 +6,31 @@ import 'package:omniscribe_client/features/workstation/document_result.dart';
 /// loaded document data, page previews, and bounding boxes. OCR job /
 /// progress / quality state lives in [JobOrchestrationState] — see
 /// `job_orchestration_notifier.dart`.
+///
+/// ## bbox memoization
+///
+/// [currentPageBBoxes], [allBBoxes] and [documentRevisedCount] derive from
+/// [pages] / [selectedPageIndex] / [filterKind]. These used to rebuild a full
+/// flattened document-wide list on *every read*, so a single rebuild cost
+/// roughly six full-document allocations (the trust panel alone read
+/// `allBBoxes` five times). They are now backed by `late final` fields, which
+/// evaluate at most once per state *instance*.
+///
+/// This is correct under [copyWith] because:
+///
+/// 1. Every state transition builds a brand new instance via [copyWith],
+///    which routes through the constructor — a fresh `late final` starts
+///    unevaluated, so a memo can never outlive the [pages] value that
+///    produced it or leak from a previous state version.
+/// 2. Within one instance the inputs ([pages], [selectedPageIndex],
+///    [filterKind]) are `final`, so the memo's answer cannot become wrong.
+///
+/// The one remaining obligation, same convention as [loadedBytes]: callers
+/// must treat `PageResult.bboxes` as read-only. Page bbox lists are replaced,
+/// never mutated in place — `WorkstationNotifier.addOrUpdateBBox` allocates a
+/// new `List<PageResult>` and a new `PageResult` per call — so nothing can
+/// change [pages] behind a memo. Mutating a retained `PageResult.bboxes` list
+/// in place would break this invariant and must not be done.
 @immutable
 class WorkstationState {
   WorkstationState({
@@ -91,22 +116,50 @@ class WorkstationState {
   }
 
   /// Bounding boxes on the active page, optionally filtered by [filterKind].
-  List<BBoxItem> get currentPageBBoxes {
-    final page = currentPage;
-    if (page == null) return const <BBoxItem>[];
-    if (filterKind == null || filterKind!.isEmpty || filterKind == 'all') {
-      return page.bboxes;
-    }
-    return page.bboxes.where((b) => b.kind == filterKind).toList();
-  }
+  ///
+  /// Memoized — see the [bbox memoization] note below.
+  List<BBoxItem> get currentPageBBoxes => _pageBBoxesMemo;
 
   /// Flattened list of all bounding boxes across all loaded pages.
-  List<BBoxItem> get allBBoxes => pages.expand((p) => p.bboxes).toList();
+  ///
+  /// Memoized — see the [bbox memoization] note below. The list is
+  /// unmodifiable and SHARED by every reader of this state instance.
+  List<BBoxItem> get allBBoxes => _allBBoxesMemo;
 
   /// Number of revised bboxes across all pages — the document-domain
   /// fallback for the orchestration state's [repairedCount].
-  int get documentRevisedCount =>
-      allBBoxes.where((b) => b.revised ?? false).length;
+  ///
+  /// Memoized — see the [bbox memoization] note below. Derived from
+  /// [_allBBoxesMemo] so the count can never disagree with [allBBoxes].
+  int get documentRevisedCount => _revisedCountMemo;
+
+  /// Memoized derivation backing [currentPageBBoxes].
+  ///
+  /// Both branches are wrapped unmodifiable because every reader of this state
+  /// instance now shares one instance — a caller mutating the result would
+  /// corrupt every other reader's view, and because the memo is a
+  /// `late final` it could never observe that mutation afterwards, which
+  /// would let [documentRevisedCount] silently disagree with [allBBoxes].
+  late final List<BBoxItem> _pageBBoxesMemo = _derivePageBBoxes();
+
+  /// Memoized derivation backing [allBBoxes].
+  late final List<BBoxItem> _allBBoxesMemo =
+      List<BBoxItem>.unmodifiable(pages.expand((p) => p.bboxes));
+
+  /// Memoized derivation backing [documentRevisedCount].
+  late final int _revisedCountMemo =
+      _allBBoxesMemo.where((b) => b.revised ?? false).length;
+
+  List<BBoxItem> _derivePageBBoxes() {
+    final page = currentPage;
+    if (page == null) return const <BBoxItem>[];
+    if (filterKind == null || filterKind!.isEmpty || filterKind == 'all') {
+      return List<BBoxItem>.unmodifiable(page.bboxes);
+    }
+    return List<BBoxItem>.unmodifiable(
+      page.bboxes.where((b) => b.kind == filterKind),
+    );
+  }
 
   WorkstationState copyWith({
     // Document data

@@ -117,6 +117,13 @@ async def translate_tree(
     last_window = ""
     chunk_idx = 0
 
+    # Build the glossary block once per job. The glossary is constant for the
+    # duration of a run, but to_prompt_block() sanitizes every entry (a
+    # prompt-injection defence on user-imported terms), so rebuilding it per
+    # block re-ran the sanitizer on identical input N times. Sanitization still
+    # runs once per entry; only the redundant recomputation is removed.
+    glossary_block = glossary.to_prompt_block() or None
+
     for page in tree.pages:
         for node in page.children:
             if isinstance(node, BlockNode):
@@ -124,7 +131,7 @@ async def translate_tree(
                     node,
                     target_language=target_language,
                     translator=translator,
-                    glossary=glossary,
+                    glossary_block=glossary_block,
                     memory=memory,
                     last_window=last_window,
                     sliding_window_words=sliding_window_words,
@@ -158,7 +165,7 @@ async def translate_tree(
                                 cell,
                                 target_language=target_language,
                                 translator=translator,
-                                glossary=glossary,
+                                glossary_block=glossary_block,
                                 memory=memory,
                                 last_window=last_window,
                                 sliding_window_words=sliding_window_words,
@@ -187,7 +194,7 @@ async def _translate_node(
     *,
     target_language: str,
     translator: TranslatorFn,
-    glossary: Glossary,
+    glossary_block: str | None,
     memory: EntityMemory,
     last_window: str,
     sliding_window_words: int,
@@ -207,7 +214,7 @@ async def _translate_node(
     prompt = build_translation_prompt(
         source_chunk=node.text,
         target_language=target_language,
-        glossary_block=glossary.to_prompt_block() or None,
+        glossary_block=glossary_block,
         entity_block=memory.to_prompt_block(max_items=settings.entity_memory_cap)
         or None,
         rag_context=None,

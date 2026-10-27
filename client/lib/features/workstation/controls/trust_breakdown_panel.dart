@@ -18,12 +18,24 @@ class TrustBreakdownPanel extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final colors = context.colors;
-    final wsState = ref.watch(workstationProvider);
+    // Narrow to the two document fields this panel actually reads, and read
+    // the memoized derivations rather than the whole state. `allBBoxes` is a
+    // List, and Riverpod compares a selected List by identity, so this
+    // select does NOT by itself spare the panel a rebuild on every
+    // workstation change — what it does is stop the panel from allocating a
+    // fresh document-wide flattened list on each of its five reads. The
+    // int-valued `documentRevisedCount` below is the one whose select
+    // actually narrows rebuilds.
+    final allBBoxes =
+        ref.watch(workstationProvider.select((state) => state.allBBoxes));
+    final revisedCount = ref.watch(
+      workstationProvider.select((state) => state.documentRevisedCount),
+    );
     final job = ref.watch(jobOrchestrationProvider);
     final trust = job.trustSummary;
     final quality = job.qualitySummary;
 
-    if (trust == null && quality == null && wsState.allBBoxes.isEmpty) {
+    if (trust == null && quality == null && allBBoxes.isEmpty) {
       return AppCard(
         variant: AppCardVariant.defaultCard,
         padding: AppCardPadding.md,
@@ -38,15 +50,15 @@ class TrustBreakdownPanel extends ConsumerWidget {
     }
 
     final double avgConfidence = trust?.average ??
-        (wsState.allBBoxes.isNotEmpty
-            ? wsState.allBBoxes.fold<double>(
+        (allBBoxes.isNotEmpty
+            ? allBBoxes.fold<double>(
                     0.0, (sum, b) => sum + (b.confidence ?? 0.0)) /
-                wsState.allBBoxes.length
+                allBBoxes.length
             : 0.0);
 
-    final int totalBlocks = trust?.blockCount ?? wsState.allBBoxes.length;
+    final int totalBlocks = trust?.blockCount ?? allBBoxes.length;
     final int flaggedBlocks = trust?.flaggedCount ?? 0;
-    final int repairedBlocks = job.repairedCount(wsState.documentRevisedCount);
+    final int repairedBlocks = job.repairedCount(revisedCount);
     final int totalRetries = job.totalRetriesAttempted;
 
     final AppBadgeVariant trustVariant = avgConfidence >= 0.85

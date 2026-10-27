@@ -1,5 +1,235 @@
 # Architecture Ledger
 
+## Publication validation (2026-10-27)
+
+Revalidated the performance-hardening candidate against base
+`f21e4bac40d479d5191ae8f29f7dcb5b7f23476f` before publication. Independent
+read-only review of all nine changed production files found no material new
+regression. No new production module, dependency or wire-format change was
+introduced by validation. The sole new file remains
+`tests/core/lexicon/test_search_projection.py`, whose single responsibility is
+the stub-based search projection contract documented in Directory Responsibilities.
+
+- Backend on CPython 3.13.9: Ruff check and format pass (447 files), the CI
+  `mypy src tests` gate passes (447 files), and `uv lock --check --offline`
+  passes (194 packages). Commands used the installed environment without
+  dependency synchronization.
+- Fast tier: **2,806 passed, 30 skipped, 13 deselected**, coverage **80.79%**
+  against the 80% floor, exit 0 in 269.64 seconds. The focused async-startup
+  probe plus required aligner/OCR files also passed: **104 tests**.
+- Client on Flutter 3.47.1: analysis reports no issues, **453 tests pass**,
+  asserted JSON contracts pass, and the ownership check passes for 171 Dart
+  files and 31 providers. Dart format passes for all 171 files after a single
+  formatting-only repair in `client/test/data/workstation_state_test.dart`;
+  that file's 18 tests pass again after formatting.
+
+The initial backend attempt stalled during Windows async event-loop startup
+under the execution sandbox; the ordinary runner with runtime access completed
+the checks above. Flutter used its normal SDK cache with the user's approval.
+Real LanceDB integration and real Surya end-to-end behavior remain unverified
+locally, as detailed below. Hosted matrix, container and security checks must
+run on the published revision; local validation does not establish their result.
+
+## Performance hardening pass (2026-10-12)
+
+Six independently-owned performance changes, each behaviour-preserving and each
+pinned by a regression test that is red against the pre-fix code. Dependency
+direction is unchanged: no new production module, no wire-format change, no
+dependency added or removed.
+
+1. **Layout detection decodes each page once.**
+   `core/workflows/stages/layout.py` decodes a page's base64 image and hands the
+   PIL object to the decoded-image cache; `core/aligner.py` then independently
+   re-opened the same bytes (`Image.open` + `load()` + `copy()`) for the Surya
+   forward pass. The aligner now owns `get_detected_boxes_from_images(
+   list[Image.Image])`, which holds the shared post-decode logic — RGB coercion,
+   `strict=True` zip, NaN/inf filtering, clamp, reading-order sort and retry.
+   `get_detected_boxes_batch(list[bytes])` keeps its exact signature and
+   behaviour, because it is duck-typed by `scripts/measure_recall_delta.py`,
+   `scripts/visualize.py` and eight test stubs. `layout.py` probes for the new
+   entry point on `type(self.aligner)`, not the instance: a bare `MagicMock`
+   auto-creates any attribute, so an instance probe silently finds a fake
+   method. `_shared_predictor_lock`, `get_shared_detection_predictor` and the
+   decoded-image cache are deliberately untouched — the process-wide predictor
+   singleton and the serialization of forward passes are safety decisions, not
+   performance debt. The single decode holds while the decoded cache holds
+   every page in the chunk: a cache miss falls back to
+   `get_detected_boxes_batch(chunk_bytes)` and re-decodes the whole chunk (see
+   Performance Notes).
+
+2. **Quality repair fans out across pages, bounded.**
+   `core/workflows/hybrid_repair.py` processed pages strictly serially, so repair
+   wall-clock was the sum of every page's VLM latency rather than the maximum.
+   The `concurrency` argument was already plumbed from `workflows/hybrid.py` and
+   accepted but unused. It now drives an `asyncio.Semaphore(max(1, concurrency))`
+   over a `TaskGroup`, and it follows the shape of the OCR stage in
+   `workflows/stages/ocr.py` without matching its policy. Two differences
+   matter: (i) the OCR stage clamps concurrency to 1 for a local backend
+   (`localhost`, `127.0.0.1`, `::1` or `192.168.*` `api_base`), and the repair
+   fan-out now applies that same clamp; (ii) the OCR stage is fail-soft per
+   page — a page error is captured, reported and the phase continues — whereas
+   the repair fan-out is fail-fast, so the first page failure aborts the phase.
+   The fan-out also unwraps the `TaskGroup` exception group: the three
+   per-type `except*` clauses are replaced by a single `except
+   BaseExceptionGroup` handler plus the `_repair_failure` helper, so a page
+   failure reaches the caller as its own exception type, with the control-flow
+   exceptions (`OCRCancelled`, `CircuitOpenError`, `LLMBalanceError`) keeping
+   precedence. Summaries are restored to `page_nums` order through slot indices
+   collected from `as_completed`, the shared completed-box counter takes a
+   critical section, and `concurrency == 1` remains fully serial. The bound is
+   load-bearing: each in-flight page holds a decoded page image plus its crops.
+   This supersedes the docstring that documented the sequential loop as
+   intentional.
+
+3. **Translation computes the glossary prompt block once per job.**
+   `core/translate/tree.py` rebuilt it inside `_translate_node`, so a per-node
+   cost — filter, sort and two `sanitize_prompt_input` passes per entry — was
+   paid once per block on constant input. It is now computed once per
+   `translate_tree` call and threaded down. `core/translate/glossary.py` is
+   deliberately **unmodified**: `Glossary` is a `slots=True` dataclass with a
+   public mutable `entries` list and three non-test callers, so an object-level
+   memo could serve stale text. `sanitize_prompt_input` is a prompt-injection
+   defence against user-imported glossaries and still runs once per entry; the
+   sanitizer's input set is unchanged, only the redundant repeats are gone.
+
+4. **Document export rendering moves off the event loop.**
+   `plugins/documents/routes.py` ran docx conversion, HTML/tree rendering,
+   Markdown and chunk export, and the tree-export JSON path inline inside
+   `async def`, stalling every concurrent request, SSE stream and queued job.
+   All of it — including the `build_document_export` body, which was heavier
+   than the enumerated call sites — now runs on a dedicated, bounded
+   `ThreadPoolExecutor` (`_EXPORT_EXECUTOR`, 4 workers, thread prefix
+   `omniscribe-export`) through the local `_run_export_blocking` helper, which
+   copies the caller's context variables explicitly the way `asyncio.to_thread`
+   does. The executor is dedicated because the asyncio default executor is
+   shared with the OCR/TrOCR/NLLB inference paths: routing exports through it
+   would let concurrent exports saturate the pool that inference needs.
+   Response bodies, status codes, media types and the `ChunkingError` → 400
+   mapping are unchanged; a synchronous exception re-raises identically through
+   `await`.
+
+5. **Lexicon search pushes its projection into the query.**
+   `core/lexicon/search.py` materialized the 384-float embedding into Python
+   objects and then discarded it — on the keyword leg by calling `to_arrow()`
+   before `select(cols)`, and on the vector leg by never projecting at all, up
+   to five times per chunk. Both now select inside the query.
+   `core/lexicon/lancedb_store.py` is **not** a precedent for that: its read
+   paths materialize the table and select columns afterwards (the opposite
+   order), and its one projection-pushing path is the pandas-based
+   `to_pandas(columns=…)` in `list_glossaries`, which falls back to
+   `to_arrow()` + `select` on older lancedb versions. The keyword projection
+   is intersected with `table.schema.names` (a schema read, not a row
+   materialization) because `select()` rejects unknown names, and it degrades to
+   no projection if the schema cannot be read. The embedding is no longer
+   materialized on the two search legs, but that is query-scoped: `rows_by_id`
+   still calls `to_arrow()` on the whole table before selecting columns, and
+   the `hybrid_via_arrow` fallback still calls `to_pylist()` — both materialize
+   every column, the embedding included. Verified against
+   lancedb 0.39.0 source: the Python docstring claims the vector column is
+   returned regardless of projection, but the Rust execution layer auto-adds
+   only `_distance`/`_score`, and lancedb's own test confirms
+   `.select(["a"])` returns `{"a", "_distance"}`. Scoring, ranking, limits and
+   the max-per-row-id merge are unchanged.
+
+6. **Client bbox derivations are memoized per state instance.**
+   `client/lib/features/workstation/workstation_state.dart` exposed `allBBoxes`
+   and `documentRevisedCount` as un-memoized getters that allocate a
+   document-wide flattened list on every read; `controls/trust_breakdown_panel`
+   read the first five times and the second once per build, while watching the
+   entire `workstationProvider` — which rebuilds on every OCR block frame. The
+   derived lists are now `late final` fields initialised in the constructor, so
+   each state instance allocates the document-wide list once instead of once per
+   read, and the trust panel no longer allocates it five times per build. The
+   two panels also use Riverpod `select`, matching `controls/quality_repair_dock`,
+   but that narrows rebuilds for `documentRevisedCount` only: it is an `int`,
+   so it compares by value. The `allBBoxes` select does **not** narrow
+   rebuilds — Riverpod compares the selected value with `!=`, Dart's `List` has
+   no `==` override so the comparison is by identity, and `WorkstationState.copyWith`
+   always returns a new instance whose per-instance `late final` memo yields a
+   new list every time. Memoization is correct under `copyWith` because every
+   transition routes through the constructor, so a fresh memo can never outlive
+   the `pages` value that produced it. **This makes the existing convention
+   load-bearing: no caller may mutate a retained `PageResult.bboxes` in place.**
+   Today `addOrUpdateBBox` allocates new instances, and that invariant is now
+   documented rather than merely true; making `bboxes` unmodifiable would let the
+   type system enforce it.
+
+**Verification** on a settled tree: `ruff check src tests --no-fix` and
+`ruff format src tests --check` clean over 447 files; `uv run mypy src tests`
+clean — the type gate CI runs
+(`.github/workflows/test.yml`) and the command that must stay green — while
+`uv run mypy src/omniscribe` clean over 222 source files is a narrower
+production-only check and not the gate; `git diff --check` clean; fast tier
+**2806 passed, 30 skipped, 13 deselected**, coverage 80.79% (exit 0), in
+425.25s as measured on the review machine (runtime is machine-dependent, so the
+duration is reported as observed, not as a target).
+Client: `flutter analyze --fatal-infos` → *No
+issues found* (exit 0); `flutter test` → **+453: All tests passed** (exit 0);
+`check_feature_layout.py` → 171 Dart files, 31 unique provider declarations
+(exit 0); `dart --enable-asserts tool/check_feature_contracts.dart` → Feature
+JSON contracts passed (exit 0). All
+30 skips are optional-dependency guards (`sqlalchemy`, `pyarrow`, `pytesseract`,
+`lancedb`), none related to these changes. The repair-concurrency group
+`TestRepairPhaseConcurrency` (six tests) was exercised by that single
+full-suite run; no repeat campaign was
+performed in this review, so no repeat-pass count is claimed. Those tests drive
+their preconditions with `asyncio.Event` latches rather than wall-clock
+sleeps; the ordering test asserts its out-of-order precondition before
+asserting summary order, so it cannot pass vacuously.
+
+**Known limits of this pass.** The LanceDB projection is verified by source
+reading and stub-based tests, **not** by execution against a real LanceDB
+table — `lancedb`, `pyarrow` and `sqlalchemy` are not installed in this
+environment. `pytest-timeout` is not installed either, so the suite has no
+pytest-level per-test timeout; the repair tests carry their own
+`asyncio.wait_for` deadlock guards. The stub in
+`tests/core/lexicon/test_search_projection.py` pre-seeds `_distance` into its
+row dicts, so the fake table's `schema.names` wrongly contains `_distance` (in
+a real LanceDB table it is a virtual column returned alongside the projection,
+not a stored one). The stub therefore cannot detect a projection regression
+that treats `_distance` as a stored column, and the `hybrid_via_arrow` fallback
+path is not covered by any test. Separately,
+the block-tree and chunk handlers still construct `JSONResponse` on the event
+loop, so response JSON serialization remains inline. In addition,
+`plugins/documents/artifact.py` still runs `DocumentResult.from_dict` inline on
+the event loop for *every* export handler; it was left alone because the fix
+requires either changing that shared helper's `None`-means-fallback contract or
+duplicating it, which is a cross-cutting design decision rather than a local
+fix. The same `except*` group-escape shape that this pass fixed in
+the repair phase still exists **pre-existing** in
+`core/workflows/stages/ocr.py` and `core/workflows/stages/refine.py`: those
+sites keep the three per-type `except*` clauses, so a TaskGroup body
+exception outside those three types escapes as a group and an upstream
+`except OCRCancelled` / `except CircuitOpenError` would miss it. Those files
+are outside this pass's scope and were deliberately left unchanged.
+
+**Repairs applied in review.** An independent review of this pass found five
+defects in it and fixed them. (i) The repair fan-out's exception handling was
+incomplete: the three per-type `except*` clauses unwrap only a group whose
+members are all control-flow types, so a page error of any other type escaped
+as an `ExceptionGroup`, and a mixed failure escaped as a `BaseExceptionGroup` —
+neither matches an upstream `except OCRCancelled`, which drives the 503 cancel
+handshake in `plugins/ocr/routes.py`. The fan-out now unwraps the group in one
+pass and re-raises the original exception type, with the control-flow
+exceptions keeping precedence. (ii) The fan-out did not apply the
+local-backend concurrency clamp that `core/workflows/stages/ocr.py` applies;
+it does now. (iii) The nine export handlers ran their blocking work on the
+asyncio default executor — the pool shared with OCR/TrOCR/NLLB inference —
+with no concurrency bound; they now run on the dedicated bounded
+`_EXPORT_EXECUTOR` described above. (iv) The lexicon keyword leg logged a
+scan failure at DEBUG, and `_available_columns` logged an unreadable-schema
+fallback not at all; both are now WARNING, because each one silently drops
+evidence or silently re-materialises the embedding column. (v)
+`currentPageBBoxes` returned the mutable `PageResult.bboxes` in its
+unfiltered branch, which the new per-instance memo made load-bearing; both
+branches are now unmodifiable. Two typing errors in this pass's own test
+files also failed the CI type gate (`uv run mypy src tests`) and were fixed —
+the ledger had cited only the narrower `mypy src/omniscribe`, which was green.
+Regression coverage was added alongside: `TestRepairPhaseFailureSurface` in
+`tests/core/workflows/test_repair.py` pins the exception-surfacing contract
+(two of its four tests fail against the pre-fix unwrap), and
+`tests/core/lexicon/test_search_projection.py` pins the projection.
+
 ## Dependency branch resolution (2026-10-11)
 
 [branch-resolution-2026-10-11.md](branch-resolution-2026-10-11.md) owns dependency compatibility, remote merge and branch-cleanup evidence. Mypy, PyArrow and Pillow PRs are merged after fresh hosted checks; the combined manifest and lockfile pass validation. No new production module or runtime API is introduced.
@@ -391,14 +621,14 @@ Protocol (`ctx.inject(JobQueue)`), never by module singleton.
 | `src/omniscribe/core/processors/layout.py` | `LayoutEnrichmentProcessor` — page region and layout role labeling (headers, footers, page numbers, figures, captions) |
 | `src/omniscribe/core/processors/table.py` | `TableExtractionProcessor` — table grid structure extraction from aligned text blocks |
 | `src/omniscribe/core/processors/table_fallback.py` | `TableFallbackProcessor` — dedicated grid reconstruction, alignment heuristics, and fail-open table repair for low-confidence tables (RFC 004 R5) |
-| `src/omniscribe/core/aligner.py` | Surya detection and DP text-to-box alignment |
+| `src/omniscribe/core/aligner.py` | Surya detection and DP text-to-box alignment; owns the decoded-image entry point `get_detected_boxes_from_images(list[Image.Image])`, which holds the shared post-decode logic, while `get_detected_boxes_batch(list[bytes])` keeps its byte-oriented signature and delegates to it |
 | `src/omniscribe/core/recall/base.py` | `BaseRecallOptions` — shared frozen dataclass with `_from_env` helper for secondary text-recall passes |
 | `src/omniscribe/core/recall/whitespace.py` | Whitespace recall booster — pixel-statistics text-line candidates merged into Surya detection on the hybrid path (`OMNISCRIBE_WHITESPACE_RECALL` kill switch, INFO run summary) |
 | `src/omniscribe/core/recall/text_layer.py` | Text-layer recall source — lines Surya missed recovered from a digital PDF's embedded text layer; second box source merged after the whitespace booster (`OMNISCRIBE_TEXT_LAYER_RECALL` kill switch, INFO run summary, no-op for scans/images); also exposes `token_agreement` + `PdfTextLayerRecall.page_text` used by the repair phase's fluent-hallucination trigger |
 | `src/omniscribe/core/ocr/` | OpenAI/Anthropic/Ollama multi-format VLM client, prompts, response filters, limits, exceptions, retry, and circuit-breaker resilience; `__init__.py` preserves the public import surface |
 | `src/omniscribe/core/ocr_quality/` | OCR Quality Trust Layer — watermark detection, script detection, hallucination guard, Platt scaling calibration fit/eval, trust scorer, orchestrator, `summary.py` (document-level `X-Document-Trust` header payload), and the `events.py` structured log channel (sub-modules incl. `parsers` drop events) |
 | `src/omniscribe/core/transcription/` | Speech-to-text audio transcription engines (local Whisper & OpenAI-compatible API backends); `logprob_to_confidence` keeps per-segment confidence in `[0,1]`, the local engine runs whisper with beam/VAD/temperature-fallback robustness kwargs, and the API engine reuses one HTTP client with exponential backoff + `Retry-After` support |
-| `src/omniscribe/core/lexicon/` | LanceDB-backed canonical glossary / translation lexicon store (Protocol + LanceDB implementation + embedding wrapper + helper queries + one-shot migration core). `schema.py` implements fail-closed table open and compatibility checks (`open_terms_table`, `ensure_meta_and_compat`) preventing destructive overwrites. Migration operations are documented in `docs/DEPLOYMENT.md`. |
+| `src/omniscribe/core/lexicon/` | LanceDB-backed canonical glossary / translation lexicon store (Protocol + LanceDB implementation + embedding wrapper + helper queries + one-shot migration core). `search.py` pushes its column projection into the LanceDB query on the keyword and vector legs instead of materializing every column and selecting afterwards. `schema.py` implements fail-closed table open and compatibility checks (`open_terms_table`, `ensure_meta_and_compat`) preventing destructive overwrites. Migration operations are documented in `docs/DEPLOYMENT.md`. |
 | `src/omniscribe/core/glossary_sources/` | Terminology import parsers for XLIFF (1.2 / 2.0), TBX, TMX, CSV, TSV, JSON pairs, SQL tables, and Git repositories with encoding auto-detection (BOMs, UTF-8/16/32, Windows-1252, and ISO-8859-1 fallbacks). `lanes_lexicon.py` provides recursive in-order XML document traversal and Arabic headword prioritization for Lane's Lexicon (XML and SQLite). |
 | `src/omniscribe/cli/import_lanes_lexicon.py` | CLI utility for importing Lane's Arabic-English Lexicon (XML/TEI or SQLite) into LanceDB lexicon tables |
 | `src/omniscribe/core/writers/__init__.py` | Package-level re-exports for `MarkdownWriter`, `MarkdownExporter` (backward compatibility alias with deprecation notice), `export_json`, `convert_tree_to_docx`, and writer interfaces |
@@ -428,7 +658,7 @@ Protocol (`ctx.inject(JobQueue)`), never by module singleton.
 | `src/omniscribe/core/translate/workflow.py` | Optional LangGraph translation workflow — retrieve → translate → evaluate loop with LLM-as-judge, best-attempt tracking, deterministic adequacy checks (URL/acronym/number preservation), script-aware length bands, and fail-safe acceptance on unparseable judge output |
 | `src/omniscribe/core/workflows/base.py` | `EngineBase`, `OutputWriter`, `ProgressCallback`, `WarningCallback` shared by both engines |
 | `src/omniscribe/core/workflows/hybrid.py` | `HybridEngine` — orchestrator delegating to specialized workflow stages |
-| `src/omniscribe/core/workflows/hybrid_repair.py` | Hybrid-engine adapter for the shared quality-repair loop and block re-OCR callbacks |
+| `src/omniscribe/core/workflows/hybrid_repair.py` | Hybrid-engine adapter for the shared quality-repair loop and block re-OCR callbacks; owns the bounded cross-page fan-out (`TaskGroup` + `Semaphore`), the local-backend concurrency clamp, the slot-indexed summary ordering that restores `page_nums` order, the lock around the shared completed-box counter, and the exception-group unwrapping that lets a page failure reach the caller as its own exception type |
 | `src/omniscribe/core/workflows/stages/` | Decomposed hybrid workflow stages: `conversion.py` (`HybridConverter`), `layout.py` (`HybridLayoutDetector`), `ocr.py` (`HybridOcrRunner`), `refine.py` (`HybridRefiner`) |
 | `src/omniscribe/core/workflows/grounded.py` | `GroundedEngine` — single bbox-native VLM call → post-process → processors → output |
 | `src/omniscribe/core/workflows/repair.py` | `QualityRepairLoop` and `RepairOptions` — engine-agnostic block-level low-confidence re-OCR (stall guard, fail-open, `CircuitOpenError` re-raise, informed `re_ocr` contract passing `previous_text`/`attempt`, text-layer agreement trigger for fluent hallucinations) plus the job-level `quality_summary` aggregator |
@@ -448,7 +678,7 @@ Protocol (`ctx.inject(JobQueue)`), never by module singleton.
 | `src/omniscribe/plugins/state_backend_sqlite.py` | Durable single-node SQLite state backend and blob persistence |
 | `src/omniscribe/plugins/state_backend_redis.py` | Distributed Redis state backend with TTL-aware artifacts and channels |
 | `src/omniscribe/plugins/providers_service.py` | Provider discovery, validation, credential binding, and persisted active-provider settings |
-| `src/omniscribe/plugins/documents/` | Documents plugin: `schemas.py` (extraction/export request models reproducing the pre-harness contract, plus `ExportMarkdownRequest`, `ExportChunksRequest`, `DocumentChunkPayload`, `ExportChunksResponse`), `prompts.py` (extraction prompts re-homed verbatim from the pre-harness `api/services/ai.py`; `PROMPT_VERSION 2026-08-15.v1`; invoice/resume/academic/table/table_extraction/custom templates), `service.py` (LLM extraction runner, text/markdown/json/docling-compatible/mineru-compatible export builders, `build_markdown_export`, `build_chunks_export`, and on-demand block-tree building from the stored text artifact — no tree sidecars), `routes.py` (`POST /api/extract`, `POST /api/export/document`, `GET|POST /api/export/docx`, `POST /api/export/html`, `POST /api/export/docx-tree`, `POST /api/export/blocktree`, `GET|POST /api/export/markdown`, `GET|POST /api/export/chunks`, token-bound `GET /api/export/{artifact_id}`, `GET /api/text/{artifact_id}`, `GET /api/metadata/{artifact_id}`), and `plugin.py` (mounts the router; no configurable fields) |
+| `src/omniscribe/plugins/documents/` | Documents plugin: `schemas.py` (extraction/export request models reproducing the pre-harness contract, plus `ExportMarkdownRequest`, `ExportChunksRequest`, `DocumentChunkPayload`, `ExportChunksResponse`), `prompts.py` (extraction prompts re-homed verbatim from the pre-harness `api/services/ai.py`; `PROMPT_VERSION 2026-08-15.v1`; invoice/resume/academic/table/table_extraction/custom templates), `service.py` (LLM extraction runner, text/markdown/json/docling-compatible/mineru-compatible export builders, `build_markdown_export`, `build_chunks_export`, and on-demand block-tree building from the stored text artifact — no tree sidecars), `routes.py` (`POST /api/extract`, `POST /api/export/document`, `GET|POST /api/export/docx`, `POST /api/export/html`, `POST /api/export/docx-tree`, `POST /api/export/blocktree`, `GET|POST /api/export/markdown`, `GET|POST /api/export/chunks`, token-bound `GET /api/export/{artifact_id}`, `GET /api/text/{artifact_id}`, `GET /api/metadata/{artifact_id}`; the nine export handlers run their blocking rendering on a dedicated bounded `ThreadPoolExecutor` — `_EXPORT_EXECUTOR`, 4 workers, thread prefix `omniscribe-export` — rather than the asyncio default executor, which is shared with OCR/TrOCR/NLLB inference), and `plugin.py` (mounts the router; no configurable fields) |
 | `src/omniscribe/plugins/translate/` | Translate plugin: `schemas.py` (translation request models + client response contracts), `service.py` (`TranslationService` — sync single-shot `translate_text` re-home with service-level judge loop and LRU translation cache, JobQueue runner (`TranslationJobRunner` seam) that walks the stored text artifact's tree with `translate_tree`, and client status mapping PENDING/PROGRESS/SUCCESS/FAILURE), `routes.py` (`POST /api/translate`, `POST /api/translate/async`, `GET /api/translate/status/{job_id}`, `GET /api/translate/result/{job_id}` token-redeeming fetch, `POST /api/translate/nllb`), and `plugin.py` (mounts the router; no configurable fields) |
 | `src/omniscribe/plugins/transcribe/` | Transcribe plugin: `schemas.py` (form-field and config request models + client response contracts), `service.py` (`TranscriptionService` — sync multipart transcription through the core transcription engines; transcript and metadata serialized JSON using the text-artifact convention and stored as token-bound artifacts), `config_store.py` (always-writable in-memory transcription config store with masked keys; SSRF-guarded endpoint model discovery falling back to the canned whisper list), `routes.py` (`POST /api/transcribe`, `GET|POST /api/config/transcription`, `GET /api/models/transcription`), and `plugin.py` (mounts the router; no configurable fields) |
 | `src/omniscribe/plugins/glossary/` | Glossary plugin: `schemas.py` (import/library request models covering dual-shape imports and toggle bodies), `service.py` (`GlossaryImportService` — parse → entry-count estimate → sync import or JobQueue dispatch above the 5,000-entry estimate, plus `ensure_store_ready`, library/sources CRUD, toggle flipping, reorder, and query-filtered/paginated entries), `store.py` (lazy `LexiconStore` provider — routes 503 with the `uv sync --extra lexicon` install hint when the `lexicon` extra is missing), `http_fetch.py` (SSRF-guarded, IP-pinned URL fetch with manual redirect following for `/api/glossary/import/url`), `routes.py` (the /api/glossary* routes; dual-shape imports, sources CRUD, toggle, entries search/pagination, preview/merged), and `plugin.py` (mounts the router; registers `GlossaryJobRunner`) |
@@ -524,6 +754,7 @@ Protocol (`ctx.inject(JobQueue)`), never by module singleton.
 | `tests/core/test_rasterizer.py` | Unit tests for PyMuPDF serial page rasterization and sequential order preservation |
 | `tests/core/glossary_sources/test_lanes_lexicon.py` | Unit tests for Lane's Lexicon XML and SQLite source parsers, mixed-content text ordering, and Arabic headword prioritization |
 | `tests/core/test_lexicon_schema.py` | Unit tests for LanceDB lexicon schema fail-closed table open and compatibility checks |
+| `tests/core/lexicon/test_search_projection.py` | Stub-based unit tests for the lexicon query-level projection (the vector leg projects `id`/`_distance`, the keyword leg projects the schema-intersected keyword columns, an unreadable schema falls back to an unrestricted scan, and projected scoring matches the legacy post-materialisation scores) |
 | `tests/test_security.py` | Unit tests for URL origin validation, malformed port resilience, and security utility functions |
 | `tests/core/writers/test_markdown_writer.py` | Unit tests for `MarkdownWriter` rendering, heading hierarchy, pipe tables, math fences, page-break comments |
 | `tests/plugins/test_digital_ingest_fastpath.py` | End-to-end fast path integration tests asserting zero Surya/VLM calls and DOCX text parity |
@@ -568,10 +799,29 @@ list can be passed via `ConfigUpdate.document_processors` or the multipart OCR
 ## Performance Notes
 
 - Dense-mode and refine crop paths decode a page image once and reuse the PIL
-  image across boxes.
+  image across boxes. Layout detection decodes each page exactly once **when the
+  decoded cache holds every page in the chunk**: a single cache miss falls back
+  to `get_detected_boxes_batch(chunk_bytes)` and re-decodes the whole chunk
+  (see the 2026-10-12 performance hardening pass).
 - PyMuPDF rendering and embedding are serialized per document because sharing
   one document across worker threads can corrupt native state. Independent
   jobs can still run concurrently in separate workers.
+- Surya detection is serialized on one process-wide predictor behind
+  `_shared_predictor_lock`. This is a correctness and memory decision, not a
+  throughput bottleneck — do not remove the lock to "parallelize" detection.
+- Quality repair runs up to `concurrency` pages at a time, bounded because each
+  in-flight page holds a decoded page image plus its crops. `concurrency == 1`
+  is fully serial. The OCR stage and the repair fan-out both clamp concurrency
+  to 1 for a local backend (`localhost`, `127.0.0.1`, `::1` or `192.168.*`
+  `api_base`), but their failure policies differ: the OCR stage is fail-soft per
+  page (the page error is captured and reported, and the phase continues),
+  while the repair fan-out is fail-fast and unwraps the `TaskGroup` exception
+  group so the original exception type reaches the caller.
+- CPU-bound document export work runs on a dedicated bounded
+  `ThreadPoolExecutor` (4 workers) instead of the asyncio default executor, so
+  a large export cannot stall the event loop for other requests, SSE streams or
+  queued jobs, and cannot saturate the pool shared with OCR/TrOCR/NLLB
+  inference. `plugins/documents/artifact.py` is the remaining inline exception.
 
 ## Shared State and Artifacts
 
@@ -723,7 +973,7 @@ This ledger describes the current system only. Release history belongs in
 - [outstanding-work.md](outstanding-work.md) — canonical open backlog
 - [COMPREHENSIVE-AUDIT.md](audits/COMPREHENSIVE-AUDIT.md) — historical audit snapshot; detailed predecessor reports remain in Git history
 
-_Last updated: 2026-09-27_
+_Last updated: 2026-10-27_
 
 
 ## Branch and CI finalization (2026-10-11)

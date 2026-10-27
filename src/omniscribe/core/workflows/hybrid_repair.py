@@ -33,6 +33,7 @@ from omniscribe.core.ocr import OCRProcessor
 from omniscribe.core.ocr.exceptions import LLMBalanceError
 from omniscribe.core.ocr.resilience import CircuitOpenError
 from omniscribe.core.workflows.base import (
+    OCRCancelled,
     PageBoxes,
     ProgressCallback,
     WarningCallback,
@@ -67,6 +68,37 @@ class _RepairEngineHost(Protocol):
     block_callbacks: BlockCallbackSet
 
 
+def _repair_failure(group: BaseExceptionGroup) -> BaseException:
+    """Pick the exception a failed page repair should surface as.
+
+    ``asyncio.TaskGroup`` wraps every child failure in an exception group,
+    so without unwrapping the caller sees a group rather than the original
+    exception. A group also defeats the type-specific handlers upstream:
+    ``except OCRCancelled`` drives the 503 cancel handshake in
+    ``plugins/ocr/routes.py`` and ``except CircuitOpenError`` drives the
+    breaker. Audit P0-1 already recorded a group leaking as a generic 500
+    from the OCR stage for exactly this reason.
+
+    The control-flow exceptions keep precedence, in the same order the OCR
+    stage unwraps them, so a cancellation still short-circuits the VLM
+    spend. Everything else surfaces as its own type — which is what the
+    serial loop this fan-out replaced raised.
+    """
+    leaves: list[BaseException] = []
+    pending: list[BaseException] = list(group.exceptions)
+    while pending:
+        item = pending.pop(0)
+        if isinstance(item, BaseExceptionGroup):
+            pending = list(item.exceptions) + pending
+        else:
+            leaves.append(item)
+    for exc_type in (OCRCancelled, CircuitOpenError, LLMBalanceError):
+        for leaf in leaves:
+            if isinstance(leaf, exc_type):
+                return leaf
+    return leaves[0] if leaves else group
+
+
 async def run_repair_phase(
     *,
     engine: _RepairEngineHost,
@@ -93,10 +125,36 @@ async def run_repair_phase(
 
     ``engine`` is duck-typed against ``HybridEngine`` for the
     ``ocr_processor``, ``block_callbacks``, and ``_decoded_get`` /
-    ``_decoded_put`` access. ``concurrency`` is currently a no-op
-    (the per-page loop is sequential by design — repair re-OCR is
-    one box at a time per page, and the box-level parallelism lives
-    inside ``QualityRepairLoop``).
+    ``_decoded_put`` access.
+
+    ``concurrency`` bounds how many pages repair at once. It used to be
+    a no-op: the per-page loop was sequential by design, on the
+    reasoning that repair re-OCR is one box at a time per page and the
+    box-level parallelism lives inside ``QualityRepairLoop``. That
+    reasoning conflated the two levels — the per-page loop was serial
+    too, so a run's repair wall-clock was the SUM of every page's VLM
+    latency while those network-bound calls sat idle waiting on a
+    response. The loop now fans out through the same ``Semaphore`` +
+    ``asyncio.as_completed`` shape the main OCR loop in ``stages/ocr.py``
+    already uses, keeping ``QualityRepairLoop``'s in-page parallelism
+    untouched.
+
+    The bound is load-bearing, not decorative: every in-flight page
+    holds its decoded image plus a per-bbox crop cache, so an unbounded
+    fan-out would trade the latency win for a memory blow-up.
+    ``concurrency <= 1`` collapses back to the old one-page-at-a-time
+    behaviour, which callers that deliberately pass 1 still rely on.
+
+    Ordering: results are written back into a slot array indexed by
+    ``page_nums`` position, so the returned list keeps its positional
+    correspondence to ``page_nums`` no matter which page finishes
+    first. Pages with no aligned blocks are skipped, as before.
+
+    Cancellation: this phase takes no ``cancel_check`` of its own — a
+    cancelled run arrives as ``asyncio`` cancellation of the awaiting
+    task. ``TaskGroup`` cancels and awaits every in-flight page before
+    re-raising, so a cancelled run terminates promptly and leaves no
+    dangling tasks.
     """
     loop = QualityRepairLoop(repair_options)
     cb = engine.block_callbacks
@@ -118,10 +176,14 @@ async def run_repair_phase(
     )
 
     completed_box = [0]
-    summaries: list[PageRepairSummary] = []
+    # Serialises the shared counter and its progress emit across the
+    # concurrent per-page tasks; see ``repair_single_page``.
+    counter_lock = asyncio.Lock()
     # Memoized lazy decode: a page's image is decoded at most once, and
     # only when a below-target block on that page actually needs a crop.
-    # Pages without repair targets are never decoded.
+    # Pages without repair targets are never decoded. Concurrent pages
+    # never contend for the same key — a page only ever asks for its own
+    # image and repairs its blocks sequentially.
     decoded: dict[int, Image.Image] = {}
 
     async def decode_page(page_num: int) -> Image.Image:
@@ -135,25 +197,75 @@ async def run_repair_phase(
         decoded[page_num] = cached
         return cached
 
+    # (slot, page number, aligned blocks) in ``page_nums`` order. ``slot``
+    # is the page's position among the repairable pages and is what the
+    # summary is filed under, restoring the ordering the serial loop got
+    # for free from append order.
+    ordered: list[tuple[int, int, PageBoxes]] = []
     for p_num in page_nums:
         aligned = pages_structured.get(p_num)
         if not aligned:
             continue
+        ordered.append((len(ordered), p_num, aligned))
+    if not ordered:
+        return []
 
-        summary = await repair_single_page(
-            engine=engine,
-            p_num=p_num,
-            aligned=aligned,
-            get_page_image=decode_page,
-            loop=loop,
-            cb=cb,
-            completed_box=completed_box,
-            targets=targets,
-            on_warning=on_warning,
-            progress=progress,
-            text_layers=text_layers,
+    # A self-hosted VLM (localhost / LAN) is serialised by the OCR stage
+    # because it cannot absorb concurrent requests. The repair fan-out
+    # re-OCRs the same pages, so it has to honour the same guard — otherwise
+    # a local backend that the OCR stage deliberately serialises now
+    # receives up to ``concurrency`` concurrent re-OCR calls.
+    api_base = str(getattr(engine.ocr_processor, "api_base", "") or "").lower()
+    effective_concurrency = concurrency
+    if any(h in api_base for h in ("localhost", "127.0.0.1", "::1", "192.168.")):
+        effective_concurrency = min(concurrency, 1)
+    semaphore = asyncio.Semaphore(max(1, effective_concurrency))
+
+    async def repair_slot(
+        slot: int, p_num: int, aligned: PageBoxes
+    ) -> tuple[int, PageRepairSummary]:
+        async with semaphore:
+            summary = await repair_single_page(
+                engine=engine,
+                p_num=p_num,
+                aligned=aligned,
+                get_page_image=decode_page,
+                loop=loop,
+                cb=cb,
+                completed_box=completed_box,
+                counter_lock=counter_lock,
+                targets=targets,
+                on_warning=on_warning,
+                progress=progress,
+                text_layers=text_layers,
+            )
+            return slot, summary
+
+    results: list[PageRepairSummary | None] = [None] * len(ordered)
+    try:
+        async with asyncio.TaskGroup() as tg:
+            tasks = [
+                tg.create_task(repair_slot(slot, p_num, aligned))
+                for slot, p_num, aligned in ordered
+            ]
+            for coro in asyncio.as_completed(tasks):
+                slot, summary = await coro
+                results[slot] = summary
+    except BaseExceptionGroup as group:
+        raise _repair_failure(group) from None
+
+    # The TaskGroup only exits normally when every page completed, so a
+    # hole means a page task was cancelled on its own. Dropping it would
+    # silently misalign the list callers index positionally against
+    # ``page_nums``; fail loudly instead.
+    stranded = [slot for slot, entry in enumerate(results) if entry is None]
+    if stranded:
+        raise OCRCancelled(
+            f"Repair cancelled for {len(stranded)} of {len(ordered)} page(s) "
+            f"before completing."
         )
-        summaries.append(summary)
+
+    summaries: list[PageRepairSummary] = [s for s in results if s is not None]
     return summaries
 
 
@@ -198,6 +310,7 @@ async def repair_single_page(
     on_warning: WarningCallback | None,
     progress: ProgressCallback | None,
     text_layers: dict[int, str] | None = None,
+    counter_lock: asyncio.Lock | None = None,
 ) -> PageRepairSummary:
     """Re-OCR one page's below-target blocks; emit per-page summary.
 
@@ -207,6 +320,15 @@ async def repair_single_page(
     pattern is the same one the OCR quality orchestrator uses
     for ``fallback_used_box``). ``get_page_image`` is lazy so pages
     without below-target blocks never decode their image.
+
+    ``counter_lock`` guards ``completed_box`` and its progress emit
+    when the caller fans out across pages. The single-element list is
+    only safe by construction while the caller is serial: concurrent
+    pages would otherwise sit inside the progress callback at the
+    same time and a stale count could be published after a newer one.
+    The increment and the emit are therefore one critical section. A
+    standalone call with no lock gets a private uncontended one, which
+    never blocks and never yields — the pre-fan-out behaviour.
 
     Iteration 2 (perf): ``loop.repair_page`` retries each below-target
     block up to ``max_retries`` times with the same bbox. The previous
@@ -225,6 +347,7 @@ async def repair_single_page(
     """
 
     crop_cache: dict[tuple[float, float, float, float], str | None] = {}
+    lock = counter_lock if counter_lock is not None else asyncio.Lock()
 
     async def re_ocr(
         block_idx: int,
@@ -275,14 +398,16 @@ async def repair_single_page(
             if on_warning is not None:
                 await on_warning(p_num, exc)
             raise
-        completed_box[0] += 1
-        await notify(
-            progress,
-            "refine",
-            min(completed_box[0], targets),
-            targets,
-            f"Repairing below-target blocks ({min(completed_box[0], targets)}/{targets})",
-        )
+        async with lock:
+            completed_box[0] += 1
+            done = min(completed_box[0], targets)
+            await notify(
+                progress,
+                "refine",
+                done,
+                targets,
+                f"Repairing below-target blocks ({done}/{targets})",
+            )
         return text
 
     summary = await loop.repair_page(
