@@ -195,7 +195,7 @@ dev = [
     # in CI. Pinned to 6.x because the 6.20+ line is what fixed the
     # torch + surya-ocr hidden-imports dance that older 5.x builds
     # routinely botched.
-    "pyinstaller>=6.20,<7",
+    "pyinstaller>=6.22.3,<7",
 ]
 
 [tool.uv]
