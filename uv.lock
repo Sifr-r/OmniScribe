@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.11"
 resolution-markers = [
     "python_full_version >= '3.15' and sys_platform == 'darwin'",
@@ -2569,7 +2569,7 @@ requires-dist = [
     { name = "pyarrow", marker = "extra == 'lexicon'", specifier = ">=25.0.1" },
     { name = "pyarrow", marker = "extra == 'memory'", specifier = ">=25.0.1" },
     { name = "pydantic", specifier = ">=2.7" },
-    { name = "pydantic-settings", specifier = ">=2.5" },
+    { name = "pydantic-settings", specifier = ">=2.16.1" },
     { name = "pymupdf", specifier = ">=1.26.7,<2" },
     { name = "pyspellchecker", specifier = ">=0.8.1" },
     { name = "python-docx", specifier = ">=1.1.0" },
