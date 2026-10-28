@@ -43,7 +43,7 @@ dependencies = [
     # repo is `scripts/ingest_lexicon.py` (a dev-only ingestion
     # helper), which is satisfied by the `requests` entry in
     # [dependency-groups] `dev` below.
-    "pyspellchecker>=0.8.1",
+    "pyspellchecker>=0.9.1",
     "python-docx>=1.1.0",
     "redis>=8.1.0",
     "numpy>=2.0,<2.5.0",
