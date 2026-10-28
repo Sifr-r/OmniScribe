@@ -2571,7 +2571,7 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.7" },
     { name = "pydantic-settings", specifier = ">=2.16.1" },
     { name = "pymupdf", specifier = ">=1.26.7,<2" },
-    { name = "pyspellchecker", specifier = ">=0.8.1" },
+    { name = "pyspellchecker", specifier = ">=0.9.1" },
     { name = "python-docx", specifier = ">=1.1.0" },
     { name = "python-dotenv", specifier = ">=1.2.1" },
     { name = "python-multipart", marker = "extra == 'web'", specifier = ">=0.0.20" },
