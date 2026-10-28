@@ -51,7 +51,7 @@ dependencies = [
     # Cordis-style harness: RuntimeSettings (pydantic-settings), plugin
     # Schemas (pydantic), and cordis.yml parsing (pyyaml) are direct
     # imports — declared here instead of relying on transitive edges.
-    "pydantic>=2.7",
+    "pydantic>=2.14.1",
     "pydantic-settings>=2.5",
     "pyyaml>=6.0",
 ]
