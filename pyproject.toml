@@ -79,7 +79,7 @@ preprocessing = [
 # gracefully when the lexicon store is unavailable.
 async-translation = [
     # redis is a base dep — no duplicate here.
-    "langgraph>=0.1.0",
+    "langgraph>=1.2.19",
 ]
 memory = [
     # DEPRECATED: alias for the `lexicon` extra. The LanceDB migration
