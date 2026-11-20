@@ -34,7 +34,7 @@ dependencies = [
     "surya-ocr>=0.22.1",
     # Bounded majors (audit backlog): a torch 3.x or torchvision 1.x
     # release could break surya's model layer without warning.
-    "torch>=2.0.0,<3",
+    "torch>=2.15.0,<3",
     "torchvision>=0.15.0,<1",
     "httpx>=0.28.1",
     # `requests` is intentionally NOT a base dep: surya-ocr ≥ 0.22
